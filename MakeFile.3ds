@@ -1,0 +1,118 @@
+#---------------------------------------------------------------------------------
+.SUFFIXES:
+#---------------------------------------------------------------------------------
+
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=/opt/devkitpro")
+endif
+
+TOPDIR ?= $(CURDIR)
+include $(DEVKITPRO)/devkitARM/3ds_rules
+
+rwc = $(foreach d, $(wildcard $1*), $(call rwc,$d/,$2) $(filter $(subst *,%,$2),$d))
+
+SRC_C = $(call rwc, source/, *.c)
+SRC_CPP = $(call rwc, source/, *.cpp)
+SRC_DIRS := $(sort \
+    $(addprefix source/, $(dir $(SRC_C:source/%.c=%.o))) \
+    $(addprefix source/, $(dir $(SRC_CPP:source/%.cpp=%.o))) )
+
+TARGETNAME = HatchGameEngine
+TARGET := builds/3ds/$(TARGETNAME)
+BUILD := out/3ds
+SOURCES := $(SRC_DIRS)
+DATA := data
+INCLUDES := source include
+ROMFS := romfs
+
+APP_TITLE := HatchGameEngine
+APP_DESCRIPTION := Game Engine
+APP_AUTHOR := aknetk
+APP_ICON := meta/3ds/icon.png
+
+#---------------------------------------------------------------------------------
+# options for code generation
+#---------------------------------------------------------------------------------
+ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+
+CFLAGS := -g -Wall -O3 -mword-relocations \
+          -fomit-frame-pointer -ffunction-sections \
+          $(ARCH) $(DEFINES)
+
+CFLAGS += $(INCLUDE) -D__3DS__ \
+          -DTARGET_3DS -DOGG_MUSIC -DDEBUG \
+          -DTARGET_NAME=\"$(TARGETNAME)\"
+
+CXXFLAGS := $(CFLAGS) -fno-rtti -fexceptions -std=gnu++14
+
+ASFLAGS := -g $(ARCH)
+LDFLAGS = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+
+# Libraries
+LIBS := -lSDL_image -lSDL
+LIBS += -lpng -ljpeg -lz
+LIBS += -lvorbisidec -logg
+LIBS += -lcitro3d -lctru
+LIBS += -lm
+
+LIBDIRS := $(PORTLIBS) $(CTRULIB)
+
+#---------------------------------------------------------------------------------
+ifneq ($(BUILD),$(notdir $(CURDIR)))
+#---------------------------------------------------------------------------------
+
+export OUTPUT := $(CURDIR)/$(TARGET)
+export TOPDIR := $(CURDIR)
+export VPATH := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+                $(foreach dir,$(DATA),$(CURDIR)/$(dir))
+export DEPSDIR := $(CURDIR)/$(BUILD)
+
+CFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+
+ifeq ($(strip $(CPPFILES)),)
+    export LD := $(CC)
+else
+    export LD := $(CXX)
+endif
+
+export OFILES_BIN := $(addsuffix .o,$(BINFILES))
+export OFILES_SRC := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES := $(OFILES_BIN) $(OFILES_SRC)
+export HFILES_BIN := $(addsuffix .h,$(subst .,_,$(BINFILES)))
+
+export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+                 $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+                 -I$(CURDIR)/$(BUILD)
+
+export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+.PHONY: $(BUILD) clean all
+
+all: $(BUILD)
+
+$(BUILD):
+	@mkdir -p "builds"
+	@mkdir -p "builds/3ds"
+	@mkdir -p "out"
+	@mkdir -p "out/3ds"
+	@[ -d $@ ] || mkdir -p $@
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.3ds
+
+clean:
+	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).elf $(TARGET).cia
+
+else
+
+DEPENDS := $(OFILES:.o=.d)
+
+all: $(OUTPUT).3dsx $(OUTPUT).cia
+
+$(OUTPUT).3dsx: $(OUTPUT).elf
+$(OUTPUT).elf: $(OFILES)
+
+$(OFILES_SRC): $(HFILES_BIN)
+
+endif
