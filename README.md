@@ -15,7 +15,7 @@ Required:
 - Visual C++ (for Windows building)
 - Android Studio (for Android building)
 - Xcode 12 (for iOS building)
-- devKitPro (for Nintendo Switch homebrew building)
+- devKitPro (for Nintendo Switch/3DS homebrew building) (wip)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)
