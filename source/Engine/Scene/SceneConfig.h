@@ -6,9 +6,9 @@
 struct SceneListCategory {
     char*           Name = nullptr;
 
-    size_t          OffsetStart;
-    size_t          OffsetEnd;
-    size_t          Count;
+    size_t          OffsetStart = 0;
+    size_t          OffsetEnd = 0;
+    size_t          Count = 0;
 
     HashMap<char*>* Properties = nullptr;
 };
@@ -20,8 +20,8 @@ struct SceneListEntry {
     char*           SpriteFolder = nullptr;
     char*           Filetype = nullptr;
 
-    size_t          ParentCategoryID;
-    size_t          CategoryPos;
+    size_t          ParentCategoryID = 0;
+    size_t          CategoryPos = 0;
 
     HashMap<char*>* Properties = nullptr;
 };

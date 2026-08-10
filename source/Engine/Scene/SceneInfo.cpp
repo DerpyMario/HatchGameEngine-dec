@@ -290,9 +290,11 @@ PUBLIC STATIC bool SceneInfo::Load(XMLNode* node) {
                     Entries.push_back(entry);
                     category.Count++;
                 }
-
-                category.OffsetEnd = category.OffsetStart + category.Count;
             }
+
+            // Outside the loop, so a category holding no stages ends up empty
+            // rather than keeping whatever OffsetEnd happened to start as.
+            category.OffsetEnd = category.OffsetStart + category.Count;
 
             Categories.push_back(category);
         }

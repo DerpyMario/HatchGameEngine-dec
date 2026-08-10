@@ -271,6 +271,9 @@ CD ..</Command>
     <ClCompile Include="..\source\engine\types\ObjectList.cpp" />
     <ClCompile Include="..\source\engine\types\ObjectRegistry.cpp" />
     <ClCompile Include="..\source\engine\types\Tileset.cpp" />
+    <ClCompile Include="..\source\Engine\UI\Studio.cpp" />
+    <ClCompile Include="..\source\Engine\UI\UICore.cpp" />
+    <ClCompile Include="..\source\Engine\UI\UIDraw.cpp" />
     <ClCompile Include="..\source\engine\utilities\ColorUtils.cpp" />
     <ClCompile Include="..\source\engine\utilities\StringUtils.cpp" />
     <ClCompile Include="..\source\Libraries\miniz.c" />
@@ -319,6 +322,8 @@ CD ..</Command>
     <ClInclude Include="..\include\engine\textformats\xml\XMLNode.h" />
     <ClInclude Include="..\include\Engine\Types\DrawGroupList.h" />
     <ClInclude Include="..\include\engine\types\EntityTypes.h" />
+    <ClInclude Include="..\source\Engine\UI\UIFontData.h" />
+    <ClInclude Include="..\source\Engine\UI\UITheme.h" />
     <ClInclude Include="..\source\Libraries\miniz.h" />
     <ClInclude Include="..\source\Libraries\stb_image.h" />
     <ClInclude Include="..\source\Libraries\stb_vorbis.h" />

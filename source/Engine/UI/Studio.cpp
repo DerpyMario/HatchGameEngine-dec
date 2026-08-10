@@ -1,0 +1,1101 @@
+#if INTERFACE
+#include <Engine/Includes/Standard.h>
+#include <Engine/Includes/StandardSDL2.h>
+
+class Studio {
+public:
+    static bool Visible;
+    static bool PauseGameWhileOpen;
+};
+#endif
+
+#include <Engine/UI/Studio.h>
+#include <Engine/UI/UICore.h>
+#include <Engine/UI/UIDraw.h>
+#include <Engine/UI/UITheme.h>
+
+#include <Engine/Application.h>
+#include <Engine/Graphics.h>
+#include <Engine/InputManager.h>
+#include <Engine/Scene.h>
+#include <Engine/Audio/AudioManager.h>
+#include <Engine/Diagnostics/Log.h>
+#include <Engine/Filesystem/Directory.h>
+#include <Engine/Filesystem/File.h>
+#include <Engine/ResourceTypes/ResourceManager.h>
+#include <Engine/Scene/SceneInfo.h>
+#include <Engine/Utilities/StringUtils.h>
+
+// The editor front end. Everything the engine used to need a command line, a
+// text editor and a restart for -- picking a project, browsing its scenes,
+// pausing and stepping the game, changing settings, reading the log -- is
+// reachable from here.
+
+bool Studio::Visible = false;
+bool Studio::PauseGameWhileOpen = true;
+
+enum StudioTab {
+    STUDIO_TAB_PROJECT,
+    STUDIO_TAB_SCENES,
+    STUDIO_TAB_PLAY,
+    STUDIO_TAB_SETTINGS,
+    STUDIO_TAB_CONSOLE,
+    STUDIO_TAB_HELP,
+    STUDIO_TAB_COUNT
+};
+
+static const char* TabNames[STUDIO_TAB_COUNT] = {
+    "Project", "Scenes", "Play", "Settings", "Console", "Help"
+};
+
+// Widgets are drawn and clicked in the same call, which means a button's
+// handler runs half way through building the frame. Anything that tears the
+// engine down and puts it back together -- opening a project, restarting,
+// resizing the window -- would pull the renderer's state out from under the
+// rest of that frame, so those are recorded here and carried out by
+// Studio::Update at the top of the next one.
+enum StudioAction {
+    STUDIO_ACTION_NONE,
+    STUDIO_ACTION_OPEN_PROJECT,
+    STUDIO_ACTION_RESTART_ENGINE,
+    STUDIO_ACTION_RELOAD_SCENE,
+    STUDIO_ACTION_RESTART_SCENE,
+    STUDIO_ACTION_SET_WINDOW_SIZE,
+    STUDIO_ACTION_SET_FULLSCREEN
+};
+
+static int  PendingAction = STUDIO_ACTION_NONE;
+static char PendingPath[4096] = "";
+static int  PendingValueA = 0;
+static int  PendingValueB = 0;
+
+static int  CurrentTab = STUDIO_TAB_PROJECT;
+static bool Initialized = false;
+
+// Project browser.
+static vector<std::string> FoundProjects;
+static int  SelectedProject = -1;
+static bool ProjectsScanned = false;
+static char NewProjectName[128] = "MyGame";
+
+// Scene browser. Scenes come from the project's scene list when it has one, and
+// from whatever is sitting in Resources/Scenes when it doesn't.
+static int  SelectedScene = -1;
+static vector<std::string> SceneFiles;
+static bool SceneFilesScanned = false;
+
+// Console filters.
+static bool ShowVerbose = false;
+static bool ShowInfo = true;
+static bool ShowWarnings = true;
+static bool ShowErrors = true;
+static bool FollowLog = true;
+static size_t LastLogCount = 0;
+
+// Settings staging. Window size is applied on demand rather than as it's typed.
+static char WindowWidthText[16] = "";
+static char WindowHeightText[16] = "";
+
+static char   StatusMessage[256] = "";
+static Uint32 StatusMessageTime = 0;
+
+static const char* RendererNames[] = { "opengl", "sdl2", "direct3d", "metal" };
+
+PRIVATE STATIC void Studio::SetStatus(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vsnprintf(StatusMessage, sizeof(StatusMessage), format, args);
+    va_end(args);
+
+    StatusMessageTime = SDL_GetTicks();
+}
+
+// --------------------------------------------------------------- lifecycle -
+
+PUBLIC STATIC void Studio::Init() {
+    if (Initialized)
+        return;
+
+    UIDraw::Init();
+
+    snprintf(WindowWidthText, sizeof(WindowWidthText), "%d", Application::WindowWidth);
+    snprintf(WindowHeightText, sizeof(WindowHeightText), "%d", Application::WindowHeight);
+
+    if (Application::Settings) {
+        Application::Settings->GetBool("studio", "pauseWhenOpen", &Studio::PauseGameWhileOpen);
+
+        bool openOnStart = false;
+        Application::Settings->GetBool("studio", "openOnStart", &openOnStart);
+        if (openOnStart && Application::IsPC())
+            Studio::Visible = true;
+    }
+
+    Initialized = true;
+}
+
+PUBLIC STATIC void Studio::Dispose() {
+    UIDraw::Dispose();
+
+    FoundProjects.clear();
+    SceneFiles.clear();
+
+    Initialized = false;
+}
+
+PUBLIC STATIC bool Studio::IsAvailable() {
+    // Nothing here makes sense without a mouse and a resizable window.
+    return Initialized && Application::IsPC();
+}
+
+PUBLIC STATIC void Studio::Show() {
+    if (!Studio::IsAvailable())
+        return;
+
+    Studio::Visible = true;
+    UICore::Reset();
+
+    ProjectsScanned = false;
+    SceneFilesScanned = false;
+}
+
+PUBLIC STATIC void Studio::Hide() {
+    Studio::Visible = false;
+    UICore::Reset();
+}
+
+PUBLIC STATIC void Studio::Toggle() {
+    if (Studio::Visible)
+        Studio::Hide();
+    else
+        Studio::Show();
+}
+
+// True when the game should hold still because the editor is in front of it.
+PUBLIC STATIC bool Studio::IsPausingGame() {
+    return Studio::Visible && Studio::PauseGameWhileOpen;
+}
+
+PUBLIC STATIC bool Studio::HandleEvent(SDL_Event* event) {
+    if (!Studio::Visible)
+        return false;
+
+    return UICore::HandleEvent(event);
+}
+
+// ----------------------------------------------------------------- scanning -
+
+// Looks for anything openable next to the engine: the working directory itself,
+// any subfolder holding a Resources directory, and any .hatch data file.
+PRIVATE STATIC void Studio::ScanForProjects() {
+    FoundProjects.clear();
+    SelectedProject = -1;
+
+    if (Directory::Exists("Resources"))
+        FoundProjects.push_back(".");
+
+    vector<char*> directories = Directory::GetDirectories(".", "*", false);
+    for (size_t i = 0; i < directories.size(); i++) {
+        char resourcePath[4096];
+        snprintf(resourcePath, sizeof(resourcePath), "%s/Resources", directories[i]);
+
+        if (Directory::Exists(resourcePath))
+            FoundProjects.push_back(std::string(directories[i]));
+
+        free(directories[i]);
+    }
+
+    vector<char*> dataFiles = Directory::GetFiles(".", "*.hatch", false);
+    for (size_t i = 0; i < dataFiles.size(); i++) {
+        FoundProjects.push_back(std::string(dataFiles[i]));
+        free(dataFiles[i]);
+    }
+
+    // Anything opened before that still exists is worth offering again.
+    if (Application::Settings) {
+        for (int i = 0; i < 8; i++) {
+            char key[32];
+            char path[4096];
+            snprintf(key, sizeof(key), "recent%d", i);
+
+            if (!Application::Settings->GetString("studio", key, path, sizeof(path)))
+                continue;
+            if (!Directory::Exists(path) && !File::Exists(path))
+                continue;
+
+            bool known = false;
+            for (size_t j = 0; j < FoundProjects.size(); j++) {
+                if (FoundProjects[j] == path) {
+                    known = true;
+                    break;
+                }
+            }
+
+            if (!known)
+                FoundProjects.push_back(std::string(path));
+        }
+    }
+
+    ProjectsScanned = true;
+}
+
+PRIVATE STATIC void Studio::RememberProject(const char* path) {
+    if (!Application::Settings)
+        return;
+
+    // Read the existing list, drop this path if it's already in there, and put
+    // it back on top.
+    vector<std::string> recent;
+    recent.push_back(std::string(path));
+
+    for (int i = 0; i < 8; i++) {
+        char key[32];
+        char stored[4096];
+        snprintf(key, sizeof(key), "recent%d", i);
+
+        if (!Application::Settings->GetString("studio", key, stored, sizeof(stored)))
+            continue;
+        if (!strcmp(stored, path))
+            continue;
+
+        recent.push_back(std::string(stored));
+    }
+
+    for (int i = 0; i < 8; i++) {
+        char key[32];
+        snprintf(key, sizeof(key), "recent%d", i);
+
+        if (i < (int)recent.size())
+            Application::Settings->SetString("studio", key, recent[i].c_str());
+        else
+            Application::Settings->RemoveProperty("studio", key);
+    }
+
+    Application::SaveSettings();
+}
+
+PRIVATE STATIC void Studio::ScanForSceneFiles() {
+    SceneFiles.clear();
+
+    if (ResourceManager::UsingDataFolder && Directory::Exists("Resources/Scenes")) {
+        vector<char*> files = Directory::GetFiles("Resources/Scenes", "*.*", true);
+        for (size_t i = 0; i < files.size(); i++) {
+            const char* path = files[i];
+
+            // Everything the engine can open as a scene lives under
+            // Resources/, and Scene::LoadScene wants the path relative to it.
+            const char* relative = StringUtils::StrCaseStr(path, "Resources/");
+            if (relative)
+                relative += strlen("Resources/");
+            else
+                relative = path;
+
+            if (StringUtils::StrCaseStr(path, ".tmx") ||
+                StringUtils::StrCaseStr(path, ".bin") ||
+                StringUtils::StrCaseStr(path, ".hcsn"))
+                SceneFiles.push_back(std::string(relative));
+
+            free(files[i]);
+        }
+    }
+
+    SceneFilesScanned = true;
+}
+
+// ------------------------------------------------------------- new project -
+
+// Writes out the smallest tree the engine will boot from, so a new project can
+// be created and opened without touching a shell.
+PRIVATE STATIC bool Studio::CreateProject(const char* name) {
+    if (!name || !*name) {
+        Studio::SetStatus("Enter a folder name for the new project.");
+        return false;
+    }
+
+    for (const char* i = name; *i; i++) {
+        if (*i == '/' || *i == '\\' || *i == ':') {
+            Studio::SetStatus("Project name cannot contain path separators.");
+            return false;
+        }
+    }
+
+    if (Directory::Exists(name)) {
+        Studio::SetStatus("\"%s\" already exists.", name);
+        return false;
+    }
+
+    static const char* folders[] = {
+        "Resources",
+        "Resources/Game",
+        "Resources/Scenes",
+        "Resources/Scripts",
+        "Resources/Sprites",
+        "Resources/Images",
+        "Resources/Sounds",
+        "Resources/Music",
+    };
+
+    for (size_t i = 0; i < sizeof(folders) / sizeof(folders[0]); i++) {
+        char path[4096];
+        snprintf(path, sizeof(path), "%s/%s", name, folders[i]);
+
+        if (!Directory::CreatePath(path)) {
+            Studio::SetStatus("Could not create \"%s\".", path);
+            return false;
+        }
+    }
+
+    char gameConfig[2048];
+    snprintf(gameConfig, sizeof(gameConfig),
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<game>\n"
+        "    <name>%s</name>\n"
+        "    <shortTitle>%s</shortTitle>\n"
+        "    <version>1.0.0</version>\n"
+        "    <description>Made with the Hatch Game Engine.</description>\n"
+        "\n"
+        "    <engine>\n"
+        "        <loadAllClasses>false</loadAllClasses>\n"
+        "        <useSoftwareRenderer>false</useSoftwareRenderer>\n"
+        "    </engine>\n"
+        "\n"
+        "    <display>\n"
+        "        <width>848</width>\n"
+        "        <height>480</height>\n"
+        "    </display>\n"
+        "\n"
+        "    <audio volume=\"100\">\n"
+        "        <music volume=\"100\"/>\n"
+        "        <sound volume=\"100\"/>\n"
+        "    </audio>\n"
+        "</game>\n", name, name);
+
+    static const char* sceneConfig =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<sceneconfig>\n"
+        "    <category name=\"Main\">\n"
+        "        <!-- Add scenes here, for example:\n"
+        "        <stage name=\"Test\" folder=\"Test\" id=\"1\" fileExtension=\"tmx\"/>\n"
+        "        -->\n"
+        "    </category>\n"
+        "</sceneconfig>\n";
+
+    struct {
+        const char* Path;
+        const char* Contents;
+    } files[] = {
+        { "Resources/GameConfig.xml", gameConfig },
+        { "Resources/Game/SceneConfig.xml", sceneConfig },
+    };
+
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+        char path[4096];
+        snprintf(path, sizeof(path), "%s/%s", name, files[i].Path);
+
+        if (!File::WriteAllBytes(path, files[i].Contents, strlen(files[i].Contents))) {
+            Studio::SetStatus("Could not write \"%s\".", path);
+            return false;
+        }
+    }
+
+    Studio::SetStatus("Created project \"%s\".", name);
+    Log::Print(Log::LOG_IMPORTANT, "Created new project in \"%s\".", name);
+
+    ProjectsScanned = false;
+
+    return true;
+}
+
+PRIVATE STATIC void Studio::QueueAction(int action) {
+    PendingAction = action;
+}
+
+PRIVATE STATIC void Studio::OpenProject(const char* path) {
+    StringUtils::Copy(PendingPath, path, sizeof(PendingPath));
+    Studio::QueueAction(STUDIO_ACTION_OPEN_PROJECT);
+    Studio::SetStatus("Opening \"%s\"...", path);
+}
+
+// Carries out whatever the last frame's buttons asked for. Called from the
+// frame loop, outside of any UI drawing.
+PUBLIC STATIC void Studio::Update() {
+    int action = PendingAction;
+    PendingAction = STUDIO_ACTION_NONE;
+
+    switch (action) {
+        case STUDIO_ACTION_OPEN_PROJECT:
+            if (Application::LoadProject(PendingPath)) {
+                Studio::RememberProject(PendingPath);
+                Studio::SetStatus("Opened \"%s\".", PendingPath);
+
+                SceneFilesScanned = false;
+                ProjectsScanned = false;
+                SelectedScene = -1;
+            }
+            else
+                Studio::SetStatus("Could not open \"%s\".", PendingPath);
+            break;
+
+        case STUDIO_ACTION_RESTART_ENGINE:
+            Application::RestartApplication();
+            Studio::SetStatus("Engine restarted.");
+            break;
+
+        case STUDIO_ACTION_RELOAD_SCENE:
+            Application::ReloadScene();
+            Studio::SetStatus("Scripts recompiled and scene reloaded.");
+            break;
+
+        case STUDIO_ACTION_RESTART_SCENE:
+            Application::RestartScene();
+            Studio::SetStatus("Scene restarted.");
+            break;
+
+        case STUDIO_ACTION_SET_WINDOW_SIZE:
+            Application::WindowWidth = PendingValueA;
+            Application::WindowHeight = PendingValueB;
+            Application::SetWindowSize(PendingValueA, PendingValueB);
+            Studio::SetStatus("Window resized to %d x %d.", PendingValueA, PendingValueB);
+            break;
+
+        case STUDIO_ACTION_SET_FULLSCREEN:
+            Application::SetWindowFullscreen(PendingValueA != 0);
+            break;
+    }
+}
+
+// ------------------------------------------------------------------- tabs --
+
+PRIVATE STATIC void Studio::DrawProjectTab(float x, float y, float w, float h, bool split) {
+    float halfW = split ? w / 2.0f : w;
+    float halfH = split ? h : h / 2.0f;
+    float secondX = split ? x + halfW : x;
+    float secondY = split ? y : y + halfH;
+
+    UICore::BeginPanel("Projects", x, y, halfW, halfH);
+        if (!ProjectsScanned)
+            Studio::ScanForProjects();
+
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
+        if (UICore::Button("Rescan"))
+            ProjectsScanned = false;
+
+        UICore::SameLine();
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
+        if (UICore::ButtonEnabled("Open Project",
+                SelectedProject >= 0 && SelectedProject < (int)FoundProjects.size()))
+            Studio::OpenProject(FoundProjects[SelectedProject].c_str());
+
+        UICore::Separator();
+
+        if (!FoundProjects.size())
+            UICore::Text("No projects found next to the engine.", UI_COL_TEXT_FAINT);
+
+        UICore::ResetRowStriping();
+        for (size_t i = 0; i < FoundProjects.size(); i++) {
+            char label[4200];
+            snprintf(label, sizeof(label), "%s##project%d", FoundProjects[i].c_str(), (int)i);
+
+            if (UICore::ListItem(label, SelectedProject == (int)i))
+                SelectedProject = (int)i;
+        }
+    UICore::EndPanel();
+
+    UICore::BeginPanel("Current Project", secondX, secondY, halfW, halfH);
+        char projectPath[4096];
+        Application::GetProjectPath(projectPath, sizeof(projectPath));
+
+        UICore::Field("Title", Application::GameTitle);
+        UICore::Field("Version", Application::GameVersion);
+        UICore::Field("Description", Application::GameDescription);
+        UICore::Field("Folder", projectPath);
+        UICore::Field("Reading from", ResourceManager::UsingDataFolder ?
+            "Resources folder" : "packed .hatch file");
+        UICore::FieldFormatted("Scenes listed", "%d", (int)SceneInfo::Entries.size());
+
+        UICore::Separator();
+        UICore::Heading("New Project");
+        UICore::Text("Creates a folder with the Resources tree and a", UI_COL_TEXT_DIM);
+        UICore::Text("starter GameConfig.xml, ready to open.", UI_COL_TEXT_DIM);
+
+        UICore::TextField("Name", NewProjectName, sizeof(NewProjectName));
+
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
+        if (UICore::Button("Create"))
+            Studio::CreateProject(NewProjectName);
+
+        UICore::SameLine();
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
+        if (UICore::Button("Create & Open")) {
+            if (Studio::CreateProject(NewProjectName))
+                Studio::OpenProject(NewProjectName);
+        }
+    UICore::EndPanel();
+}
+
+PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bool split) {
+    float halfW = split ? w / 2.0f : w;
+    float halfH = split ? h : h / 2.0f;
+    float secondX = split ? x + halfW : x;
+    float secondY = split ? y : y + halfH;
+
+    if (!SceneFilesScanned)
+        Studio::ScanForSceneFiles();
+
+    UICore::BeginPanel("Scene List", x, y, halfW, halfH);
+        if (SceneInfo::Entries.size()) {
+            for (size_t c = 0; c < SceneInfo::Categories.size(); c++) {
+                SceneListCategory& category = SceneInfo::Categories[c];
+
+                UICore::Heading(category.Name ? category.Name : "Unnamed");
+                UICore::ResetRowStriping();
+
+                for (size_t e = category.OffsetStart; e < category.OffsetEnd; e++) {
+                    SceneListEntry& entry = SceneInfo::Entries[e];
+
+                    char label[512];
+                    snprintf(label, sizeof(label), "%s##entry%d",
+                        entry.Name ? entry.Name : "Unnamed", (int)e);
+
+                    if (UICore::ListItem(label, SelectedScene == (int)e))
+                        SelectedScene = (int)e;
+                }
+            }
+        }
+        else {
+            UICore::Text("This project has no scene list.", UI_COL_TEXT_DIM);
+            UICore::Text("Add scenes to Resources/Game/SceneConfig.xml", UI_COL_TEXT_FAINT);
+            UICore::Text("to have them show up here.", UI_COL_TEXT_FAINT);
+        }
+
+        if (SceneFiles.size()) {
+            UICore::Separator();
+            UICore::Heading("Scene Files On Disk");
+            UICore::ResetRowStriping();
+
+            for (size_t i = 0; i < SceneFiles.size(); i++) {
+                char label[4200];
+                snprintf(label, sizeof(label), "%s##file%d", SceneFiles[i].c_str(), (int)i);
+
+                if (UICore::ListItem(label, false)) {
+                    Application::QueueSceneChange(SceneFiles[i].c_str());
+                    Studio::SetStatus("Loading \"%s\"...", SceneFiles[i].c_str());
+                }
+            }
+        }
+    UICore::EndPanel();
+
+    UICore::BeginPanel("Selected Scene", secondX, secondY, halfW, halfH);
+        bool haveSelection = SceneInfo::IsEntryValid(SelectedScene);
+        std::string filename;
+
+        if (haveSelection) {
+            SceneListEntry& entry = SceneInfo::Entries[SelectedScene];
+            filename = SceneInfo::GetFilename(SelectedScene);
+
+            UICore::Field("Name", entry.Name ? entry.Name : "Unnamed");
+            UICore::Field("ID", entry.ID ? entry.ID : "-");
+            UICore::Field("Folder", entry.Folder ? entry.Folder : "-");
+            UICore::Field("Type", entry.Filetype ? entry.Filetype : "-");
+            UICore::Field("Path", filename.c_str());
+        }
+        else
+            UICore::Text("Pick a scene from the list.", UI_COL_TEXT_FAINT);
+
+        UICore::Separator();
+
+        if (UICore::ButtonEnabled("Load Selected Scene", haveSelection)) {
+            Application::QueueSceneChange(filename.c_str());
+            Studio::SetStatus("Loading \"%s\"...", filename.c_str());
+        }
+
+        UICore::Separator();
+        UICore::Heading("Running Scene");
+        UICore::Field("Current", Scene::CurrentScene[0] ? Scene::CurrentScene : "(none)");
+
+        if (UICore::Button("Restart Scene"))
+            Studio::QueueAction(STUDIO_ACTION_RESTART_SCENE);
+
+        if (UICore::Button("Reload Scripts & Scene"))
+            Studio::QueueAction(STUDIO_ACTION_RELOAD_SCENE);
+
+        if (UICore::Button("Rescan Scene Files"))
+            SceneFilesScanned = false;
+    UICore::EndPanel();
+}
+
+PRIVATE STATIC void Studio::DrawPlayTab(float x, float y, float w, float h, bool split) {
+    float halfW = split ? w / 2.0f : w;
+    float halfH = split ? h : h / 2.0f;
+    float secondX = split ? x + halfW : x;
+    float secondY = split ? y : y + halfH;
+
+    UICore::BeginPanel("Playback", x, y, halfW, halfH);
+        UICore::Checkbox("Pause the game while this editor is open", &Studio::PauseGameWhileOpen);
+        UICore::Checkbox("Scene paused", &Scene::Paused);
+        UICore::Checkbox("Frame stepper", &Application::Stepper);
+
+        if (UICore::ButtonEnabled("Step One Frame", Application::Stepper)) {
+            Application::Step = true;
+            Studio::SetStatus("Stepped one frame.");
+        }
+
+        bool fastForward = Application::IsFastForwarding();
+        if (UICore::Checkbox("Fast forward", &fastForward))
+            Application::SetFastForwarding(fastForward);
+
+        UICore::Separator();
+        UICore::Heading("Reload");
+
+        if (UICore::Button("Restart Scene"))
+            Studio::QueueAction(STUDIO_ACTION_RESTART_SCENE);
+
+        if (UICore::Button("Recompile Scripts & Reload Scene"))
+            Studio::QueueAction(STUDIO_ACTION_RELOAD_SCENE);
+
+        if (UICore::Button("Restart Engine"))
+            Studio::QueueAction(STUDIO_ACTION_RESTART_ENGINE);
+
+        UICore::Separator();
+        UICore::Heading("Debug View");
+
+        bool showHitboxes = Scene::ShowHitboxes;
+        if (UICore::Checkbox("Show hitboxes", &showHitboxes))
+            Scene::ShowHitboxes = showHitboxes;
+
+        bool showRegions = Scene::ShowObjectRegions != 0;
+        if (UICore::Checkbox("Show object regions", &showRegions))
+            Scene::ShowObjectRegions = showRegions ? 1 : 0;
+
+        bool showPerformance = Application::IsShowingPerformance();
+        if (UICore::Checkbox("Show performance overlay", &showPerformance))
+            Application::SetShowingPerformance(showPerformance);
+
+        static const char* collisionModes[] = { "off", "path A", "path B" };
+        char collisionLabel[64];
+        snprintf(collisionLabel, sizeof(collisionLabel), "Tile collision: %s",
+            collisionModes[Scene::ShowTileCollisionFlag % 3]);
+
+        if (UICore::Button(collisionLabel)) {
+            Scene::ShowTileCollisionFlag = (Scene::ShowTileCollisionFlag + 1) % 3;
+            Application::UpdateWindowTitle();
+        }
+
+        if (UICore::Button("Write Performance Snapshot To Log")) {
+            Application::TakePerformanceSnapshot();
+            Studio::SetStatus("Snapshot written to the console.");
+        }
+    UICore::EndPanel();
+
+    UICore::BeginPanel("Statistics", secondX, secondY, halfW, halfH);
+        UICore::FieldFormatted("FPS", "%.1f", Application::FPS);
+        UICore::Field("Renderer", Graphics::Renderer ? Graphics::Renderer : "unknown");
+        UICore::Field("Scene", Scene::CurrentScene[0] ? Scene::CurrentScene : "(none)");
+        UICore::FieldFormatted("Frame", "%d", Scene::Frame);
+        UICore::FieldFormatted("Objects", "%d", Scene::ObjectCount);
+        UICore::FieldFormatted("Static objects", "%d", Scene::StaticObjectCount);
+        UICore::FieldFormatted("Dynamic objects", "%d", Scene::DynamicObjectCount);
+        UICore::FieldFormatted("Tilesets", "%d", (int)Scene::Tilesets.size());
+        UICore::FieldFormatted("Tile size", "%d x %d", Scene::TileWidth, Scene::TileHeight);
+        UICore::FieldFormatted("Active views", "%d", Scene::ViewsActive);
+
+        UICore::Separator();
+        UICore::Heading("Layers");
+
+        if (!Scene::Layers.size())
+            UICore::Text("No layers in this scene.", UI_COL_TEXT_FAINT);
+
+        for (size_t i = 0; i < Scene::Layers.size(); i++) {
+            SceneLayer& layer = Scene::Layers[i];
+
+            char label[512];
+            snprintf(label, sizeof(label), "%s  (%dx%d)##layer%d",
+                layer.Name, layer.Width, layer.Height, (int)i);
+
+            bool visible = layer.Visible;
+            if (UICore::Checkbox(label, &visible))
+                layer.Visible = visible;
+        }
+    UICore::EndPanel();
+}
+
+PRIVATE STATIC void Studio::DrawSettingsTab(float x, float y, float w, float h, bool split) {
+    float halfW = split ? w / 2.0f : w;
+    float halfH = split ? h : h / 2.0f;
+    float secondX = split ? x + halfW : x;
+    float secondY = split ? y : y + halfH;
+
+    INI* settings = Application::Settings;
+
+    UICore::BeginPanel("Display & Audio", x, y, halfW, halfH);
+        bool fullscreen = PendingAction == STUDIO_ACTION_SET_FULLSCREEN ?
+            PendingValueA != 0 : Application::GetWindowFullscreen();
+        if (UICore::Checkbox("Fullscreen", &fullscreen)) {
+            PendingValueA = fullscreen ? 1 : 0;
+            Studio::QueueAction(STUDIO_ACTION_SET_FULLSCREEN);
+            if (settings)
+                settings->SetBool("display", "fullscreen", fullscreen);
+        }
+
+        bool vsync = Graphics::VsyncEnabled;
+        if (UICore::Checkbox("V-Sync", &vsync)) {
+            Graphics::VsyncEnabled = vsync;
+            Graphics::SetVSync(vsync);
+            if (settings)
+                settings->SetBool("display", "vsync", vsync);
+        }
+
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
+        UICore::TextField("Width", WindowWidthText, sizeof(WindowWidthText));
+        UICore::SameLine();
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
+        UICore::TextField("Height", WindowHeightText, sizeof(WindowHeightText));
+
+        if (UICore::Button("Apply Window Size")) {
+            int width = 0, height = 0;
+            if (StringUtils::ToNumber(&width, WindowWidthText) &&
+                StringUtils::ToNumber(&height, WindowHeightText) &&
+                width >= 160 && height >= 120) {
+                PendingValueA = width;
+                PendingValueB = height;
+                Studio::QueueAction(STUDIO_ACTION_SET_WINDOW_SIZE);
+            }
+            else
+                Studio::SetStatus("Enter a window size of at least 160 x 120.");
+        }
+
+        UICore::Separator();
+        UICore::Heading("Audio");
+
+        int masterVolume = Application::MasterVolume;
+        if (UICore::SliderInt("Master", &masterVolume, 0, 100)) {
+            Application::SetMasterVolume(masterVolume);
+            if (settings)
+                settings->SetInteger("audio", "masterVolume", masterVolume);
+        }
+
+        int musicVolume = Application::MusicVolume;
+        if (UICore::SliderInt("Music", &musicVolume, 0, 100)) {
+            Application::SetMusicVolume(musicVolume);
+            if (settings)
+                settings->SetInteger("audio", "musicVolume", musicVolume);
+        }
+
+        int soundVolume = Application::SoundVolume;
+        if (UICore::SliderInt("Sound", &soundVolume, 0, 100)) {
+            Application::SetSoundVolume(soundVolume);
+            if (settings)
+                settings->SetInteger("audio", "soundVolume", soundVolume);
+        }
+    UICore::EndPanel();
+
+    UICore::BeginPanel("Developer", secondX, secondY, halfW, halfH);
+        bool devMenu = Application::IsDevMenuEnabled();
+        if (UICore::Checkbox("Developer hotkeys (F1-F10)", &devMenu)) {
+            Application::SetDevMenuEnabled(devMenu);
+            if (settings)
+                settings->SetBool("dev", "devMenu", devMenu);
+        }
+
+        bool openOnStart = false;
+        if (settings)
+            settings->GetBool("studio", "openOnStart", &openOnStart);
+        if (UICore::Checkbox("Open this editor on startup", &openOnStart) && settings)
+            settings->SetBool("studio", "openOnStart", openOnStart);
+
+        if (UICore::Checkbox("Pause the game while the editor is open", &Studio::PauseGameWhileOpen) && settings)
+            settings->SetBool("studio", "pauseWhenOpen", Studio::PauseGameWhileOpen);
+
+        bool writeLog = Log::WriteToFile;
+        if (UICore::Checkbox("Write the log to a file", &writeLog)) {
+            Log::WriteToFile = writeLog;
+            if (settings)
+                settings->SetBool("dev", "writeToFile", writeLog);
+        }
+
+        int logLevel = Log::LogLevel;
+        if (UICore::SliderInt("Log level", &logLevel, -1, 3)) {
+            Log::SetLogLevel(logLevel);
+            if (settings)
+                settings->SetInteger("dev", "logLevel", logLevel);
+        }
+        UICore::Text("-1 verbose, 0 info, 1 warnings, 2 errors, 3 important", UI_COL_TEXT_FAINT);
+
+        UICore::Separator();
+        UICore::Heading("Renderer");
+
+        char currentRenderer[64] = "opengl";
+        if (settings)
+            settings->GetString("dev", "renderer", currentRenderer, sizeof(currentRenderer));
+
+        char rendererLabel[128];
+        snprintf(rendererLabel, sizeof(rendererLabel), "Preferred: %s", currentRenderer);
+
+        if (UICore::Button(rendererLabel) && settings) {
+            int count = (int)(sizeof(RendererNames) / sizeof(RendererNames[0]));
+            int next = 0;
+            for (int i = 0; i < count; i++) {
+                if (!strcmp(RendererNames[i], currentRenderer)) {
+                    next = (i + 1) % count;
+                    break;
+                }
+            }
+
+            settings->SetString("dev", "renderer", RendererNames[next]);
+            Studio::SetStatus("Renderer set to %s; restart to apply.", RendererNames[next]);
+        }
+
+        UICore::Field("In use now", Graphics::Renderer ? Graphics::Renderer : "unknown");
+
+        UICore::Separator();
+
+        if (UICore::Button("Save Settings")) {
+            Application::SaveSettings();
+            Studio::SetStatus("Saved %s.", Application::SettingsFile);
+        }
+    UICore::EndPanel();
+}
+
+PRIVATE STATIC void Studio::DrawConsoleTab(float x, float y, float w, float h) {
+    float toolbarHeight = UICore::RowHeight() + UICore::Pad() * 3.0f;
+    if (toolbarHeight > h)
+        toolbarHeight = h;
+
+    UICore::BeginPanel("##consoletoolbar", x, y, w, toolbarHeight);
+        float buttonWidth = UICore::ContentWidth() / 5.0f - UICore::Pad();
+
+        UICore::SetNextItemWidth(buttonWidth);
+        if (UICore::Button("Clear")) {
+            Log::ClearHistory();
+            LastLogCount = 0;
+        }
+
+        UICore::SameLine();
+        UICore::SetNextItemWidth(buttonWidth);
+        UICore::Checkbox("Verbose", &ShowVerbose);
+        UICore::SameLine();
+        UICore::SetNextItemWidth(buttonWidth);
+        UICore::Checkbox("Info", &ShowInfo);
+        UICore::SameLine();
+        UICore::SetNextItemWidth(buttonWidth);
+        UICore::Checkbox("Warnings", &ShowWarnings);
+        UICore::SameLine();
+        UICore::SetNextItemWidth(buttonWidth);
+        UICore::Checkbox("Follow", &FollowLog);
+    UICore::EndPanel();
+
+    if (h - toolbarHeight < UICore::RowHeight())
+        return;
+
+    UICore::BeginPanel("Console", x, y + toolbarHeight, w, h - toolbarHeight);
+        size_t count = Log::GetHistoryCount();
+
+        for (size_t i = 0; i < count; i++) {
+            int severity = Log::GetHistorySeverity(i);
+
+            Uint32 color = UI_COL_TEXT_DIM;
+            switch (severity) {
+                case Log::LOG_VERBOSE:
+                    if (!ShowVerbose)
+                        continue;
+                    color = UI_COL_VERBOSE;
+                    break;
+                case Log::LOG_WARN:
+                    if (!ShowWarnings)
+                        continue;
+                    color = UI_COL_WARNING;
+                    break;
+                case Log::LOG_ERROR:
+                    if (!ShowErrors)
+                        continue;
+                    color = UI_COL_DANGER;
+                    break;
+                case Log::LOG_IMPORTANT:
+                    color = UI_COL_ACCENT;
+                    break;
+                default:
+                    if (!ShowInfo)
+                        continue;
+                    break;
+            }
+
+            Studio::DrawLogLine(Log::GetHistoryText(i), color);
+        }
+
+        // Snap to the newest message whenever something was logged, so the
+        // console behaves like a terminal that is being tailed.
+        if (FollowLog && count != LastLogCount) {
+            UICore::ScrollToBottom();
+            LastLogCount = count;
+        }
+    UICore::EndPanel();
+}
+
+// Log messages can be several lines long and wider than the panel, so break
+// them up rather than letting them run off the edge.
+PRIVATE STATIC void Studio::DrawLogLine(const char* text, Uint32 color) {
+    int columns = (int)(UICore::ContentWidth() / UIDraw::CharWidth());
+    if (columns < 8)
+        columns = 8;
+
+    char chunk[1024];
+    if (columns > (int)sizeof(chunk) - 1)
+        columns = (int)sizeof(chunk) - 1;
+
+    const char* cursor = text;
+    while (*cursor) {
+        int length = 0;
+        while (cursor[length] && cursor[length] != '\n' && length < columns)
+            length++;
+
+        memcpy(chunk, cursor, length);
+        chunk[length] = '\0';
+        UICore::Text(chunk, color);
+
+        cursor += length;
+        if (*cursor == '\n')
+            cursor++;
+    }
+}
+
+PRIVATE STATIC void Studio::DrawHelpTab(float x, float y, float w, float h) {
+    UICore::BeginPanel("About & Controls", x, y, w, h);
+        UICore::Heading("Hatch Game Engine");
+        UICore::Field("Engine version", Application::EngineVersion);
+        UICore::Field("Renderer", Graphics::Renderer ? Graphics::Renderer : "unknown");
+        UICore::Field("Settings file", Application::SettingsFile);
+
+        UICore::Separator();
+        UICore::Heading("Using the editor");
+        UICore::Text("F12 or the ` key opens and closes this editor.", UI_COL_TEXT_DIM);
+        UICore::Text("Project    pick a game folder or .hatch file, or make a new one.", UI_COL_TEXT_DIM);
+        UICore::Text("Scenes     browse the project's scenes and load one.", UI_COL_TEXT_DIM);
+        UICore::Text("Play       pause, step, reload, and inspect the running scene.", UI_COL_TEXT_DIM);
+        UICore::Text("Settings   change display, audio and developer options.", UI_COL_TEXT_DIM);
+        UICore::Text("Console    read the engine log without a terminal.", UI_COL_TEXT_DIM);
+
+        UICore::Separator();
+        UICore::Heading("Developer hotkeys");
+
+        if (!Application::IsDevMenuEnabled())
+            UICore::Text("Currently off; turn them on under Settings.", UI_COL_WARNING);
+
+        struct {
+            const char* Name;
+            KeyBind     Bind;
+        } binds[] = {
+            { "Toggle fullscreen",          KeyBind::Fullscreen },
+            { "Restart engine",             KeyBind::DevRestartApp },
+            { "Restart scene",              KeyBind::DevRestartScene },
+            { "Recompile and reload scene", KeyBind::DevRecompile },
+            { "Performance snapshot",       KeyBind::DevPerfSnapshot },
+            { "Log layer info",             KeyBind::DevLayerInfo },
+            { "Fast forward",               KeyBind::DevFastForward },
+            { "Toggle frame stepper",       KeyBind::DevFrameStepper },
+            { "Step one frame",             KeyBind::DevStepFrame },
+            { "Cycle tile collision view",  KeyBind::DevTileCol },
+            { "Show object regions",        KeyBind::DevObjectRegions },
+            { "Quit",                       KeyBind::DevQuit },
+        };
+
+        for (size_t i = 0; i < sizeof(binds) / sizeof(binds[0]); i++) {
+            char* keyName = InputManager::GetKeyName(Application::GetKeyBind((int)binds[i].Bind));
+            UICore::Field(binds[i].Name, keyName ? keyName : "unbound");
+        }
+    UICore::EndPanel();
+}
+
+// ---------------------------------------------------------------- rendering -
+
+PUBLIC STATIC void Studio::Render() {
+    if (!Studio::Visible || !Initialized)
+        return;
+
+    UICore::NewFrame();
+
+    // Begin declines the frame when the window has no size yet, or before the
+    // scene has set up the view the renderer projects through.
+    if (!UIDraw::IsInFrame()) {
+        UICore::EndFrame();
+        return;
+    }
+
+    float scale = UIDraw::Scale;
+    float width = (float)UIDraw::ViewWidth;
+    float height = (float)UIDraw::ViewHeight;
+
+    UICore::Backdrop();
+
+    float headerHeight = UICore::TitleBarHeight();
+    float tabHeight = UICore::RowHeight();
+    float statusHeight = UIDraw::LineHeight() + 6.0f * scale;
+
+    // Header.
+    UIDraw::FillRect(0.0f, 0.0f, width, headerHeight, UI_COL_PANEL_HEADER);
+    UIDraw::FillRect(0.0f, headerHeight - 1.0f, width, 1.0f, UI_COL_ACCENT);
+    UIDraw::Text(UICore::Pad() * 2.0f, (headerHeight - UIDraw::LineHeight()) / 2.0f,
+        "Hatch Studio", UI_COL_ACCENT);
+
+    float titleX = UICore::Pad() * 2.0f + UIDraw::TextWidth("Hatch Studio") + UICore::Pad() * 3.0f;
+    UIDraw::TextClipped(titleX, (headerHeight - UIDraw::LineHeight()) / 2.0f,
+        Application::GameTitle, UI_COL_TEXT_DIM, scale, width * 0.4f);
+
+    char versionText[288];
+    snprintf(versionText, sizeof(versionText), "engine %s", Application::EngineVersion);
+    UIDraw::TextRight(width - UICore::Pad() * 2.0f, (headerHeight - UIDraw::LineHeight()) / 2.0f,
+        versionText, UI_COL_TEXT_FAINT, scale);
+
+    // Tabs.
+    UICore::TabBar(TabNames, STUDIO_TAB_COUNT, &CurrentTab, 0.0f, headerHeight, width, tabHeight);
+
+    // Content.
+    float contentY = headerHeight + tabHeight;
+    float contentH = height - contentY - statusHeight;
+
+    // Side-by-side panels need enough room to stay readable; below that they
+    // stack instead.
+    bool split = width >= 96.0f * UIDraw::CharWidth();
+
+    // In a window too short for even one row there is nowhere to put the
+    // panels, so only the header, tabs and status bar are drawn.
+    if (contentH < UICore::RowHeight())
+        contentH = 0.0f;
+
+    switch (contentH > 0.0f ? CurrentTab : -1) {
+        case STUDIO_TAB_PROJECT:
+            Studio::DrawProjectTab(0.0f, contentY, width, contentH, split);
+            break;
+        case STUDIO_TAB_SCENES:
+            Studio::DrawScenesTab(0.0f, contentY, width, contentH, split);
+            break;
+        case STUDIO_TAB_PLAY:
+            Studio::DrawPlayTab(0.0f, contentY, width, contentH, split);
+            break;
+        case STUDIO_TAB_SETTINGS:
+            Studio::DrawSettingsTab(0.0f, contentY, width, contentH, split);
+            break;
+        case STUDIO_TAB_CONSOLE:
+            Studio::DrawConsoleTab(0.0f, contentY, width, contentH);
+            break;
+        case STUDIO_TAB_HELP:
+            Studio::DrawHelpTab(0.0f, contentY, width, contentH);
+            break;
+    }
+
+    // Status bar.
+    float statusY = height - statusHeight;
+    UIDraw::FillRect(0.0f, statusY, width, statusHeight, UI_COL_PANEL_HEADER);
+    UIDraw::FillRect(0.0f, statusY, width, 1.0f, UI_COL_BORDER);
+
+    bool statusFresh = StatusMessage[0] && (SDL_GetTicks() - StatusMessageTime) < 6000;
+    UIDraw::Text(UICore::Pad() * 2.0f, statusY + 3.0f * scale,
+        statusFresh ? StatusMessage : "F12 or ` closes the editor.",
+        statusFresh ? UI_COL_SUCCESS : UI_COL_TEXT_FAINT);
+
+    char runState[128];
+    snprintf(runState, sizeof(runState), "%s  |  %.0f FPS",
+        Studio::IsPausingGame() ? "game paused" : "game running", Application::FPS);
+    UIDraw::TextRight(width - UICore::Pad() * 2.0f, statusY + 3.0f * scale,
+        runState, UI_COL_TEXT_FAINT, scale);
+
+    UICore::EndFrame();
+}
