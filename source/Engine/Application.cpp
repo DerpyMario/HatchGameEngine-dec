@@ -64,6 +64,7 @@ public:
 #include <Engine/Scene/SceneInfo.h>
 #include <Engine/TextFormats/XML/XMLParser.h>
 #include <Engine/TextFormats/XML/XMLNode.h>
+#include <Engine/UI/Studio.h>
 #include <Engine/Utilities/StringUtils.h>
 
 #include <Engine/Media/MediaSource.h>
@@ -283,6 +284,8 @@ PUBLIC STATIC void Application::Init(int argc, char* args[]) {
     Log::Print(Log::LOG_INFO, "Current Platform: %s", platform);
 
     Application::SetWindowTitle(Application::GameTitleShort);
+
+    Studio::Init();
 
     Running = true;
 }
@@ -505,7 +508,7 @@ PUBLIC STATIC void Application::UpdateWindowTitle() {
     SDL_SetWindowTitle(Application::Window, titleText.c_str());
 }
 
-PRIVATE STATIC void Application::Restart() {
+PUBLIC STATIC void Application::Restart() {
     // Reset FPS timer
     BenchmarkFrameCount = 0;
 
@@ -528,6 +531,160 @@ PRIVATE STATIC void Application::Restart() {
     Application::LoadSceneInfo();
     Application::ReloadSettings();
     Application::DisposeGameConfig();
+}
+
+// The three reload flavours below are what the dev hotkeys have always done.
+// They live here as named calls so the editor's buttons and the key handler
+// share one implementation.
+
+// Tears the engine down and brings it back up on the starting scene.
+PUBLIC STATIC void Application::RestartApplication() {
+    Application::Restart();
+
+    Scene::Init();
+    if (*StartingScene)
+        Scene::LoadScene(StartingScene);
+
+    Scene::Restart();
+    Application::UpdateWindowTitle();
+}
+
+// Recompiles the scripts and reloads whatever scene is open.
+PUBLIC STATIC void Application::ReloadScene() {
+    Application::Restart();
+
+    char currentScene[256];
+    memcpy(currentScene, Scene::CurrentScene, sizeof(currentScene));
+
+    Scene::Init();
+
+    memcpy(Scene::CurrentScene, currentScene, sizeof(currentScene));
+    Scene::LoadScene(Scene::CurrentScene);
+
+    Scene::Restart();
+    Application::UpdateWindowTitle();
+}
+
+// Starts the open scene over without recompiling anything.
+PUBLIC STATIC void Application::RestartScene() {
+    // Reset FPS timer
+    BenchmarkFrameCount = 0;
+
+    InputManager::ControllerStopRumble();
+
+    Scene::Restart();
+    Application::UpdateWindowTitle();
+}
+
+// Queues a scene to be swapped in at the top of the next frame. Going through
+// NextScene rather than loading straight away keeps the change on the same code
+// path the scripts use, so it is safe to call from the editor mid-frame.
+PUBLIC STATIC void Application::QueueSceneChange(const char* filename) {
+    if (!filename || !*filename)
+        return;
+
+    StringUtils::Copy(Scene::NextScene, filename, sizeof(Scene::NextScene));
+    Scene::NoPersistency = true;
+}
+
+// Points the engine at a different game and reloads everything: either a folder
+// holding a Resources directory, or a .hatch data file.
+PUBLIC STATIC bool Application::LoadProject(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    char directory[4096];
+    char dataFile[4096];
+
+    StringUtils::Copy(directory, path, sizeof(directory));
+    dataFile[0] = '\0';
+
+    if (StringUtils::StrCaseStr(path, ".hatch")) {
+        // Split "some/where/Data.hatch" into the folder to move into and the
+        // file name to hand to the resource manager.
+        char* lastSlash = NULL;
+        for (char* i = directory; *i; i++) {
+            if (*i == '/' || *i == '\\')
+                lastSlash = i;
+        }
+
+        if (lastSlash) {
+            StringUtils::Copy(dataFile, lastSlash + 1, sizeof(dataFile));
+            *lastSlash = '\0';
+        }
+        else {
+            StringUtils::Copy(dataFile, directory, sizeof(dataFile));
+            StringUtils::Copy(directory, ".", sizeof(directory));
+        }
+    }
+
+    if (!Directory::Exists(directory)) {
+        Log::Print(Log::LOG_ERROR, "Project folder \"%s\" does not exist!", directory);
+        return false;
+    }
+
+    // Pin the settings file to where the engine was launched from before moving
+    // out of that folder, otherwise the relative "config.ini" would follow the
+    // working directory and the editor's preferences and recent project list
+    // would be left behind in whichever project was open last.
+    bool settingsAreAbsolute = Application::SettingsFile[0] == '/' ||
+        Application::SettingsFile[0] == '\\' || strchr(Application::SettingsFile, ':') != NULL;
+
+    if (!settingsAreAbsolute) {
+        char workingDirectory[2048];
+        if (Directory::GetCurrentWorkingDirectory(workingDirectory, sizeof(workingDirectory))) {
+            char absolute[sizeof(workingDirectory) + sizeof(Application::SettingsFile) + 1];
+            snprintf(absolute, sizeof(absolute), "%s/%s", workingDirectory, Application::SettingsFile);
+            Application::SetSettingsFilename(absolute);
+        }
+    }
+
+    if (!Directory::SetCurrentWorkingDirectory(directory)) {
+        Log::Print(Log::LOG_ERROR, "Could not open project folder \"%s\"!", directory);
+        return false;
+    }
+
+    if (!dataFile[0] && !Directory::Exists("Resources"))
+        Log::Print(Log::LOG_WARN, "\"%s\" has no Resources folder.", directory);
+
+    Log::Print(Log::LOG_IMPORTANT, "Opening project \"%s\"...", path);
+
+    Scene::Dispose();
+    SceneInfo::Dispose();
+    Graphics::SpriteSheetTextureMap->WithAll([](Uint32, Texture* tex) -> void {
+        Graphics::DisposeTexture(tex);
+    });
+    Graphics::SpriteSheetTextureMap->Clear();
+
+    ScriptManager::LoadAllClasses = false;
+    ScriptEntity::DisableAutoAnimate = false;
+
+    ResourceManager::Dispose();
+    ResourceManager::Init(dataFile[0] ? dataFile : NULL);
+
+    Graphics::Reset();
+
+    Application::LoadGameConfig();
+    Application::LoadGameInfo();
+    Application::LoadSceneInfo();
+    Application::ReloadSettings();
+    Application::DisposeGameConfig();
+
+    Scene::Init();
+    if (*StartingScene)
+        Scene::LoadScene(StartingScene);
+
+    Scene::Restart();
+
+    Application::SetWindowTitle(Application::GameTitleShort);
+
+    return true;
+}
+
+// Reports the folder the engine is currently reading resources out of.
+PUBLIC STATIC void Application::GetProjectPath(char* out, size_t outSize) {
+    if (!Directory::GetCurrentWorkingDirectory(out, outSize))
+        StringUtils::Copy(out, ".", outSize);
 }
 
 #define CLAMP_VOLUME(vol) \
@@ -620,6 +777,7 @@ PRIVATE STATIC void Application::LoadKeyBinds() {
     GET_KEY("devShowTileCol",        DevTileCol,       Key_F7);
     GET_KEY("devShowObjectRegions",  DevObjectRegions, Key_F8);
     GET_KEY("devQuit",               DevQuit,          Key_ESCAPE);
+    GET_KEY("studio",                Studio,           Key_F12);
 
 #undef GET_KEY
 }
@@ -629,6 +787,36 @@ PRIVATE STATIC void Application::LoadDevSettings() {
     Application::Settings->GetBool("dev", "viewPerformance", &ShowFPS);
     Application::Settings->GetBool("dev", "donothing", &DoNothing);
     Application::Settings->GetInteger("dev", "fastforward", &UpdatesPerFastForward);
+}
+
+// Accessors for the developer toggles, so the editor can drive the same flags
+// the dev hotkeys do without them having to become globals.
+
+PUBLIC STATIC bool Application::IsDevMenuEnabled() {
+    return DevMenu;
+}
+PUBLIC STATIC void Application::SetDevMenuEnabled(bool enabled) {
+    DevMenu = enabled;
+    Application::UpdateWindowTitle();
+}
+
+PUBLIC STATIC bool Application::IsShowingPerformance() {
+    return ShowFPS;
+}
+PUBLIC STATIC void Application::SetShowingPerformance(bool showing) {
+    ShowFPS = showing;
+}
+
+PUBLIC STATIC bool Application::IsFastForwarding() {
+    return UpdatesPerFrame != 1;
+}
+PUBLIC STATIC void Application::SetFastForwarding(bool fastForwarding) {
+    Application::UpdatesPerFrame = fastForwarding ? UpdatesPerFastForward : 1;
+    Application::UpdateWindowTitle();
+}
+
+PUBLIC STATIC void Application::TakePerformanceSnapshot() {
+    TakeSnapshot = true;
 }
 
 PUBLIC STATIC bool Application::IsWindowResizeable() {
@@ -681,6 +869,12 @@ PUBLIC STATIC void Application::SetKeyBind(int bind, int key) {
 PRIVATE STATIC void Application::PollEvents() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        // While the editor is open it gets first refusal on input. It only
+        // claims key presses when one of its text fields has focus, so the
+        // shortcuts below still work with it on screen.
+        if (Studio::HandleEvent(&e))
+            continue;
+
         switch (e.type) {
             case SDL_QUIT: {
                 Running = false;
@@ -689,9 +883,21 @@ PRIVATE STATIC void Application::PollEvents() {
             case SDL_KEYDOWN: {
                 SDL_Keycode key = e.key.keysym.sym;
 
+                // Open and close the editor
+                if (key == KeyBindsSDL[(int)KeyBind::Studio] || key == SDLK_BACKQUOTE) {
+                    Studio::Toggle();
+                    break;
+                }
+
                 // Fullscreen
                 if (key == KeyBindsSDL[(int)KeyBind::Fullscreen]) {
                     Application::SetWindowFullscreen(!Application::GetWindowFullscreen());
+                    break;
+                }
+
+                // Escape backs out of the editor rather than quitting.
+                if (Studio::Visible && key == SDLK_ESCAPE) {
+                    Studio::Hide();
                     break;
                 }
 
@@ -705,13 +911,7 @@ PRIVATE STATIC void Application::PollEvents() {
                     }
                     // Restart application (dev)
                     else if (key == KeyBindsSDL[(int)KeyBind::DevRestartApp]) {
-                        Application::Restart();
-
-                        Scene::Init();
-                        if (*StartingScene)
-                            Scene::LoadScene(StartingScene);
-                        Scene::Restart();
-                        Application::UpdateWindowTitle();
+                        Application::RestartApplication();
                         break;
                     }
                     // Show layer info (dev)
@@ -740,29 +940,12 @@ PRIVATE STATIC void Application::PollEvents() {
                     }
                     // Recompile and restart scene (dev)
                     else if (key == KeyBindsSDL[(int)KeyBind::DevRecompile]) {
-                        Application::Restart();
-
-                        char temp[256];
-                        memcpy(temp, Scene::CurrentScene, 256);
-
-                        Scene::Init();
-
-                        memcpy(Scene::CurrentScene, temp, 256);
-                        Scene::LoadScene(Scene::CurrentScene);
-
-                        Scene::Restart();
-                        Application::UpdateWindowTitle();
+                        Application::ReloadScene();
                         break;
                     }
                     // Restart scene (dev)
                     else if (key == KeyBindsSDL[(int)KeyBind::DevRestartScene]) {
-                        // Reset FPS timer
-                        BenchmarkFrameCount = 0;
-
-                        InputManager::ControllerStopRumble();
-
-                        Scene::Restart();
-                        Application::UpdateWindowTitle();
+                        Application::RestartScene();
                         break;
                     }
                     // Enable update speedup (dev)
@@ -836,6 +1019,10 @@ PRIVATE STATIC void Application::RunFrame(void* p) {
     Application::PollEvents();
     MetricEventTime = Clock::GetTicks() - MetricEventTime;
 
+    // Anything the editor's buttons asked for last frame happens here, where
+    // no rendering is in progress.
+    Studio::Update();
+
     // BUG: Having Stepper on prevents the first
     //   frame of a new scene from Updating, but still rendering.
     if (*Scene::NextScene)
@@ -852,6 +1039,10 @@ PRIVATE STATIC void Application::RunFrame(void* p) {
         Scene::ResetPerf();
         MetricPollTime = 0.0;
         MetricUpdateTime = 0.0;
+        // The editor holds the game still while it is open, so its buttons act
+        // on a scene that isn't moving underneath them.
+        if (Studio::IsPausingGame())
+            break;
         if ((Stepper && Step) || !Stepper) {
             // Poll for inputs
             MetricPollTime = Clock::GetTicks();
@@ -1088,6 +1279,9 @@ PRIVATE STATIC void Application::RunFrame(void* p) {
     }
     MetricFPSCounterTime = Clock::GetTicks() - MetricFPSCounterTime;
 
+    // Drawn last so it sits on top of both the game and the debug overlay.
+    Studio::Render();
+
     MetricPresentTime = Clock::GetTicks();
     Graphics::Present();
     MetricPresentTime = Clock::GetTicks() - MetricPresentTime;
@@ -1153,6 +1347,11 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     Application::UpdateWindowTitle();
     Application::SetWindowSize(Application::WindowWidth, Application::WindowHeight);
 
+    // Launched with nothing to run -- no scene, no project. Rather than sitting
+    // on an empty window, open the editor so there is something to click.
+    if (!Scene::CurrentScene[0] && !Scene::NextScene[0])
+        Studio::Show();
+
     Graphics::Clear();
     Graphics::Present();
 
@@ -1190,6 +1389,8 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
                 Application::GetPerformanceSnapshot();
             }
         }
+
+        Studio::Dispose();
 
         Scene::Dispose();
 

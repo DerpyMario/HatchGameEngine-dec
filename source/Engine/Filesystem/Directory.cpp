@@ -55,6 +55,43 @@ PUBLIC STATIC bool          Directory::GetCurrentWorkingDirectory(char* out, siz
     #endif
 }
 
+// Resource paths are all resolved relative to the working directory, so opening
+// a different project from the editor means moving into its folder.
+PUBLIC STATIC bool          Directory::SetCurrentWorkingDirectory(const char* path) {
+    #if WIN32
+        return _chdir(path) == 0;
+    #else
+        return chdir(path) == 0;
+    #endif
+}
+
+// Creates every missing directory along the path, like "mkdir -p".
+PUBLIC STATIC bool          Directory::CreatePath(const char* path) {
+    char partial[MAX_PATH_SIZE];
+    size_t length = strlen(path);
+    if (length == 0 || length >= sizeof(partial))
+        return false;
+
+    memcpy(partial, path, length + 1);
+
+    for (size_t i = 1; i <= length; i++) {
+        bool end = i == length;
+        if (!end && partial[i] != '/' && partial[i] != '\\')
+            continue;
+
+        char separator = partial[i];
+        partial[i] = '\0';
+
+        if (!Directory::Exists(partial) && !Directory::Create(partial))
+            return false;
+
+        if (!end)
+            partial[i] = separator;
+    }
+
+    return true;
+}
+
 PUBLIC STATIC void          Directory::GetFiles(vector<char*>* files, const char* path, const char* searchPattern, bool allDirs) {
     #if WIN32
         char winPath[MAX_PATH_SIZE];

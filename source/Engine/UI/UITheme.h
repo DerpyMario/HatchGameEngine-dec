@@ -1,0 +1,34 @@
+#ifndef ENGINE_UI_UITHEME_H
+#define ENGINE_UI_UITHEME_H
+
+// Colors used by the editor interface, in 0xAARRGGBB.
+
+#define UI_COL_BACKDROP      0xC8090B10
+#define UI_COL_PANEL         0xFF1E212A
+#define UI_COL_PANEL_HEADER  0xFF2B2F3B
+#define UI_COL_BORDER        0xFF3C4150
+#define UI_COL_BORDER_LIGHT  0xFF4A5063
+
+#define UI_COL_TEXT          0xFFE6E8EE
+#define UI_COL_TEXT_DIM      0xFF9198AA
+#define UI_COL_TEXT_FAINT    0xFF666D80
+#define UI_COL_TEXT_ON_ACC   0xFF0B0E14
+
+#define UI_COL_ACCENT        0xFF4FA3FF
+#define UI_COL_ACCENT_DIM    0xFF2C5C8F
+
+#define UI_COL_BUTTON        0xFF333949
+#define UI_COL_BUTTON_HOVER  0xFF414960
+#define UI_COL_BUTTON_DOWN   0xFF4FA3FF
+#define UI_COL_BUTTON_OFF    0xFF262A35
+
+#define UI_COL_FIELD         0xFF15181F
+#define UI_COL_SELECTION     0xFF2C5C8F
+#define UI_COL_ROW_ALT       0xFF232733
+
+#define UI_COL_SUCCESS       0xFF62C46A
+#define UI_COL_WARNING       0xFFE0A05A
+#define UI_COL_DANGER        0xFFE05561
+#define UI_COL_VERBOSE       0xFF8E7BD6
+
+#endif /* ENGINE_UI_UITHEME_H */

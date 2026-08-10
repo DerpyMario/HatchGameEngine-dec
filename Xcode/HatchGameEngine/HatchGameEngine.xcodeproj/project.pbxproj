@@ -88,6 +88,9 @@
 		D0B14611268B6FA800CDA5EF /* Application.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145A7268B6FA700CDA5EF /* Application.cpp */; };
 		D0B14612268B6FA800CDA5EF /* ScrollingIndex.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145A9268B6FA700CDA5EF /* ScrollingIndex.cpp */; };
 		D0B14613268B6FA800CDA5EF /* View.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145AA268B6FA700CDA5EF /* View.cpp */; };
+		CA11DE000000000000000004 /* UIDraw.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000001 /* UIDraw.cpp */; };
+		CA11DE000000000000000005 /* UICore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000002 /* UICore.cpp */; };
+		CA11DE000000000000000006 /* Studio.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000003 /* Studio.cpp */; };
 		D0B14614268B6FA800CDA5EF /* SceneLayer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145AB268B6FA700CDA5EF /* SceneLayer.cpp */; };
 		D0B14615268B6FA800CDA5EF /* ScrollingInfo.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145AC268B6FA700CDA5EF /* ScrollingInfo.cpp */; };
 		D0B14616268B6FA800CDA5EF /* TileSpriteInfo.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145AD268B6FA700CDA5EF /* TileSpriteInfo.cpp */; };
@@ -236,6 +239,9 @@
 		D0B145A7268B6FA700CDA5EF /* Application.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Application.cpp; sourceTree = "<group>"; };
 		D0B145A9268B6FA700CDA5EF /* ScrollingIndex.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ScrollingIndex.cpp; sourceTree = "<group>"; };
 		D0B145AA268B6FA700CDA5EF /* View.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = View.cpp; sourceTree = "<group>"; };
+		CA11DE000000000000000001 /* UIDraw.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UIDraw.cpp; sourceTree = "<group>"; };
+		CA11DE000000000000000002 /* UICore.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UICore.cpp; sourceTree = "<group>"; };
+		CA11DE000000000000000003 /* Studio.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Studio.cpp; sourceTree = "<group>"; };
 		D0B145AB268B6FA700CDA5EF /* SceneLayer.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SceneLayer.cpp; sourceTree = "<group>"; };
 		D0B145AC268B6FA700CDA5EF /* ScrollingInfo.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ScrollingInfo.cpp; sourceTree = "<group>"; };
 		D0B145AD268B6FA700CDA5EF /* TileSpriteInfo.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TileSpriteInfo.cpp; sourceTree = "<group>"; };
@@ -357,6 +363,7 @@
 				D0B1458E268B6FA700CDA5EF /* Rendering */,
 				D0B1454F268B6FA700CDA5EF /* ResourceTypes */,
 				D0B145A8268B6FA700CDA5EF /* Scene */,
+				CA11DE000000000000000007 /* UI */,
 				D0B145A5268B6FA700CDA5EF /* Sprites */,
 				D0B145AF268B6FA700CDA5EF /* TextFormats */,
 				D0B1452E268B6FA700CDA5EF /* Types */,
@@ -693,6 +700,16 @@
 			path = Sprites;
 			sourceTree = "<group>";
 		};
+		CA11DE000000000000000007 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				CA11DE000000000000000001 /* UIDraw.cpp */,
+				CA11DE000000000000000002 /* UICore.cpp */,
+				CA11DE000000000000000003 /* Studio.cpp */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
 		D0B145A8268B6FA700CDA5EF /* Scene */ = {
 			isa = PBXGroup;
 			children = (
@@ -867,6 +884,9 @@
 				D0B145E4268B6FA700CDA5EF /* RSDKSceneReader.cpp in Sources */,
 				D0B14618268B6FA800CDA5EF /* XMLParser.cpp in Sources */,
 				D0B14613268B6FA800CDA5EF /* View.cpp in Sources */,
+				CA11DE000000000000000004 /* UIDraw.cpp in Sources */,
+				CA11DE000000000000000005 /* UICore.cpp in Sources */,
+				CA11DE000000000000000006 /* Studio.cpp in Sources */,
 				D0B145EB268B6FA700CDA5EF /* ImageFormat.cpp in Sources */,
 				D0B145D0268B6FA700CDA5EF /* WebSocketClient.cpp in Sources */,
 				D0B145F9268B6FA700CDA5EF /* StringUtils.cpp in Sources */,

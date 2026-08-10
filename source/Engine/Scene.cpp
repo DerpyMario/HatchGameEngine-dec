@@ -659,10 +659,17 @@ PUBLIC STATIC void Scene::SetInfoFromCurrentID() {
 
     SceneListEntry& scene = SceneInfo::Entries[entryID];
 
-    strcpy(Scene::CurrentFolder, scene.Folder);
-    strcpy(Scene::CurrentID, scene.ID);
-    strcpy(Scene::CurrentSpriteFolder, scene.SpriteFolder);
-    strcpy(Scene::CurrentCategory, category.Name);
+    // A scene list only has to name its stages; "folder" and "spriteFolder"
+    // are optional and come through as null when they are left out.
+#define COPY_SCENE_FIELD(dest, source) \
+    StringUtils::Copy(dest, (source) ? (source) : "", sizeof(dest))
+
+    COPY_SCENE_FIELD(Scene::CurrentFolder, scene.Folder);
+    COPY_SCENE_FIELD(Scene::CurrentID, scene.ID);
+    COPY_SCENE_FIELD(Scene::CurrentSpriteFolder, scene.SpriteFolder);
+    COPY_SCENE_FIELD(Scene::CurrentCategory, category.Name);
+
+#undef COPY_SCENE_FIELD
 
     Scene::CurrentSceneInList = entryID;
 }

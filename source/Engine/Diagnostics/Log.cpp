@@ -1,4 +1,6 @@
 #if INTERFACE
+#include <Engine/Includes/Standard.h>
+
 class Log {
 public:
     enum LogLevels {
@@ -12,6 +14,9 @@ public:
     static int         LogLevel;
     static const char* LogFilename;
     static bool        WriteToFile;
+
+    // How many messages the in-memory history keeps for the editor's console.
+    static size_t      MaxHistory;
 };
 #endif
 
@@ -40,8 +45,14 @@ extern "C" {
 int         Log::LogLevel = -1;
 bool        Log::WriteToFile = false;
 const char* Log::LogFilename = TARGET_NAME ".log";
+size_t      Log::MaxHistory = 1024;
 
 bool        Log_Initialized = false;
+
+// Every message is also kept here so the editor's console panel can show the
+// log without the user needing a terminal attached.
+static vector<std::string> HistoryText;
+static vector<int>         HistorySeverity;
 
 #if WIN32 || LINUX
 #define USING_COLOR_CODES 1
@@ -88,6 +99,45 @@ PUBLIC STATIC void Log::SetLogLevel(int sev) {
     Log::LogLevel = sev;
 }
 
+PRIVATE STATIC void Log::Remember(int sev, const char* text) {
+    if (Log::MaxHistory == 0)
+        return;
+
+    HistoryText.push_back(std::string(text));
+    HistorySeverity.push_back(sev);
+
+    // Drop the oldest messages in one go rather than shifting the whole vector
+    // on every single line once the buffer is full.
+    if (HistoryText.size() > Log::MaxHistory * 2) {
+        size_t excess = HistoryText.size() - Log::MaxHistory;
+        HistoryText.erase(HistoryText.begin(), HistoryText.begin() + excess);
+        HistorySeverity.erase(HistorySeverity.begin(), HistorySeverity.begin() + excess);
+    }
+}
+
+PUBLIC STATIC size_t Log::GetHistoryCount() {
+    return HistoryText.size();
+}
+
+PUBLIC STATIC const char* Log::GetHistoryText(size_t index) {
+    if (index >= HistoryText.size())
+        return "";
+
+    return HistoryText[index].c_str();
+}
+
+PUBLIC STATIC int Log::GetHistorySeverity(size_t index) {
+    if (index >= HistorySeverity.size())
+        return Log::LOG_INFO;
+
+    return HistorySeverity[index];
+}
+
+PUBLIC STATIC void Log::ClearHistory() {
+    HistoryText.clear();
+    HistorySeverity.clear();
+}
+
 PUBLIC STATIC void Log::Print(int sev, const char* format, ...) {
     #ifdef USING_COLOR_CODES
     int ColorCode = 0;
@@ -130,6 +180,8 @@ PUBLIC STATIC void Log::Print(int sev, const char* format, ...) {
     }
 
     const char *string = stringBuffer;
+
+    Log::Remember(sev, string);
 
     #if defined(ANDROID)
         switch (sev) {
