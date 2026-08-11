@@ -6,26 +6,6 @@ name: Build application
 # nothing installed on it.
 on:
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: Build configuration
-        type: choice
-        options:
-          - Release
-          - Debug
-        default: Release
-
-permissions:
-  contents: read
-
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  SDL2_VERSION: 2.30.11
-  GLEW_VERSION: 2.2.0
-  BUILD_TYPE: ${{ inputs.build_type || 'Release' }}
 
 jobs:
   linux:
