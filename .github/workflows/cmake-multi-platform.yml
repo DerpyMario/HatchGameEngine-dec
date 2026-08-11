@@ -42,8 +42,12 @@ jobs:
         run: c++ -O2 -std=c++17 -Itools/makeheaders-src -o tools/makeheaders tools/makeheaders-src/main.cpp
 
       - name: Build SDL2 as a static library
+        env:
+          SDL2_VERSION: "2.30.11"
         run: |
-          curl -sSLo SDL2.tar.gz \
+          # -f so an HTTP error stops here with something readable, rather than
+          # leaving an error page in the file for tar to choke on.
+          curl -fsSLo SDL2.tar.gz \
             "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
           tar xzf SDL2.tar.gz
           cmake -S "SDL2-${SDL2_VERSION}" -B sdl2-build \
@@ -52,11 +56,19 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/sdl2"
           cmake --build sdl2-build --parallel --target install
 
+          # SDL2 quietly builds without a video driver when the development
+          # headers for one are missing, and the first anyone would hear of it
+          # is a window that never opens. It is worth failing here instead.
+          if ! grep -q "define SDL_VIDEO_DRIVER_X11 1" "${GITHUB_WORKSPACE}/sdl2/include/SDL2/SDL_config.h"; then
+            echo "SDL2 was built without X11 video support"
+            exit 1
+          fi
+
       - name: Configure
         run: |
           libdir="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
           cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+            -DCMAKE_BUILD_TYPE=Release \
             -DUSE_SDL2_CONFIG=ON \
             -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/sdl2" \
             -DGLEW_LIBRARY="${libdir}/libGLEW.a" \
@@ -71,12 +83,12 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          cp "build/HatchGameEngine-${BUILD_TYPE}" dist/HatchGameEngine
+          cp build/HatchGameEngine-Release dist/HatchGameEngine
           strip dist/HatchGameEngine || true
           chmod +x dist/HatchGameEngine
 
           echo "What the executable still needs from the system:"
-          ldd dist/HatchGameEngine
+          ldd dist/HatchGameEngine || true
 
           # An artifact is delivered as a zip, and a zip does not carry the
           # executable bit, so the binary travels inside a tarball instead.
@@ -101,8 +113,10 @@ jobs:
       # Both architectures in the one library, so the one application covers
       # Apple silicon and Intel Macs alike.
       - name: Build SDL2 as a static universal library
+        env:
+          SDL2_VERSION: "2.30.11"
         run: |
-          curl -sSLo SDL2.tar.gz \
+          curl -fsSLo SDL2.tar.gz \
             "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
           tar xzf SDL2.tar.gz
           cmake -S "SDL2-${SDL2_VERSION}" -B sdl2-build \
@@ -116,7 +130,7 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+            -DCMAKE_BUILD_TYPE=Release \
             -DUSE_SDL2_CONFIG=ON \
             -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/sdl2" \
             -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
@@ -132,7 +146,7 @@ jobs:
           app="dist/HatchGameEngine.app"
           mkdir -p "${app}/Contents/MacOS" "${app}/Contents/Resources"
 
-          cp "build/HatchGameEngine-${BUILD_TYPE}" "${app}/Contents/MacOS/HatchGameEngine"
+          cp build/HatchGameEngine-Release "${app}/Contents/MacOS/HatchGameEngine"
           cp meta/mac/icon.icns "${app}/Contents/Resources/icon.icns"
 
           cat > "${app}/Contents/Info.plist" <<'PLIST'
@@ -206,21 +220,28 @@ jobs:
       # executable does not ask for a Visual C++ redistributable either.
       - name: Build SDL2 as a static library
         shell: pwsh
+        env:
+          SDL2_VERSION: "2.30.11"
         run: |
-          curl.exe -sSLo SDL2.zip "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL2_VERSION/SDL2-$env:SDL2_VERSION.zip"
+          # Braces around the name, or PowerShell reads "$env:SDL2_VERSION.zip"
+          # as an environment variable called SDL2_VERSION.zip and hands back
+          # nothing at all.
+          curl.exe -fsSLo SDL2.zip "https://github.com/libsdl-org/SDL/releases/download/release-${env:SDL2_VERSION}/SDL2-${env:SDL2_VERSION}.zip"
           tar -xf SDL2.zip
-          cmake -S "SDL2-$env:SDL2_VERSION" -B sdl2-build -A ${{ matrix.platform }} `
+          cmake -S "SDL2-${env:SDL2_VERSION}" -B sdl2-build -A ${{ matrix.platform }} `
             -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF `
             -DSDL_FORCE_STATIC_VCRT=ON `
-            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/sdl2"
+            -DCMAKE_INSTALL_PREFIX="${env:GITHUB_WORKSPACE}/sdl2"
           cmake --build sdl2-build --config Release --parallel --target install
 
       - name: Build GLEW as a static library
         shell: pwsh
+        env:
+          GLEW_VERSION: "2.2.0"
         run: |
-          curl.exe -sSLo glew.zip "https://github.com/nigels-com/glew/releases/download/glew-$env:GLEW_VERSION/glew-$env:GLEW_VERSION.zip"
+          curl.exe -fsSLo glew.zip "https://github.com/nigels-com/glew/releases/download/glew-${env:GLEW_VERSION}/glew-${env:GLEW_VERSION}.zip"
           tar -xf glew.zip
-          cmake -S "glew-$env:GLEW_VERSION/build/cmake" -B glew-build -A ${{ matrix.platform }} `
+          cmake -S "glew-${env:GLEW_VERSION}/build/cmake" -B glew-build -A ${{ matrix.platform }} `
             -DBUILD_UTILS=OFF `
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
             -DCMAKE_C_FLAGS_RELEASE="/MT /O2 /Ob2 /DNDEBUG"
@@ -228,29 +249,31 @@ jobs:
 
           $glew = Get-ChildItem -Path glew-build -Recurse -Filter "libglew*.lib" | Select-Object -First 1
           if (-not $glew) { throw "GLEW did not produce a static library" }
-          "GLEW_LIB=$($glew.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          "GLEW_LIB=$($glew.FullName)" | Out-File -FilePath ${env:GITHUB_ENV} -Append -Encoding utf8
+          "GLEW_INC=${env:GITHUB_WORKSPACE}/glew-${env:GLEW_VERSION}/include" | Out-File -FilePath ${env:GITHUB_ENV} -Append -Encoding utf8
 
       - name: Configure
         shell: pwsh
         run: |
           cmake -S . -B build -A ${{ matrix.platform }} `
-            -DCMAKE_BUILD_TYPE="$env:BUILD_TYPE" `
+            -DCMAKE_BUILD_TYPE=Release `
             -DUSE_SDL2_CONFIG=ON `
-            -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE/sdl2" `
-            -DGLEW_LIBRARY="$env:GLEW_LIB" `
-            -DGLEW_INCLUDE_DIR="$env:GITHUB_WORKSPACE/glew-$env:GLEW_VERSION/include" `
+            -DCMAKE_PREFIX_PATH="${env:GITHUB_WORKSPACE}/sdl2" `
+            -DGLEW_LIBRARY="${env:GLEW_LIB}" `
+            -DGLEW_INCLUDE_DIR="${env:GLEW_INC}" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config $env:BUILD_TYPE --parallel
+        run: cmake --build build --config Release --parallel
 
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "build/$env:BUILD_TYPE/HatchGameEngine-$env:BUILD_TYPE.exe" dist/HatchGameEngine.exe
+          Copy-Item build/Release/HatchGameEngine-Release.exe dist/HatchGameEngine.exe
 
       - uses: actions/upload-artifact@v4
         with:
