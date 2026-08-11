@@ -1,10 +1,7 @@
 name: CMake (Linux and Windows)
 
 on:
-  push:
-    branches: [ "master", "dev", "workflow-test" ]
-  pull_request:
-    branches: [ "master", "dev" ]
+  workflow_dispatch:
 
 jobs:
   build:
