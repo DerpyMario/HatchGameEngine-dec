@@ -73,6 +73,27 @@ static bool   SameLineFlag = false;
 static bool   PanelHovered = false;
 static int    RowIndex = 0;
 
+// Set while a menu or a dropdown list is on screen. Whatever is underneath the
+// popup has to stop reacting to the mouse, or a click meant for a menu item
+// would also land on the panel behind it.
+static bool   InputBlocked = false;
+static bool   LastItemHovered = false;
+
+// Dropdown lists and tooltips have to be painted after the panels they overlap,
+// so the widget only records what it wants and DrawOverlays paints it once the
+// rest of the frame is done.
+static Uint32       OpenDropdownID = 0;
+static float        DropdownX = 0.0f;
+static float        DropdownY = 0.0f;
+static float        DropdownW = 0.0f;
+static const char* const* DropdownOptions = NULL;
+static int          DropdownCount = 0;
+static Uint32       DropdownResultID = 0;
+static int          DropdownResultIndex = 0;
+static bool         DropdownJustOpened = false;
+
+static const char*  PendingTooltip = NULL;
+
 // Text field editing state, only meaningful for the focused field.
 static int    EditCaret = 0;
 static Uint32 CaretBlinkStart = 0;
@@ -101,6 +122,17 @@ PRIVATE STATIC Uint32 UICore::Hash(const char* text, Uint32 seed) {
 
 PRIVATE STATIC Uint32 UICore::ItemID(const char* label) {
     return UICore::Hash(label, PanelID);
+}
+
+// An ID for widgets that live outside any panel, such as the menu bar.
+PUBLIC STATIC Uint32 UICore::MakeID(const char* label) {
+    return UICore::Hash(label, 0);
+}
+
+// The same, but scoped to an enclosing widget so that rows sharing a label in
+// two different menus do not collide.
+PUBLIC STATIC Uint32 UICore::MakeID(const char* label, Uint32 scope) {
+    return UICore::Hash(label, scope);
 }
 
 // Labels may carry a "##suffix" that makes the widget's ID unique without
@@ -219,6 +251,9 @@ PUBLIC STATIC void UICore::EndFrame() {
 }
 
 PUBLIC STATIC bool UICore::IsOver(float x, float y, float w, float h) {
+    if (InputBlocked)
+        return false;
+
     if (UICore::MouseX < x || UICore::MouseY < y ||
         UICore::MouseX >= x + w || UICore::MouseY >= y + h)
         return false;
@@ -232,11 +267,15 @@ PUBLIC STATIC bool UICore::IsOver(float x, float y, float w, float h) {
 }
 
 // Shared hit testing for the clickable widgets: marks the item hot, claims it
-// on press, and reports a click when the mouse comes back up over it.
-PRIVATE STATIC bool UICore::ButtonBehavior(Uint32 id, float x, float y, float w, float h, bool* outHovered, bool* outHeld) {
+// on press, and reports a click when the mouse comes back up over it. Public so
+// that the menu bar, which draws itself outside the panel layout, behaves the
+// same way as everything else.
+PUBLIC STATIC bool UICore::ClickableRegion(Uint32 id, float x, float y, float w, float h, bool* outHovered, bool* outHeld) {
     bool hovered = UICore::IsOver(x, y, w, h);
     if (hovered)
         HoveredThisFrame = id;
+
+    LastItemHovered = hovered;
 
     if (hovered && UICore::MouseWasPressed) {
         ActiveItem = id;
@@ -252,6 +291,38 @@ PRIVATE STATIC bool UICore::ButtonBehavior(Uint32 id, float x, float y, float w,
         *outHeld = held;
 
     return clicked;
+}
+
+// Keeps everything under an open popup from reacting to the mouse.
+PUBLIC STATIC void UICore::SetInputBlocked(bool blocked) {
+    InputBlocked = blocked;
+}
+
+// True when the widget placed just before this call had the mouse over it.
+PUBLIC STATIC bool UICore::IsItemHovered() {
+    return LastItemHovered;
+}
+
+// Reports a key press with an exact modifier combination, for menu shortcuts.
+// Only Ctrl, Shift and Alt are considered; Command stands in for Ctrl on macOS.
+PUBLIC STATIC bool UICore::WasShortcutPressed(SDL_Keycode key, Uint16 modifiers) {
+    for (size_t i = 0; i < KeyPresses.size(); i++) {
+        if (KeyPresses[i].Key != key)
+            continue;
+
+        Uint16 held = 0;
+        if (KeyPresses[i].Mod & (KMOD_CTRL | KMOD_GUI))
+            held |= KMOD_CTRL;
+        if (KeyPresses[i].Mod & KMOD_SHIFT)
+            held |= KMOD_SHIFT;
+        if (KeyPresses[i].Mod & KMOD_ALT)
+            held |= KMOD_ALT;
+
+        if (held == modifiers)
+            return true;
+    }
+
+    return false;
 }
 
 // --------------------------------------------------------------- layout ----
@@ -271,6 +342,8 @@ PRIVATE STATIC void UICore::PlaceItem(float width, float height, float* outX, fl
     if (!SameLineFlag)
         UICore::FlushLine();
     SameLineFlag = false;
+
+    LastItemHovered = false;
 
     *outX = CursorX;
     *outY = CursorY;
@@ -401,7 +474,7 @@ PUBLIC STATIC void UICore::EndPanel() {
 
         Uint32 id = UICore::Hash("##scrollbar", PanelID);
         bool hovered = false, held = false;
-        UICore::ButtonBehavior(id, barX, ContentTop, barW, viewHeight, &hovered, &held);
+        UICore::ClickableRegion(id, barX, ContentTop, barW, viewHeight, &hovered, &held);
 
         if (held) {
             float travel = viewHeight - thumbHeight;
@@ -496,7 +569,7 @@ PUBLIC STATIC bool UICore::Button(const char* label, float width) {
 
     Uint32 id = UICore::ItemID(label);
     bool hovered = false, held = false;
-    bool clicked = UICore::ButtonBehavior(id, x, y, width, height, &hovered, &held);
+    bool clicked = UICore::ClickableRegion(id, x, y, width, height, &hovered, &held);
 
     Uint32 fill = UI_COL_BUTTON;
     if (held && hovered)
@@ -547,7 +620,7 @@ PUBLIC STATIC bool UICore::Checkbox(const char* label, bool* value) {
 
     Uint32 id = UICore::ItemID(label);
     bool hovered = false, held = false;
-    bool clicked = UICore::ButtonBehavior(id, x, y, width, height, &hovered, &held);
+    bool clicked = UICore::ClickableRegion(id, x, y, width, height, &hovered, &held);
 
     if (clicked)
         *value = !*value;
@@ -586,7 +659,7 @@ PUBLIC STATIC bool UICore::SliderInt(const char* label, int* value, int minimum,
     float trackW = width - labelWidth;
 
     bool hovered = false, held = false;
-    UICore::ButtonBehavior(id, trackX, y, trackW, height, &hovered, &held);
+    UICore::ClickableRegion(id, trackX, y, trackW, height, &hovered, &held);
 
     int before = *value;
     if (held && trackW > 0.0f) {
@@ -633,7 +706,7 @@ PUBLIC STATIC bool UICore::ListItem(const char* label, bool selected) {
 
     Uint32 id = UICore::ItemID(label);
     bool hovered = false, held = false;
-    bool clicked = UICore::ButtonBehavior(id, x, y, width, height, &hovered, &held);
+    bool clicked = UICore::ClickableRegion(id, x, y, width, height, &hovered, &held);
 
     if (selected)
         UIDraw::FillRect(x, y, width, height, UI_COL_SELECTION);
@@ -674,6 +747,8 @@ PUBLIC STATIC bool UICore::TextField(const char* label, char* buffer, size_t buf
     if (hovered)
         HoveredThisFrame = id;
 
+    LastItemHovered = hovered;
+
     if (UICore::MouseWasPressed) {
         if (hovered) {
             FocusItem = id;
@@ -695,7 +770,40 @@ PUBLIC STATIC bool UICore::TextField(const char* label, char* buffer, size_t buf
 
         for (size_t i = 0; i < KeyPresses.size(); i++) {
             SDL_Keycode key = KeyPresses[i].Key;
+            Uint16 mod = KeyPresses[i].Mod;
             length = (int)strlen(buffer);
+
+            // Clipboard. There is no selection to speak of, so copy and cut
+            // take the whole field and paste drops in at the caret.
+            if (mod & (KMOD_CTRL | KMOD_GUI)) {
+                if (key == SDLK_c || key == SDLK_x) {
+                    SDL_SetClipboardText(buffer);
+
+                    if (key == SDLK_x) {
+                        buffer[0] = '\0';
+                        EditCaret = 0;
+                    }
+                    continue;
+                }
+
+                if (key == SDLK_v && SDL_HasClipboardText()) {
+                    char* pasted = SDL_GetClipboardText();
+                    if (pasted) {
+                        for (char* c = pasted; *c; c++) {
+                            length = (int)strlen(buffer);
+                            if (*c < 0x20 || length + 1 >= (int)bufferSize)
+                                continue;
+
+                            memmove(buffer + EditCaret + 1, buffer + EditCaret,
+                                length - EditCaret + 1);
+                            buffer[EditCaret] = *c;
+                            EditCaret++;
+                        }
+                        SDL_free(pasted);
+                    }
+                    continue;
+                }
+            }
 
             if (key == SDLK_BACKSPACE && EditCaret > 0) {
                 memmove(buffer + EditCaret - 1, buffer + EditCaret, length - EditCaret + 1);
@@ -787,7 +895,7 @@ PUBLIC STATIC bool UICore::TabBar(const char** names, int count, int* current, f
         bool selected = *current == i;
 
         bool hovered = false, held = false;
-        bool clicked = UICore::ButtonBehavior(UICore::Hash(names[i], seed), tabX, y, tabWidth, height, &hovered, &held);
+        bool clicked = UICore::ClickableRegion(UICore::Hash(names[i], seed), tabX, y, tabWidth, height, &hovered, &held);
 
         if (clicked && !selected) {
             *current = i;
@@ -809,6 +917,159 @@ PUBLIC STATIC bool UICore::TabBar(const char** names, int count, int* current, f
     }
 
     return changed;
+}
+
+// A closed dropdown box showing the current choice. The list itself is painted
+// later by DrawOverlays, so it can hang over the panel it sits in.
+//
+// The options array is read again after this call returns, so it has to outlive
+// the frame -- pass a static table, not a local one.
+PUBLIC STATIC bool UICore::Dropdown(const char* label, const char* const* options, int count, int* current) {
+    char labelBuffer[256];
+    const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
+
+    float width = UICore::TakeItemWidth();
+    float x, y;
+    float height = UICore::RowHeight();
+    UICore::PlaceItem(width, height, &x, &y);
+
+    Uint32 id = UICore::ItemID(label);
+
+    bool changed = false;
+    if (DropdownResultID == id) {
+        DropdownResultID = 0;
+        if (DropdownResultIndex != *current) {
+            *current = DropdownResultIndex;
+            changed = true;
+        }
+    }
+
+    float labelWidth = *visible ? width * 0.32f : 0.0f;
+    float boxX = x + labelWidth;
+    float boxW = width - labelWidth;
+
+    bool hovered = false, held = false;
+    if (UICore::ClickableRegion(id, boxX, y, boxW, height, &hovered, &held)) {
+        // Clicking the box a second time puts the list away again.
+        OpenDropdownID = OpenDropdownID == id ? 0 : id;
+        DropdownJustOpened = OpenDropdownID == id;
+
+        if (OpenDropdownID == id) {
+            DropdownX = boxX;
+            DropdownY = y + height;
+            DropdownW = boxW;
+            DropdownOptions = options;
+            DropdownCount = count;
+        }
+    }
+
+    bool open = OpenDropdownID == id;
+
+    if (*visible)
+        UIDraw::TextClipped(x, y + (height - UIDraw::LineHeight()) / 2.0f, visible,
+            UI_COL_TEXT_DIM, UIDraw::Scale, labelWidth - UICore::Pad());
+
+    UIDraw::BeveledRect(boxX, y, boxW, height, hovered || open ? UI_COL_BUTTON_HOVER : UI_COL_BUTTON,
+        UI_COL_BORDER_LIGHT, UI_COL_BORDER);
+
+    const char* shown = (*current >= 0 && *current < count) ? options[*current] : "";
+    float arrowWidth = UIDraw::CharWidth() * 2.0f;
+
+    UIDraw::TextClipped(boxX + UICore::Pad(), y + (height - UIDraw::LineHeight()) / 2.0f,
+        shown, UI_COL_TEXT, UIDraw::Scale, boxW - arrowWidth - UICore::Pad() * 2.0f);
+
+    UIDraw::Text(boxX + boxW - arrowWidth, y + (height - UIDraw::LineHeight()) / 2.0f,
+        open ? "^" : "v", UI_COL_TEXT_DIM);
+
+    return changed;
+}
+
+// Registers hover help for the widget placed just before this call. The text is
+// read again when the overlay is painted, so pass something that outlives the
+// frame.
+PUBLIC STATIC void UICore::Tooltip(const char* text) {
+    if (LastItemHovered)
+        PendingTooltip = text;
+}
+
+PUBLIC STATIC bool UICore::IsDropdownOpen() {
+    return OpenDropdownID != 0;
+}
+
+PUBLIC STATIC void UICore::CloseDropdown() {
+    OpenDropdownID = 0;
+}
+
+// Paints the deferred dropdown list and tooltip, on top of everything else.
+// Must be called with no panel open and no clip rectangle in force.
+PUBLIC STATIC void UICore::DrawOverlays() {
+    if (OpenDropdownID && DropdownOptions && DropdownCount > 0) {
+        float rowHeight = UIDraw::LineHeight() + 4.0f * UIDraw::Scale;
+        float listHeight = DropdownCount * rowHeight + 2.0f;
+
+        // Flip the list above the box when there is no room below it.
+        float listY = DropdownY;
+        if (listY + listHeight > UIDraw::ViewHeight)
+            listY = DropdownY - UICore::RowHeight() - listHeight;
+
+        UIDraw::FillRect(DropdownX, listY, DropdownW, listHeight, UI_COL_PANEL);
+        UIDraw::StrokeRect(DropdownX, listY, DropdownW, listHeight, UI_COL_ACCENT);
+
+        bool insideList = UICore::MouseX >= DropdownX && UICore::MouseX < DropdownX + DropdownW &&
+            UICore::MouseY >= listY && UICore::MouseY < listY + listHeight;
+
+        for (int i = 0; i < DropdownCount; i++) {
+            float rowY = listY + 1.0f + i * rowHeight;
+
+            char rowID[64];
+            snprintf(rowID, sizeof(rowID), "##dropdownrow%d", i);
+
+            bool hovered = false, held = false;
+            if (UICore::ClickableRegion(UICore::Hash(rowID, OpenDropdownID),
+                    DropdownX + 1.0f, rowY, DropdownW - 2.0f, rowHeight, &hovered, &held)) {
+                DropdownResultID = OpenDropdownID;
+                DropdownResultIndex = i;
+                OpenDropdownID = 0;
+            }
+
+            if (hovered)
+                UIDraw::FillRect(DropdownX + 1.0f, rowY, DropdownW - 2.0f, rowHeight, UI_COL_SELECTION);
+
+            UIDraw::TextClipped(DropdownX + UICore::Pad(), rowY + 2.0f * UIDraw::Scale,
+                DropdownOptions[i], UI_COL_TEXT, UIDraw::Scale, DropdownW - UICore::Pad() * 2.0f);
+        }
+
+        // Clicking anywhere else dismisses the list -- but not on the frame
+        // the list appeared, since a quick click delivers its press and its
+        // release together and that press is the one that opened it.
+        if (OpenDropdownID && UICore::MouseWasPressed && !insideList && !DropdownJustOpened)
+            OpenDropdownID = 0;
+    }
+
+    DropdownJustOpened = false;
+
+    if (PendingTooltip && *PendingTooltip) {
+        float textWidth = UIDraw::TextWidth(PendingTooltip);
+        float boxW = textWidth + UICore::Pad() * 4.0f;
+        float boxH = UIDraw::LineHeight() + UICore::Pad() * 2.0f;
+
+        float boxX = UICore::MouseX + UICore::Pad() * 3.0f;
+        float boxY = UICore::MouseY + UICore::Pad() * 3.0f;
+
+        // Keep it on screen when the pointer is near an edge.
+        if (boxX + boxW > UIDraw::ViewWidth)
+            boxX = UIDraw::ViewWidth - boxW;
+        if (boxY + boxH > UIDraw::ViewHeight)
+            boxY = UICore::MouseY - boxH - UICore::Pad();
+        if (boxX < 0.0f)
+            boxX = 0.0f;
+
+        UIDraw::FillRect(boxX, boxY, boxW, boxH, UI_COL_PANEL_HEADER);
+        UIDraw::StrokeRect(boxX, boxY, boxW, boxH, UI_COL_BORDER_LIGHT);
+        UIDraw::Text(boxX + UICore::Pad() * 2.0f, boxY + UICore::Pad(), PendingTooltip, UI_COL_TEXT);
+
+        PendingTooltip = NULL;
+    }
 }
 
 // Dims the whole window so a panel drawn on top reads as the focus.

@@ -363,6 +363,12 @@
     <ClCompile Include="..\source\Engine\UI\Studio.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\UIFileDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\UIMenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\Engine\UI\UICore.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

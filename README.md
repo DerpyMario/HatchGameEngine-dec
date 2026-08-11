@@ -20,18 +20,62 @@ by the engine's own renderer and needs no extra libraries or asset files.
 | **Console** | The engine log inside the window, coloured by severity, filterable, and following new messages as they arrive. |
 | **Help** | Engine and renderer information, and the current developer key bindings. |
 
+Along the top is a menu bar in the shape of the one
+[HatchStudio](https://github.com/HatchGameEngine/HatchStudio) uses:
+
+- **File** — New Project (`Ctrl+Alt+N`), Open Project (`Ctrl+Alt+O`), Open Data
+  File (`Ctrl+O`), a Recent Projects submenu, Close Project (`Ctrl+Alt+W`),
+  Save Settings (`Ctrl+S`), Exit.
+- **Project** — Run (`Ctrl+R`), Restart Scene (`F6`), Recompile Scripts & Reload
+  Scene (`F5`), Restart Engine (`F1`), a Set Run Start Scene radio group
+  (run from the game's start scene, or from whichever scene is loaded), Open
+  Scene File, Rescan Project.
+- **View** — jump to any tab, and toggle pausing, the performance overlay and
+  fullscreen.
+- **Help** — the Help tab and Close Editor (`F12`).
+
+Open Project, Open Data File, Open Scene File and the scripts folder Browse
+button all open a file browser drawn by the engine, so a project anywhere on
+disk can be opened without a command line. Text fields take `Ctrl+C`, `Ctrl+X`
+and `Ctrl+V`.
+
 The game is paused while the editor is open, so anything you inspect holds
-still; turn that off under **Play** if you would rather watch it run. The
-`[studio]` section of `config.ini` holds the editor's own preferences:
+still; turn that off under **View** or **Play** if you would rather watch it
+run. The `[studio]` section of `config.ini` holds the editor's own preferences:
 
 ```ini
 [studio]
-openOnStart=true    ; open the editor as soon as the engine starts
-pauseWhenOpen=true  ; hold the game still while the editor is on screen
+openOnStart=true         ; open the editor as soon as the engine starts
+pauseWhenOpen=true       ; hold the game still while the editor is on screen
+runFromStartScene=true   ; what Project > Run loads
+recent0=../SomeGame      ; recently opened projects
 
 [keys]
-studio=F12          ; key that opens and closes the editor
+studio=F12               ; key that opens and closes the editor
 ```
+
+## Command line
+
+The engine takes the same options as
+[upstream Hatch](https://github.com/HatchGameEngine/HatchGameEngine), so
+shortcuts and scripts written for either one work here:
+
+```
+HatchGameEngine [options] [scene file]
+
+  --project-dir <path>    Run the game in <path>, which holds its
+                          Resources and Scripts folders.
+  --resource-file <path>  Read resources from a packed .hatch file.
+  --scripts-dir <path>    Read scripts from <path> instead of Scripts.
+  --scene <path>          Load this scene at startup, relative to
+                          the Resources folder.
+  --studio                Open the editor on startup.
+  --help                  Show this text.
+```
+
+A single argument that is not an option is still treated as a `.hatch` file or
+as a scene file inside a `Resources` folder, the way the engine has always been
+started from a file manager.
 
 ## Documentation
 
