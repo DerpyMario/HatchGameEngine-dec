@@ -89,6 +89,8 @@
 		D0B14612268B6FA800CDA5EF /* ScrollingIndex.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145A9268B6FA700CDA5EF /* ScrollingIndex.cpp */; };
 		D0B14613268B6FA800CDA5EF /* View.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0B145AA268B6FA700CDA5EF /* View.cpp */; };
 		CA11DE000000000000000004 /* UIDraw.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000001 /* UIDraw.cpp */; };
+		CA11DE0000000000000000CB /* SceneEditor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE0000000000000000C9 /* SceneEditor.cpp */; };
+		CA11DE0000000000000000CC /* ResourceEditor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE0000000000000000CA /* ResourceEditor.cpp */; };
 		CA11DE000000000000000067 /* UIMenu.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000065 /* UIMenu.cpp */; };
 		CA11DE000000000000000068 /* UIFileDialog.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000066 /* UIFileDialog.cpp */; };
 		CA11DE000000000000000005 /* UICore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000002 /* UICore.cpp */; };
@@ -242,6 +244,8 @@
 		D0B145A9268B6FA700CDA5EF /* ScrollingIndex.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ScrollingIndex.cpp; sourceTree = "<group>"; };
 		D0B145AA268B6FA700CDA5EF /* View.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = View.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000001 /* UIDraw.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UIDraw.cpp; sourceTree = "<group>"; };
+		CA11DE0000000000000000C9 /* SceneEditor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SceneEditor.cpp; sourceTree = "<group>"; };
+		CA11DE0000000000000000CA /* ResourceEditor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ResourceEditor.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000065 /* UIMenu.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UIMenu.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000066 /* UIFileDialog.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UIFileDialog.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000002 /* UICore.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UICore.cpp; sourceTree = "<group>"; };
@@ -708,6 +712,8 @@
 			isa = PBXGroup;
 			children = (
 				CA11DE000000000000000001 /* UIDraw.cpp */,
+				CA11DE0000000000000000C9 /* SceneEditor.cpp */,
+				CA11DE0000000000000000CA /* ResourceEditor.cpp */,
 				CA11DE000000000000000065 /* UIMenu.cpp */,
 				CA11DE000000000000000066 /* UIFileDialog.cpp */,
 				CA11DE000000000000000002 /* UICore.cpp */,
@@ -891,6 +897,8 @@
 				D0B14618268B6FA800CDA5EF /* XMLParser.cpp in Sources */,
 				D0B14613268B6FA800CDA5EF /* View.cpp in Sources */,
 				CA11DE000000000000000004 /* UIDraw.cpp in Sources */,
+				CA11DE0000000000000000CB /* SceneEditor.cpp in Sources */,
+				CA11DE0000000000000000CC /* ResourceEditor.cpp in Sources */,
 				CA11DE000000000000000067 /* UIMenu.cpp in Sources */,
 				CA11DE000000000000000068 /* UIFileDialog.cpp in Sources */,
 				CA11DE000000000000000005 /* UICore.cpp in Sources */,

@@ -15,6 +15,8 @@ public:
 #include <Engine/UI/UIFileDialog.h>
 #include <Engine/UI/UIMenu.h>
 #include <Engine/UI/UITheme.h>
+#include <Engine/UI/ResourceEditor.h>
+#include <Engine/UI/SceneEditor.h>
 
 #include <Engine/Bytecode/SourceFileMap.h>
 
@@ -41,6 +43,8 @@ bool Studio::PauseGameWhileOpen = true;
 enum StudioTab {
     STUDIO_TAB_PROJECT,
     STUDIO_TAB_SCENES,
+    STUDIO_TAB_EDITOR,
+    STUDIO_TAB_RESOURCES,
     STUDIO_TAB_PLAY,
     STUDIO_TAB_SETTINGS,
     STUDIO_TAB_CONSOLE,
@@ -49,7 +53,7 @@ enum StudioTab {
 };
 
 static const char* TabNames[STUDIO_TAB_COUNT] = {
-    "Project", "Scenes", "Play", "Settings", "Console", "Help"
+    "Project", "Scenes", "Editor", "Resources", "Play", "Settings", "Console", "Help"
 };
 
 // Widgets are drawn and clicked in the same call, which means a button's
@@ -464,6 +468,10 @@ PRIVATE STATIC void Studio::QueueAction(int action) {
 }
 
 PRIVATE STATIC void Studio::OpenProject(const char* path) {
+    // Unsaved scene edits would go with the old project, so ask first.
+    if (!ResourceEditor::RequestAction(ResourceEditor::PENDING_OPEN_PROJECT, path))
+        return;
+
     StringUtils::Copy(PendingPath, path, sizeof(PendingPath));
     Studio::QueueAction(STUDIO_ACTION_OPEN_PROJECT);
     Studio::SetStatus("Opening \"%s\"...", path);
@@ -484,6 +492,9 @@ PUBLIC STATIC void Studio::Update() {
                 SceneFilesScanned = false;
                 ProjectsScanned = false;
                 SelectedScene = -1;
+
+                SceneEditor::Reset();
+                ResourceEditor::Invalidate();
             }
             else
                 Studio::SetStatus("Could not open \"%s\".", PendingPath);
@@ -522,6 +533,9 @@ PUBLIC STATIC void Studio::Update() {
             ProjectsScanned = false;
             SceneFilesScanned = false;
             SelectedScene = -1;
+
+            SceneEditor::Reset();
+            ResourceEditor::Invalidate();
             break;
 
         case STUDIO_ACTION_RUN:
@@ -635,8 +649,10 @@ PRIVATE STATIC void Studio::DrawMenuBar(float width, float height) {
             UIMenu::EndSubmenu();
         }
 
-        if (UIMenu::Item("Close Project", "Ctrl+Alt+W", true))
-            Studio::QueueAction(STUDIO_ACTION_CLOSE_PROJECT);
+        if (UIMenu::Item("Close Project", "Ctrl+Alt+W", true)) {
+            if (ResourceEditor::RequestAction(ResourceEditor::PENDING_CLOSE_PROJECT, NULL))
+                Studio::QueueAction(STUDIO_ACTION_CLOSE_PROJECT);
+        }
 
         UIMenu::Separator();
 
@@ -1329,7 +1345,12 @@ PUBLIC STATIC void Studio::Render() {
     float width = (float)UIDraw::ViewWidth;
     float height = (float)UIDraw::ViewHeight;
 
-    UICore::Backdrop();
+    bool editing = CurrentTab == STUDIO_TAB_EDITOR && SceneEditor::HasScene();
+
+    // Everywhere but the editor, the game is dimmed so the panels read clearly.
+    // The editor needs to see what it is editing, so it keeps the view.
+    if (!editing)
+        UICore::Backdrop();
 
     Studio::HandleShortcuts();
 
@@ -1339,7 +1360,7 @@ PUBLIC STATIC void Studio::Render() {
 
     // An open menu, dropdown list or dialog takes the mouse for itself, so that
     // a click on it cannot also reach whatever it is covering.
-    bool modal = UIFileDialog::IsOpen();
+    bool modal = UIFileDialog::IsOpen() || ResourceEditor::IsConfirming();
     UICore::SetInputBlocked(modal || UIMenu::IsOpen() || UICore::IsDropdownOpen());
 
     // Tabs.
@@ -1365,6 +1386,12 @@ PUBLIC STATIC void Studio::Render() {
         case STUDIO_TAB_SCENES:
             Studio::DrawScenesTab(0.0f, contentY, width, contentH, split);
             break;
+        case STUDIO_TAB_EDITOR:
+            SceneEditor::Draw(0.0f, contentY, width, contentH);
+            break;
+        case STUDIO_TAB_RESOURCES:
+            ResourceEditor::Draw(0.0f, contentY, width, contentH, split);
+            break;
         case STUDIO_TAB_PLAY:
             Studio::DrawPlayTab(0.0f, contentY, width, contentH, split);
             break;
@@ -1385,12 +1412,17 @@ PUBLIC STATIC void Studio::Render() {
     UIDraw::FillRect(0.0f, statusY, width, 1.0f, UI_COL_BORDER);
 
     bool statusFresh = StatusMessage[0] && (SDL_GetTicks() - StatusMessageTime) < 6000;
-    UIDraw::Text(UICore::Pad() * 2.0f, statusY + 3.0f * scale,
-        statusFresh ? StatusMessage : "F12 or ` closes the editor.",
+    const char* statusLine = statusFresh ? StatusMessage : "F12 or ` closes the editor.";
+
+    if (!statusFresh && CurrentTab == STUDIO_TAB_EDITOR && SceneEditor::GetStatus()[0])
+        statusLine = SceneEditor::GetStatus();
+
+    UIDraw::Text(UICore::Pad() * 2.0f, statusY + 3.0f * scale, statusLine,
         statusFresh ? UI_COL_SUCCESS : UI_COL_TEXT_FAINT);
 
-    char runState[128];
-    snprintf(runState, sizeof(runState), "%s  |  %.0f FPS",
+    char runState[160];
+    snprintf(runState, sizeof(runState), "%s%s  |  %.0f FPS",
+        SceneEditor::UnsavedChanges ? "scene edited  |  " : "",
         Studio::IsPausingGame() ? "game paused" : "game running", Application::FPS);
     UIDraw::TextRight(width - UICore::Pad() * 2.0f, statusY + 3.0f * scale,
         runState, UI_COL_TEXT_FAINT, scale);
@@ -1415,6 +1447,22 @@ PUBLIC STATIC void Studio::Render() {
 
     if (UIFileDialog::Draw() == UIFileDialog::RESULT_ACCEPTED)
         Studio::FinishBrowse(UIFileDialog::GetSelectedPath());
+
+    ResourceEditor::DrawConfirmation();
+
+    // Something the user agreed to lose their scene edits for.
+    char approvedArgument[1024];
+    switch (ResourceEditor::TakeApprovedAction(approvedArgument, sizeof(approvedArgument))) {
+        case ResourceEditor::PENDING_OPEN_SCENE:
+            Application::QueueSceneChange(approvedArgument);
+            break;
+        case ResourceEditor::PENDING_CLOSE_PROJECT:
+            Studio::QueueAction(STUDIO_ACTION_CLOSE_PROJECT);
+            break;
+        case ResourceEditor::PENDING_OPEN_PROJECT:
+            Studio::OpenProject(approvedArgument);
+            break;
+    }
 
     UICore::EndFrame();
 }

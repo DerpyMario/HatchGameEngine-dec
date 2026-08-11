@@ -394,8 +394,36 @@ PUBLIC STATIC void TiledMapReader::Read(const char* sourceF, const char* parentF
                             tile_buffer_len = base64_decode_block(data_text->name.Start, (int)data_text->name.Length, (char*)tile_buffer);
                         }
                         else if (XMLParser::MatchToken(data->attributes.Get("encoding"), "csv")) {
-                            Log::Print(Log::LOG_ERROR, "Unsupported tile layer format \"CSV\"!");
-                            goto FREE;
+                            // Tiled writes CSV as readily as it writes base64,
+                            // and it is what the engine's own scene editor
+                            // saves, so read it rather than turning the file
+                            // away.
+                            tile_buffer = (int*)Memory::Calloc(1, layer_size_in_bytes);
+
+                            int capacity = layer_size_in_bytes / 4;
+                            const char* cursor = data_text->name.Start;
+                            const char* end = cursor + data_text->name.Length;
+                            int count = 0;
+
+                            while (cursor < end && count < capacity) {
+                                while (cursor < end && (*cursor < '0' || *cursor > '9'))
+                                    cursor++;
+                                if (cursor >= end)
+                                    break;
+
+                                // Global IDs carry their flip flags in the top
+                                // bits, so the value has to be read as
+                                // unsigned before it is stored.
+                                Uint32 gid = 0;
+                                while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+                                    gid = gid * 10 + (Uint32)(*cursor - '0');
+                                    cursor++;
+                                }
+
+                                tile_buffer[count++] = (int)gid;
+                            }
+
+                            tile_buffer_len = count * 4;
                         }
                         else {
                             Log::Print(Log::LOG_ERROR, "Unsupported tile layer format!");

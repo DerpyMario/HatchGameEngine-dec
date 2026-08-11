@@ -353,6 +353,12 @@ PRIVATE STATIC void UICore::PlaceItem(float width, float height, float* outX, fl
         LineHeightUsed = height;
 }
 
+// Reserves a block of the panel for a caller that draws its own contents, such
+// as the scene editor's tile palette.
+PUBLIC STATIC void UICore::PlaceCustomItem(float width, float height, float* outX, float* outY) {
+    UICore::PlaceItem(width, height, outX, outY);
+}
+
 PUBLIC STATIC void UICore::SetNextItemWidth(float width) {
     NextItemWidth = width;
 }
