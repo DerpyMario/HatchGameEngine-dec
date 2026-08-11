@@ -369,6 +369,9 @@
     <ClCompile Include="..\source\Engine\UI\SceneEditor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\TileCollisionEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\TiledMapWriter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
