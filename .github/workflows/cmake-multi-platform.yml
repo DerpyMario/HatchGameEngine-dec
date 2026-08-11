@@ -37,9 +37,12 @@ jobs:
             libasound2-dev libpulse-dev libudev-dev libdbus-1-dev libibus-1.0-dev
 
       # The makeheaders that comes with the repository is an x86-64 binary, so
-      # it is built from its own source instead of run as it is.
+      # it is built from source instead of run as it is. tools/makeheaders2-src
+      # is the copy that binary was built from, and gives back byte-identical
+      # headers; the older tools/makeheaders-src only fills in headers that are
+      # already there, and leaves a fresh checkout with broken ones.
       - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -Itools/makeheaders-src -o tools/makeheaders tools/makeheaders-src/main.cpp
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build SDL2 as a static library
         env:
@@ -108,7 +111,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -Itools/makeheaders-src -o tools/makeheaders tools/makeheaders-src/main.cpp
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       # Both architectures in the one library, so the one application covers
       # Apple silicon and Intel Macs alike.
@@ -245,7 +248,7 @@ jobs:
             -DBUILD_UTILS=OFF `
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
             -DCMAKE_C_FLAGS_RELEASE="/MT /O2 /Ob2 /DNDEBUG"
-          cmake --build glew-build --config Release --parallel
+          cmake --build glew-build --config Release --parallel --target glew_s
 
           $glew = Get-ChildItem -Path glew-build -Recurse -Filter "libglew*.lib" | Select-Object -First 1
           if (-not $glew) { throw "GLEW did not produce a static library" }
