@@ -45,6 +45,8 @@ public:
     static int         StartSceneNum;
 
     static bool        DevMenuActivated;
+
+    static vector<std::string> CmdLineArgs;
 };
 #endif
 
@@ -139,7 +141,14 @@ int         Application::StartSceneNum = 0;
 
 bool        Application::DevMenuActivated = false;
 
+vector<std::string> Application::CmdLineArgs;
+
 char    StartingScene[256];
+
+// Filled in from the command line, before anything is loaded.
+std::string ResourceFilename;
+bool        UseResourceFilename = false;
+std::string SceneToLoad;
 
 bool    DevMenu = false;
 bool    ShowFPS = false;
@@ -164,6 +173,133 @@ void        DEBUG_DrawText(char* text, float x, float y) {
     }
 }
 
+// Command line handling, following the options upstream Hatch accepts so that
+// scripts and shortcuts written for either one work here.
+
+PUBLIC STATIC bool Application::CmdLineArgExists(const char* match) {
+    for (size_t i = 0; i < Application::CmdLineArgs.size(); i++) {
+        if (Application::CmdLineArgs[i] == match)
+            return true;
+    }
+
+    return false;
+}
+
+// The value that follows an option, or an empty string if it was left off.
+PRIVATE STATIC string Application::GetCmdLineOption(size_t index) {
+    if (index >= Application::CmdLineArgs.size())
+        return "";
+
+    std::string option = Application::CmdLineArgs[index];
+    if (StringUtils::StartsWith(option.c_str(), "--"))
+        return "";
+
+    return option;
+}
+
+PRIVATE STATIC void Application::PrintCommandLineUsage() {
+    printf("Hatch Game Engine %s\n\n", Application::EngineVersion);
+    printf("Usage: " TARGET_NAME " [options] [scene file]\n\n");
+    printf("  --project-dir <path>    Run the game in <path>, which holds its\n");
+    printf("                          Resources and Scripts folders.\n");
+    printf("  --resource-file <path>  Read resources from a packed .hatch file.\n");
+    printf("  --scripts-dir <path>    Read scripts from <path> instead of Scripts.\n");
+    printf("  --scene <path>          Load this scene at startup, relative to\n");
+    printf("                          the Resources folder.\n");
+    printf("  --studio                Open the editor on startup.\n");
+    printf("  --help                  Show this text.\n\n");
+    printf("With no arguments the editor opens if there is no game to run.\n");
+}
+
+PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, size_t i) {
+    // Run out of a project folder: everything is resolved relative to it, the
+    // same as launching the engine from inside it.
+    if (arg == "--project-dir") {
+        std::string projectDir = Application::GetCmdLineOption(i + 1);
+        if (!projectDir.size())
+            return i;
+
+        if (!Directory::SetCurrentWorkingDirectory(projectDir.c_str()))
+            Log::Print(Log::LOG_ERROR, "Could not enter project folder \"%s\"!", projectDir.c_str());
+
+        return i + 1;
+    }
+
+    if (arg == "--resource-file") {
+        std::string resourceFile = Application::GetCmdLineOption(i + 1);
+        if (!resourceFile.size())
+            return i;
+
+        ResourceFilename = resourceFile;
+        UseResourceFilename = true;
+        return i + 1;
+    }
+
+    if (arg == "--scripts-dir") {
+        std::string scriptsDir = Application::GetCmdLineOption(i + 1);
+        if (!scriptsDir.size())
+            return i;
+
+        StringUtils::Copy(SourceFileMap::Path, scriptsDir.c_str(), sizeof(SourceFileMap::Path));
+        return i + 1;
+    }
+
+    if (arg == "--scene") {
+        std::string scenePath = Application::GetCmdLineOption(i + 1);
+        if (!scenePath.size())
+            return i;
+
+        SceneToLoad = scenePath;
+        return i + 1;
+    }
+
+    return i;
+}
+
+PRIVATE STATIC void Application::ParseCommandLineArgs() {
+    size_t count = Application::CmdLineArgs.size();
+    if (count == 0)
+        return;
+
+    // A lone argument that is not an option is a scene file or a data file, the
+    // way the engine has always been started from a file manager.
+    const char* firstArg = Application::CmdLineArgs[0].c_str();
+    if (count == 1 && !StringUtils::StartsWith(firstArg, "--")) {
+        if (StringUtils::StrCaseStr(firstArg, ".hatch")) {
+            ResourceFilename = Application::CmdLineArgs[0];
+            UseResourceFilename = true;
+            return;
+        }
+
+        char* pathStart = StringUtils::StrCaseStr(firstArg, "/Resources/");
+        if (pathStart == NULL)
+            pathStart = StringUtils::StrCaseStr(firstArg, "\\Resources\\");
+
+        if (pathStart) {
+            char scenePath[1024];
+            StringUtils::Copy(scenePath, pathStart + strlen("/Resources/"), sizeof(scenePath));
+            for (char* i = scenePath; *i; i++) {
+                if (*i == '\\')
+                    *i = '/';
+            }
+
+            SceneToLoad = std::string(scenePath);
+        }
+        else
+            Log::Print(Log::LOG_WARN, "Map file \"%s\" not inside Resources folder!", firstArg);
+
+        return;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        std::string arg = Application::CmdLineArgs[i];
+        if (!StringUtils::StartsWith(arg.c_str(), "--"))
+            continue;
+
+        i = Application::ProcessCommandLineOption(arg, i);
+    }
+}
+
 PUBLIC STATIC void Application::Init(int argc, char* args[]) {
 #ifdef MSYS
     AllocConsole();
@@ -173,6 +309,15 @@ PUBLIC STATIC void Application::Init(int argc, char* args[]) {
 #endif
 
     Application::MakeEngineVersion();
+
+    for (int i = 1; i < argc; i++)
+        Application::CmdLineArgs.push_back(std::string(args[i]));
+
+    // Answered before any subsystem starts, so --help does not flash a window.
+    if (Application::CmdLineArgExists("--help") || Application::CmdLineArgExists("-h")) {
+        Application::PrintCommandLineUsage();
+        return;
+    }
 
     Log::Init();
 
@@ -207,6 +352,8 @@ PUBLIC STATIC void Application::Init(int argc, char* args[]) {
     Log::Print(Log::LOG_INFO, "System Memory: %d MB", SDL_GetSystemRAM());
 
     SDL_SetEventFilter(Application::HandleAppEvents, NULL);
+
+    Application::ParseCommandLineArgs();
 
     Application::InitSettings("config.ini");
 
@@ -246,10 +393,7 @@ PUBLIC STATIC void Application::Init(int argc, char* args[]) {
     // Initialize subsystems
     Math::Init();
     Graphics::Init();
-    if (argc > 1 && !!StringUtils::StrCaseStr(args[1], ".hatch"))
-        ResourceManager::Init(args[1]);
-    else
-        ResourceManager::Init(NULL);
+    ResourceManager::Init(UseResourceFilename ? ResourceFilename.c_str() : NULL);
     AudioManager::Init();
     InputManager::Init();
     Clock::Init();
@@ -649,6 +793,15 @@ PUBLIC STATIC bool Application::LoadProject(const char* path) {
 
     Log::Print(Log::LOG_IMPORTANT, "Opening project \"%s\"...", path);
 
+    Application::ReloadForProject(dataFile[0] ? dataFile : NULL);
+
+    return true;
+}
+
+// Throws away everything belonging to the game that is loaded and reads it back
+// from whatever the working directory now holds. Shared by opening a project and
+// by closing one, which differ only in where they point the engine first.
+PRIVATE STATIC void Application::ReloadForProject(const char* dataFile) {
     Scene::Dispose();
     SceneInfo::Dispose();
     Graphics::SpriteSheetTextureMap->WithAll([](Uint32, Texture* tex) -> void {
@@ -660,7 +813,7 @@ PUBLIC STATIC bool Application::LoadProject(const char* path) {
     ScriptEntity::DisableAutoAnimate = false;
 
     ResourceManager::Dispose();
-    ResourceManager::Init(dataFile[0] ? dataFile : NULL);
+    ResourceManager::Init(dataFile);
 
     Graphics::Reset();
 
@@ -677,8 +830,22 @@ PUBLIC STATIC bool Application::LoadProject(const char* path) {
     Scene::Restart();
 
     Application::SetWindowTitle(Application::GameTitleShort);
+}
 
-    return true;
+// Unloads the game without opening another, leaving the engine idle with the
+// editor in front of it.
+PUBLIC STATIC void Application::CloseProject() {
+    Log::Print(Log::LOG_IMPORTANT, "Closing project.");
+
+    StringUtils::Copy(Application::GameTitle, "Hatch Game Engine", sizeof(Application::GameTitle));
+    StringUtils::Copy(Application::GameTitleShort, Application::GameTitle, sizeof(Application::GameTitleShort));
+
+    Application::ReloadForProject(NULL);
+}
+
+// The scene the game config says to boot into, if it named one.
+PUBLIC STATIC const char* Application::GetStartingScene() {
+    return StartingScene;
 }
 
 // Reports the folder the engine is currently reading resources out of.
@@ -1322,26 +1489,10 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
 
     Scene::Init();
 
-    if (argc > 1) {
-        char* pathStart = StringUtils::StrCaseStr(args[1], "/Resources/");
-        if (pathStart == NULL)
-            pathStart = StringUtils::StrCaseStr(args[1], "\\Resources\\");
-
-        if (pathStart) {
-            char* tmxPath = pathStart + strlen("/Resources/");
-            for (char* i = tmxPath; *i; i++) {
-                if (*i == '\\')
-                    *i = '/';
-            }
-            Scene::LoadScene(tmxPath);
-        }
-        else {
-            Log::Print(Log::LOG_WARN, "Map file \"%s\" not inside Resources folder!", args[1]);
-        }
-    }
-    else if (*StartingScene) {
+    if (SceneToLoad.size())
+        Scene::LoadScene(SceneToLoad.c_str());
+    else if (*StartingScene)
         Scene::LoadScene(StartingScene);
-    }
 
     Scene::Restart();
     Application::UpdateWindowTitle();
@@ -1349,7 +1500,8 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
 
     // Launched with nothing to run -- no scene, no project. Rather than sitting
     // on an empty window, open the editor so there is something to click.
-    if (!Scene::CurrentScene[0] && !Scene::NextScene[0])
+    if (Application::CmdLineArgExists("--studio") ||
+        (!Scene::CurrentScene[0] && !Scene::NextScene[0]))
         Studio::Show();
 
     Graphics::Clear();

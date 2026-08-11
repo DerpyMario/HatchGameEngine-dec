@@ -12,7 +12,13 @@ public:
 #include <Engine/UI/Studio.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
+#include <Engine/UI/UIFileDialog.h>
+#include <Engine/UI/UIMenu.h>
 #include <Engine/UI/UITheme.h>
+#include <Engine/UI/ResourceEditor.h>
+#include <Engine/UI/SceneEditor.h>
+
+#include <Engine/Bytecode/SourceFileMap.h>
 
 #include <Engine/Application.h>
 #include <Engine/Graphics.h>
@@ -37,6 +43,8 @@ bool Studio::PauseGameWhileOpen = true;
 enum StudioTab {
     STUDIO_TAB_PROJECT,
     STUDIO_TAB_SCENES,
+    STUDIO_TAB_EDITOR,
+    STUDIO_TAB_RESOURCES,
     STUDIO_TAB_PLAY,
     STUDIO_TAB_SETTINGS,
     STUDIO_TAB_CONSOLE,
@@ -45,7 +53,7 @@ enum StudioTab {
 };
 
 static const char* TabNames[STUDIO_TAB_COUNT] = {
-    "Project", "Scenes", "Play", "Settings", "Console", "Help"
+    "Project", "Scenes", "Editor", "Resources", "Play", "Settings", "Console", "Help"
 };
 
 // Widgets are drawn and clicked in the same call, which means a button's
@@ -57,11 +65,23 @@ static const char* TabNames[STUDIO_TAB_COUNT] = {
 enum StudioAction {
     STUDIO_ACTION_NONE,
     STUDIO_ACTION_OPEN_PROJECT,
+    STUDIO_ACTION_CLOSE_PROJECT,
     STUDIO_ACTION_RESTART_ENGINE,
     STUDIO_ACTION_RELOAD_SCENE,
     STUDIO_ACTION_RESTART_SCENE,
     STUDIO_ACTION_SET_WINDOW_SIZE,
-    STUDIO_ACTION_SET_FULLSCREEN
+    STUDIO_ACTION_SET_FULLSCREEN,
+    STUDIO_ACTION_RUN
+};
+
+// Which file the browser was opened for, since one dialog serves several
+// commands.
+enum StudioBrowseFor {
+    STUDIO_BROWSE_NONE,
+    STUDIO_BROWSE_PROJECT_FOLDER,
+    STUDIO_BROWSE_DATA_FILE,
+    STUDIO_BROWSE_SCENE_FILE,
+    STUDIO_BROWSE_SCRIPTS_FOLDER
 };
 
 static int  PendingAction = STUDIO_ACTION_NONE;
@@ -99,7 +119,20 @@ static char WindowHeightText[16] = "";
 static char   StatusMessage[256] = "";
 static Uint32 StatusMessageTime = 0;
 
-static const char* RendererNames[] = { "opengl", "sdl2", "direct3d", "metal" };
+static int  BrowsingFor = STUDIO_BROWSE_NONE;
+
+// "Run" either goes back to the game's start scene or picks up whatever scene
+// is loaded, the same choice HatchStudio offers under Set Run Start Scene.
+static bool RunFromStartScene = true;
+
+// Recent projects, kept in the settings file and offered in the File menu.
+static vector<std::string> RecentProjects;
+
+static char ScriptsFolderText[1024] = "Scripts";
+
+// Read again when the dropdown list is painted, so it has to be static.
+static const char* const RendererNames[] = { "opengl", "sdl2", "direct3d", "metal" };
+static const int RendererCount = (int)(sizeof(RendererNames) / sizeof(RendererNames[0]));
 
 PRIVATE STATIC void Studio::SetStatus(const char* format, ...) {
     va_list args;
@@ -124,11 +157,17 @@ PUBLIC STATIC void Studio::Init() {
     if (Application::Settings) {
         Application::Settings->GetBool("studio", "pauseWhenOpen", &Studio::PauseGameWhileOpen);
 
+        Application::Settings->GetBool("studio", "runFromStartScene", &RunFromStartScene);
+
         bool openOnStart = false;
         Application::Settings->GetBool("studio", "openOnStart", &openOnStart);
         if (openOnStart && Application::IsPC())
             Studio::Visible = true;
     }
+
+    StringUtils::Copy(ScriptsFolderText, SourceFileMap::Path, sizeof(ScriptsFolderText));
+
+    Studio::LoadRecentProjects();
 
     Initialized = true;
 }
@@ -211,66 +250,85 @@ PRIVATE STATIC void Studio::ScanForProjects() {
     }
 
     // Anything opened before that still exists is worth offering again.
-    if (Application::Settings) {
-        for (int i = 0; i < 8; i++) {
-            char key[32];
-            char path[4096];
-            snprintf(key, sizeof(key), "recent%d", i);
+    for (size_t i = 0; i < RecentProjects.size(); i++) {
+        const std::string& path = RecentProjects[i];
+        if (!Directory::Exists(path.c_str()) && !File::Exists(path.c_str()))
+            continue;
 
-            if (!Application::Settings->GetString("studio", key, path, sizeof(path)))
-                continue;
-            if (!Directory::Exists(path) && !File::Exists(path))
-                continue;
-
-            bool known = false;
-            for (size_t j = 0; j < FoundProjects.size(); j++) {
-                if (FoundProjects[j] == path) {
-                    known = true;
-                    break;
-                }
+        bool known = false;
+        for (size_t j = 0; j < FoundProjects.size(); j++) {
+            if (FoundProjects[j] == path) {
+                known = true;
+                break;
             }
-
-            if (!known)
-                FoundProjects.push_back(std::string(path));
         }
+
+        if (!known)
+            FoundProjects.push_back(path);
     }
 
     ProjectsScanned = true;
 }
 
-PRIVATE STATIC void Studio::RememberProject(const char* path) {
+#define STUDIO_MAX_RECENT 8
+
+PRIVATE STATIC void Studio::LoadRecentProjects() {
+    RecentProjects.clear();
+
     if (!Application::Settings)
         return;
 
-    // Read the existing list, drop this path if it's already in there, and put
-    // it back on top.
-    vector<std::string> recent;
-    recent.push_back(std::string(path));
-
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < STUDIO_MAX_RECENT; i++) {
         char key[32];
-        char stored[4096];
+        char path[4096];
         snprintf(key, sizeof(key), "recent%d", i);
 
-        if (!Application::Settings->GetString("studio", key, stored, sizeof(stored)))
-            continue;
-        if (!strcmp(stored, path))
-            continue;
-
-        recent.push_back(std::string(stored));
+        if (Application::Settings->GetString("studio", key, path, sizeof(path)))
+            RecentProjects.push_back(std::string(path));
     }
+}
 
-    for (int i = 0; i < 8; i++) {
+PRIVATE STATIC void Studio::SaveRecentProjects() {
+    if (!Application::Settings)
+        return;
+
+    for (int i = 0; i < STUDIO_MAX_RECENT; i++) {
         char key[32];
         snprintf(key, sizeof(key), "recent%d", i);
 
-        if (i < (int)recent.size())
-            Application::Settings->SetString("studio", key, recent[i].c_str());
+        if (i < (int)RecentProjects.size())
+            Application::Settings->SetString("studio", key, RecentProjects[i].c_str());
         else
             Application::Settings->RemoveProperty("studio", key);
     }
 
     Application::SaveSettings();
+}
+
+PRIVATE STATIC void Studio::ClearRecentProjects() {
+    RecentProjects.clear();
+    Studio::SaveRecentProjects();
+    Studio::SetStatus("Recent projects cleared.");
+
+    ProjectsScanned = false;
+}
+
+PRIVATE STATIC void Studio::RememberProject(const char* path) {
+    // Move it to the top of the list, dropping any earlier mention of it and
+    // whatever fell off the end.
+    for (size_t i = 0; i < RecentProjects.size(); i++) {
+        if (RecentProjects[i] == path) {
+            RecentProjects.erase(RecentProjects.begin() + i);
+            break;
+        }
+    }
+
+    RecentProjects.insert(RecentProjects.begin(), std::string(path));
+
+    while (RecentProjects.size() > STUDIO_MAX_RECENT)
+        RecentProjects.pop_back();
+
+    Studio::SaveRecentProjects();
 }
 
 PRIVATE STATIC void Studio::ScanForSceneFiles() {
@@ -410,6 +468,10 @@ PRIVATE STATIC void Studio::QueueAction(int action) {
 }
 
 PRIVATE STATIC void Studio::OpenProject(const char* path) {
+    // Unsaved scene edits would go with the old project, so ask first.
+    if (!ResourceEditor::RequestAction(ResourceEditor::PENDING_OPEN_PROJECT, path))
+        return;
+
     StringUtils::Copy(PendingPath, path, sizeof(PendingPath));
     Studio::QueueAction(STUDIO_ACTION_OPEN_PROJECT);
     Studio::SetStatus("Opening \"%s\"...", path);
@@ -430,6 +492,9 @@ PUBLIC STATIC void Studio::Update() {
                 SceneFilesScanned = false;
                 ProjectsScanned = false;
                 SelectedScene = -1;
+
+                SceneEditor::Reset();
+                ResourceEditor::Invalidate();
             }
             else
                 Studio::SetStatus("Could not open \"%s\".", PendingPath);
@@ -460,7 +525,255 @@ PUBLIC STATIC void Studio::Update() {
         case STUDIO_ACTION_SET_FULLSCREEN:
             Application::SetWindowFullscreen(PendingValueA != 0);
             break;
+
+        case STUDIO_ACTION_CLOSE_PROJECT:
+            Application::CloseProject();
+            Studio::SetStatus("Project closed.");
+
+            ProjectsScanned = false;
+            SceneFilesScanned = false;
+            SelectedScene = -1;
+
+            SceneEditor::Reset();
+            ResourceEditor::Invalidate();
+            break;
+
+        case STUDIO_ACTION_RUN:
+            Studio::Run();
+            break;
     }
+}
+
+// ----------------------------------------------------------------- commands -
+
+PRIVATE STATIC void Studio::BrowseFor(int what) {
+    char startPath[4096];
+    Application::GetProjectPath(startPath, sizeof(startPath));
+
+    BrowsingFor = what;
+
+    switch (what) {
+        case STUDIO_BROWSE_PROJECT_FOLDER:
+            UIFileDialog::Open("Open Project Folder", UIFileDialog::PICK_FOLDER, startPath, "*");
+            break;
+        case STUDIO_BROWSE_DATA_FILE:
+            UIFileDialog::Open("Open Data File", UIFileDialog::PICK_FILE, startPath, "*.hatch");
+            break;
+        case STUDIO_BROWSE_SCENE_FILE:
+            UIFileDialog::Open("Open Scene File", UIFileDialog::PICK_FILE, startPath, "*.tmx");
+            break;
+        case STUDIO_BROWSE_SCRIPTS_FOLDER:
+            UIFileDialog::Open("Choose Scripts Folder", UIFileDialog::PICK_FOLDER, startPath, "*");
+            break;
+    }
+}
+
+// Called once the browser closes with a path.
+PRIVATE STATIC void Studio::FinishBrowse(const char* path) {
+    switch (BrowsingFor) {
+        case STUDIO_BROWSE_PROJECT_FOLDER:
+        case STUDIO_BROWSE_DATA_FILE:
+            Studio::OpenProject(path);
+            break;
+
+        case STUDIO_BROWSE_SCENE_FILE: {
+            // Scene paths are given relative to the Resources folder.
+            const char* relative = StringUtils::StrCaseStr(path, "Resources/");
+            if (relative) {
+                Application::QueueSceneChange(relative + strlen("Resources/"));
+                Studio::SetStatus("Loading \"%s\"...", relative + strlen("Resources/"));
+            }
+            else
+                Studio::SetStatus("Scenes have to live inside the project's Resources folder.");
+            break;
+        }
+
+        case STUDIO_BROWSE_SCRIPTS_FOLDER:
+            StringUtils::Copy(ScriptsFolderText, path, sizeof(ScriptsFolderText));
+            StringUtils::Copy(SourceFileMap::Path, path, sizeof(SourceFileMap::Path));
+            Studio::SetStatus("Scripts folder set to \"%s\".", path);
+            break;
+    }
+
+    BrowsingFor = STUDIO_BROWSE_NONE;
+}
+
+// Closes the editor and lets the game play, from either the start scene or
+// whatever is already loaded.
+PRIVATE STATIC void Studio::Run() {
+    if (RunFromStartScene) {
+        const char* startScene = Application::GetStartingScene();
+        if (startScene && *startScene)
+            Application::QueueSceneChange(startScene);
+    }
+
+    Studio::Hide();
+}
+
+PRIVATE STATIC void Studio::SetRunFromStartScene(bool fromStart) {
+    RunFromStartScene = fromStart;
+
+    if (Application::Settings)
+        Application::Settings->SetBool("studio", "runFromStartScene", fromStart);
+}
+
+// The menu bar, in the shape HatchStudio uses. Drawn after the panels so its
+// dropdowns sit over them.
+PRIVATE STATIC void Studio::DrawMenuBar(float width, float height) {
+    UIMenu::Begin(0.0f, 0.0f, width, height);
+
+    if (UIMenu::BeginMenu("File")) {
+        if (UIMenu::Item("New Project...", "Ctrl+Alt+N", true))
+            Studio::NewProjectCommand();
+
+        if (UIMenu::Item("Open Project...", "Ctrl+Alt+O", true))
+            Studio::BrowseFor(STUDIO_BROWSE_PROJECT_FOLDER);
+
+        if (UIMenu::Item("Open Data File...", "Ctrl+O", true))
+            Studio::BrowseFor(STUDIO_BROWSE_DATA_FILE);
+
+        if (UIMenu::BeginSubmenu("Recent Projects")) {
+            for (size_t i = 0; i < RecentProjects.size(); i++) {
+                if (UIMenu::Item(RecentProjects[i].c_str(), NULL, true))
+                    Studio::OpenProject(RecentProjects[i].c_str());
+            }
+
+            if (!RecentProjects.size())
+                UIMenu::Item("(none)", NULL, false);
+            else {
+                UIMenu::Separator();
+                if (UIMenu::Item("Clear Recent Projects", NULL, true))
+                    Studio::ClearRecentProjects();
+            }
+
+            UIMenu::EndSubmenu();
+        }
+
+        if (UIMenu::Item("Close Project", "Ctrl+Alt+W", true)) {
+            if (ResourceEditor::RequestAction(ResourceEditor::PENDING_CLOSE_PROJECT, NULL))
+                Studio::QueueAction(STUDIO_ACTION_CLOSE_PROJECT);
+        }
+
+        UIMenu::Separator();
+
+        if (UIMenu::Item("Save Settings", "Ctrl+S", true))
+            Studio::SaveSettingsCommand();
+
+        UIMenu::Separator();
+
+        if (UIMenu::Item("Exit", NULL, true))
+            Application::Running = false;
+
+        UIMenu::EndMenu();
+    }
+
+    if (UIMenu::BeginMenu("Project")) {
+        if (UIMenu::Item("Run", "Ctrl+R", true))
+            Studio::QueueAction(STUDIO_ACTION_RUN);
+
+        if (UIMenu::Item("Restart Scene", "F6", true))
+            Studio::QueueAction(STUDIO_ACTION_RESTART_SCENE);
+
+        if (UIMenu::Item("Recompile Scripts & Reload Scene", "F5", true))
+            Studio::QueueAction(STUDIO_ACTION_RELOAD_SCENE);
+
+        if (UIMenu::Item("Restart Engine", "F1", true))
+            Studio::QueueAction(STUDIO_ACTION_RESTART_ENGINE);
+
+        UIMenu::Separator();
+
+        if (UIMenu::BeginSubmenu("Set Run Start Scene")) {
+            if (UIMenu::RadioItem("Run From Start Scene", RunFromStartScene, true))
+                Studio::SetRunFromStartScene(true);
+
+            if (UIMenu::RadioItem("Run From Current Scene", !RunFromStartScene, true))
+                Studio::SetRunFromStartScene(false);
+
+            UIMenu::EndSubmenu();
+        }
+
+        UIMenu::Separator();
+
+        if (UIMenu::Item("Open Scene File...", NULL, true))
+            Studio::BrowseFor(STUDIO_BROWSE_SCENE_FILE);
+
+        if (UIMenu::Item("Rescan Project", NULL, true)) {
+            ProjectsScanned = false;
+            SceneFilesScanned = false;
+            Studio::SetStatus("Rescanned.");
+        }
+
+        UIMenu::EndMenu();
+    }
+
+    if (UIMenu::BeginMenu("View")) {
+        for (int i = 0; i < STUDIO_TAB_COUNT; i++) {
+            if (UIMenu::RadioItem(TabNames[i], CurrentTab == i, true))
+                CurrentTab = i;
+        }
+
+        UIMenu::Separator();
+
+        if (UIMenu::CheckItem("Pause Game While Editing", NULL, Studio::PauseGameWhileOpen, true)) {
+            Studio::PauseGameWhileOpen = !Studio::PauseGameWhileOpen;
+            if (Application::Settings)
+                Application::Settings->SetBool("studio", "pauseWhenOpen", Studio::PauseGameWhileOpen);
+        }
+
+        if (UIMenu::CheckItem("Performance Overlay", NULL, Application::IsShowingPerformance(), true))
+            Application::SetShowingPerformance(!Application::IsShowingPerformance());
+
+        if (UIMenu::CheckItem("Fullscreen", "F4", Application::GetWindowFullscreen(), true)) {
+            PendingValueA = Application::GetWindowFullscreen() ? 0 : 1;
+            Studio::QueueAction(STUDIO_ACTION_SET_FULLSCREEN);
+        }
+
+        UIMenu::EndMenu();
+    }
+
+    if (UIMenu::BeginMenu("Help")) {
+        if (UIMenu::Item("Controls & About", NULL, true))
+            CurrentTab = STUDIO_TAB_HELP;
+
+        UIMenu::Separator();
+
+        if (UIMenu::Item("Close Editor", "F12", true))
+            Studio::Hide();
+
+        UIMenu::EndMenu();
+    }
+
+    UIMenu::End();
+}
+
+PRIVATE STATIC void Studio::NewProjectCommand() {
+    CurrentTab = STUDIO_TAB_PROJECT;
+    Studio::SetStatus("Name the project under New Project, then press Create.");
+}
+
+PRIVATE STATIC void Studio::SaveSettingsCommand() {
+    Application::SaveSettings();
+    Studio::SetStatus("Saved %s.", Application::SettingsFile);
+}
+
+// Menu shortcuts. Handled here rather than in the key handler so that the menu
+// and its accelerator cannot drift apart.
+PRIVATE STATIC void Studio::HandleShortcuts() {
+    const Uint16 ctrl = KMOD_CTRL;
+    const Uint16 ctrlAlt = KMOD_CTRL | KMOD_ALT;
+
+    if (UICore::WasShortcutPressed(SDLK_n, ctrlAlt))
+        Studio::NewProjectCommand();
+    else if (UICore::WasShortcutPressed(SDLK_o, ctrlAlt))
+        Studio::BrowseFor(STUDIO_BROWSE_PROJECT_FOLDER);
+    else if (UICore::WasShortcutPressed(SDLK_o, ctrl))
+        Studio::BrowseFor(STUDIO_BROWSE_DATA_FILE);
+    else if (UICore::WasShortcutPressed(SDLK_w, ctrlAlt))
+        Studio::QueueAction(STUDIO_ACTION_CLOSE_PROJECT);
+    else if (UICore::WasShortcutPressed(SDLK_s, ctrl))
+        Studio::SaveSettingsCommand();
+    else if (UICore::WasShortcutPressed(SDLK_r, ctrl))
+        Studio::QueueAction(STUDIO_ACTION_RUN);
 }
 
 // ------------------------------------------------------------------- tabs --
@@ -827,31 +1140,40 @@ PRIVATE STATIC void Studio::DrawSettingsTab(float x, float y, float w, float h, 
         if (settings)
             settings->GetString("dev", "renderer", currentRenderer, sizeof(currentRenderer));
 
-        char rendererLabel[128];
-        snprintf(rendererLabel, sizeof(rendererLabel), "Preferred: %s", currentRenderer);
-
-        if (UICore::Button(rendererLabel) && settings) {
-            int count = (int)(sizeof(RendererNames) / sizeof(RendererNames[0]));
-            int next = 0;
-            for (int i = 0; i < count; i++) {
-                if (!strcmp(RendererNames[i], currentRenderer)) {
-                    next = (i + 1) % count;
-                    break;
-                }
+        int rendererIndex = 0;
+        for (int i = 0; i < RendererCount; i++) {
+            if (!strcmp(RendererNames[i], currentRenderer)) {
+                rendererIndex = i;
+                break;
             }
-
-            settings->SetString("dev", "renderer", RendererNames[next]);
-            Studio::SetStatus("Renderer set to %s; restart to apply.", RendererNames[next]);
         }
+
+        if (UICore::Dropdown("Preferred", RendererNames, RendererCount, &rendererIndex) && settings) {
+            settings->SetString("dev", "renderer", RendererNames[rendererIndex]);
+            Studio::SetStatus("Renderer set to %s; restart to apply.", RendererNames[rendererIndex]);
+        }
+        UICore::Tooltip("Takes effect the next time the engine starts.");
 
         UICore::Field("In use now", Graphics::Renderer ? Graphics::Renderer : "unknown");
 
         UICore::Separator();
+        UICore::Heading("Scripts");
 
-        if (UICore::Button("Save Settings")) {
-            Application::SaveSettings();
-            Studio::SetStatus("Saved %s.", Application::SettingsFile);
-        }
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.72f);
+        if (UICore::TextField("Folder", ScriptsFolderText, sizeof(ScriptsFolderText)))
+            StringUtils::Copy(SourceFileMap::Path, ScriptsFolderText, sizeof(SourceFileMap::Path));
+        UICore::Tooltip("Where .hsl sources are compiled from.");
+
+        UICore::SameLine();
+        UICore::SetNextItemWidth(UICore::ContentWidth() * 0.26f);
+        if (UICore::Button("Browse..."))
+            Studio::BrowseFor(STUDIO_BROWSE_SCRIPTS_FOLDER);
+
+        UICore::Separator();
+
+        if (UICore::Button("Save Settings"))
+            Studio::SaveSettingsCommand();
+        UICore::Tooltip("Writes everything on this tab to config.ini.");
     UICore::EndPanel();
 }
 
@@ -1023,32 +1345,29 @@ PUBLIC STATIC void Studio::Render() {
     float width = (float)UIDraw::ViewWidth;
     float height = (float)UIDraw::ViewHeight;
 
-    UICore::Backdrop();
+    bool editing = CurrentTab == STUDIO_TAB_EDITOR && SceneEditor::HasScene();
 
-    float headerHeight = UICore::TitleBarHeight();
+    // Everywhere but the editor, the game is dimmed so the panels read clearly.
+    // The editor needs to see what it is editing, so it keeps the view.
+    if (!editing)
+        UICore::Backdrop();
+
+    Studio::HandleShortcuts();
+
+    float menuHeight = UICore::TitleBarHeight();
     float tabHeight = UICore::RowHeight();
     float statusHeight = UIDraw::LineHeight() + 6.0f * scale;
 
-    // Header.
-    UIDraw::FillRect(0.0f, 0.0f, width, headerHeight, UI_COL_PANEL_HEADER);
-    UIDraw::FillRect(0.0f, headerHeight - 1.0f, width, 1.0f, UI_COL_ACCENT);
-    UIDraw::Text(UICore::Pad() * 2.0f, (headerHeight - UIDraw::LineHeight()) / 2.0f,
-        "Hatch Studio", UI_COL_ACCENT);
-
-    float titleX = UICore::Pad() * 2.0f + UIDraw::TextWidth("Hatch Studio") + UICore::Pad() * 3.0f;
-    UIDraw::TextClipped(titleX, (headerHeight - UIDraw::LineHeight()) / 2.0f,
-        Application::GameTitle, UI_COL_TEXT_DIM, scale, width * 0.4f);
-
-    char versionText[288];
-    snprintf(versionText, sizeof(versionText), "engine %s", Application::EngineVersion);
-    UIDraw::TextRight(width - UICore::Pad() * 2.0f, (headerHeight - UIDraw::LineHeight()) / 2.0f,
-        versionText, UI_COL_TEXT_FAINT, scale);
+    // An open menu, dropdown list or dialog takes the mouse for itself, so that
+    // a click on it cannot also reach whatever it is covering.
+    bool modal = UIFileDialog::IsOpen() || ResourceEditor::IsConfirming();
+    UICore::SetInputBlocked(modal || UIMenu::IsOpen() || UICore::IsDropdownOpen());
 
     // Tabs.
-    UICore::TabBar(TabNames, STUDIO_TAB_COUNT, &CurrentTab, 0.0f, headerHeight, width, tabHeight);
+    UICore::TabBar(TabNames, STUDIO_TAB_COUNT, &CurrentTab, 0.0f, menuHeight, width, tabHeight);
 
     // Content.
-    float contentY = headerHeight + tabHeight;
+    float contentY = menuHeight + tabHeight;
     float contentH = height - contentY - statusHeight;
 
     // Side-by-side panels need enough room to stay readable; below that they
@@ -1066,6 +1385,12 @@ PUBLIC STATIC void Studio::Render() {
             break;
         case STUDIO_TAB_SCENES:
             Studio::DrawScenesTab(0.0f, contentY, width, contentH, split);
+            break;
+        case STUDIO_TAB_EDITOR:
+            SceneEditor::Draw(0.0f, contentY, width, contentH);
+            break;
+        case STUDIO_TAB_RESOURCES:
+            ResourceEditor::Draw(0.0f, contentY, width, contentH, split);
             break;
         case STUDIO_TAB_PLAY:
             Studio::DrawPlayTab(0.0f, contentY, width, contentH, split);
@@ -1087,15 +1412,57 @@ PUBLIC STATIC void Studio::Render() {
     UIDraw::FillRect(0.0f, statusY, width, 1.0f, UI_COL_BORDER);
 
     bool statusFresh = StatusMessage[0] && (SDL_GetTicks() - StatusMessageTime) < 6000;
-    UIDraw::Text(UICore::Pad() * 2.0f, statusY + 3.0f * scale,
-        statusFresh ? StatusMessage : "F12 or ` closes the editor.",
+    const char* statusLine = statusFresh ? StatusMessage : "F12 or ` closes the editor.";
+
+    if (!statusFresh && CurrentTab == STUDIO_TAB_EDITOR && SceneEditor::GetStatus()[0])
+        statusLine = SceneEditor::GetStatus();
+
+    UIDraw::Text(UICore::Pad() * 2.0f, statusY + 3.0f * scale, statusLine,
         statusFresh ? UI_COL_SUCCESS : UI_COL_TEXT_FAINT);
 
-    char runState[128];
-    snprintf(runState, sizeof(runState), "%s  |  %.0f FPS",
+    char runState[160];
+    snprintf(runState, sizeof(runState), "%s%s  |  %.0f FPS",
+        SceneEditor::UnsavedChanges ? "scene edited  |  " : "",
         Studio::IsPausingGame() ? "game paused" : "game running", Application::FPS);
     UIDraw::TextRight(width - UICore::Pad() * 2.0f, statusY + 3.0f * scale,
         runState, UI_COL_TEXT_FAINT, scale);
+
+    // The menu bar and anything else that hangs over the panels is painted from
+    // here on, with input let back through so the menus can be used.
+    UICore::SetInputBlocked(modal);
+
+    Studio::DrawMenuBar(width, menuHeight);
+
+    // The game's name and the engine version share the menu strip, off to the
+    // right where no menu title reaches.
+    char versionText[544];
+    snprintf(versionText, sizeof(versionText), "%s  |  engine %s",
+        Application::GameTitle, Application::EngineVersion);
+    UIDraw::TextRight(width - UICore::Pad() * 2.0f, (menuHeight - UIDraw::LineHeight()) / 2.0f,
+        versionText, UI_COL_TEXT_FAINT, scale);
+
+    UICore::DrawOverlays();
+
+    UICore::SetInputBlocked(false);
+
+    if (UIFileDialog::Draw() == UIFileDialog::RESULT_ACCEPTED)
+        Studio::FinishBrowse(UIFileDialog::GetSelectedPath());
+
+    ResourceEditor::DrawConfirmation();
+
+    // Something the user agreed to lose their scene edits for.
+    char approvedArgument[1024];
+    switch (ResourceEditor::TakeApprovedAction(approvedArgument, sizeof(approvedArgument))) {
+        case ResourceEditor::PENDING_OPEN_SCENE:
+            Application::QueueSceneChange(approvedArgument);
+            break;
+        case ResourceEditor::PENDING_CLOSE_PROJECT:
+            Studio::QueueAction(STUDIO_ACTION_CLOSE_PROJECT);
+            break;
+        case ResourceEditor::PENDING_OPEN_PROJECT:
+            Studio::OpenProject(approvedArgument);
+            break;
+    }
 
     UICore::EndFrame();
 }

@@ -4,6 +4,7 @@
 class SourceFileMap {
 public:
     static bool                      Initialized;
+    static char                      Path[1024];
     static HashMap<Uint32>*          Checksums;
     static HashMap<vector<Uint32>*>* ClassMap;
     static Uint32                    DirectoryChecksum;
@@ -26,6 +27,7 @@ public:
 #include <Engine/ResourceTypes/ResourceManager.h>
 
 bool                      SourceFileMap::Initialized = false;
+char                      SourceFileMap::Path[1024] = "Scripts";
 HashMap<Uint32>*          SourceFileMap::Checksums = NULL;
 HashMap<vector<Uint32>*>* SourceFileMap::ClassMap = NULL;
 Uint32                    SourceFileMap::DirectoryChecksum = 0;
@@ -106,7 +108,9 @@ PUBLIC STATIC void SourceFileMap::CheckForUpdate() {
     #ifndef NO_SCRIPT_COMPILING
     bool anyChanges = false;
 
-    const char* scriptFolder = "Scripts";
+    // Where the scripts live. Defaults to "Scripts" next to the game, and is
+    // overridden by --scripts-dir or by the editor.
+    const char* scriptFolder = SourceFileMap::Path;
     size_t      scriptFolderNameLen = strlen(scriptFolder);
 
     if (!Directory::Exists(scriptFolder))

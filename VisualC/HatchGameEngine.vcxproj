@@ -251,6 +251,7 @@ CD ..</Command>
     <ClCompile Include="..\source\engine\resourcetypes\modelformats\RSDKModel.cpp" />
     <ClCompile Include="..\source\engine\resourcetypes\ResourceManager.cpp" />
     <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\HatchSceneReader.cpp" />
+    <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\TiledMapWriter.cpp" />
     <ClCompile Include="..\source\engine\resourcetypes\sceneformats\RSDKSceneReader.cpp" />
     <ClCompile Include="..\source\engine\resourcetypes\sceneformats\TiledMapReader.cpp" />
     <ClCompile Include="..\source\engine\resourcetypes\soundformats\OGG.cpp" />
@@ -272,6 +273,10 @@ CD ..</Command>
     <ClCompile Include="..\source\engine\types\ObjectRegistry.cpp" />
     <ClCompile Include="..\source\engine\types\Tileset.cpp" />
     <ClCompile Include="..\source\Engine\UI\Studio.cpp" />
+    <ClCompile Include="..\source\Engine\UI\ResourceEditor.cpp" />
+    <ClCompile Include="..\source\Engine\UI\SceneEditor.cpp" />
+    <ClCompile Include="..\source\Engine\UI\UIFileDialog.cpp" />
+    <ClCompile Include="..\source\Engine\UI\UIMenu.cpp" />
     <ClCompile Include="..\source\Engine\UI\UICore.cpp" />
     <ClCompile Include="..\source\Engine\UI\UIDraw.cpp" />
     <ClCompile Include="..\source\engine\utilities\ColorUtils.cpp" />

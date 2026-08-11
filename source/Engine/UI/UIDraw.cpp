@@ -136,10 +136,22 @@ PUBLIC STATIC void UIDraw::Begin() {
     if (windowW <= 0 || windowH <= 0)
         return;
 
+    BackupView = Graphics::CurrentView;
+    BackupViewCurrent = Scene::ViewCurrent;
+    BackupTextureBlend = Graphics::TextureBlend;
+    BackupTextureInterpolate = Graphics::TextureInterpolate;
+
+    // Scene::Render leaves the current view set to -1 once it has finished
+    // with every view, so it cannot be used to index Views without checking.
+    if (Scene::ViewCurrent < 0 || Scene::ViewCurrent >= MAX_SCENE_VIEWS)
+        Scene::ViewCurrent = 0;
+
     // The renderers project through the current scene view's matrix, so there
     // is nothing to draw into until Scene::Init has created one.
-    if (!Scene::Views[Scene::ViewCurrent].ProjectionMatrix)
+    if (!Scene::Views[Scene::ViewCurrent].ProjectionMatrix) {
+        Scene::ViewCurrent = BackupViewCurrent;
         return;
+    }
 
     UIDraw::ViewWidth = windowW;
     UIDraw::ViewHeight = windowH;
@@ -154,11 +166,6 @@ PUBLIC STATIC void UIDraw::Begin() {
     UIView.OutputHeight = (float)windowH;
     UIView.ProjectionMatrix = Scene::Views[Scene::ViewCurrent].ProjectionMatrix;
     UIView.BaseProjectionMatrix = Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix;
-
-    BackupView = Graphics::CurrentView;
-    BackupViewCurrent = Scene::ViewCurrent;
-    BackupTextureBlend = Graphics::TextureBlend;
-    BackupTextureInterpolate = Graphics::TextureInterpolate;
 
     Graphics::CurrentView = &UIView;
 

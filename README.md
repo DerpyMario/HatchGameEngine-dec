@@ -15,23 +15,98 @@ by the engine's own renderer and needs no extra libraries or asset files.
 | --- | --- |
 | **Project** | Lists every game folder and `.hatch` file next to the engine, plus recently opened ones. Open one with a click, or scaffold a new project (`Resources` tree and a starter `GameConfig.xml`) and open it straight away. |
 | **Scenes** | Browses the project's scene list by category, shows the resolved path of the selected scene, and loads it. Also lists scene files found under `Resources/Scenes`. |
+| **Editor** | The scene editor. See below. |
+| **Resources** | Browses the project's `Resources` tree with each file's kind and size, loads scenes from it, and tracks whether the open scene has unsaved changes. |
 | **Play** | Pause, step frame by frame, fast forward, restart the scene, recompile scripts, or restart the engine. Toggles hitboxes, object regions, tile collision and the performance overlay, and shows live object, tileset, view and layer information with per-layer visibility switches. |
 | **Settings** | Fullscreen, V-Sync, window size, master/music/sound volume, log level, preferred renderer and the developer hotkeys — written back to `config.ini` with **Save Settings**. |
 | **Console** | The engine log inside the window, coloured by severity, filterable, and following new messages as they arrive. |
 | **Help** | Engine and renderer information, and the current developer key bindings. |
 
+Along the top is a menu bar in the shape of the one
+[HatchStudio](https://github.com/HatchGameEngine/HatchStudio) uses:
+
+- **File** — New Project (`Ctrl+Alt+N`), Open Project (`Ctrl+Alt+O`), Open Data
+  File (`Ctrl+O`), a Recent Projects submenu, Close Project (`Ctrl+Alt+W`),
+  Save Settings (`Ctrl+S`), Exit.
+- **Project** — Run (`Ctrl+R`), Restart Scene (`F6`), Recompile Scripts & Reload
+  Scene (`F5`), Restart Engine (`F1`), a Set Run Start Scene radio group
+  (run from the game's start scene, or from whichever scene is loaded), Open
+  Scene File, Rescan Project.
+- **View** — jump to any tab, and toggle pausing, the performance overlay and
+  fullscreen.
+- **Help** — the Help tab and Close Editor (`F12`).
+
+Open Project, Open Data File, Open Scene File and the scripts folder Browse
+button all open a file browser drawn by the engine, so a project anywhere on
+disk can be opened without a command line. Text fields take `Ctrl+C`, `Ctrl+X`
+and `Ctrl+V`.
+
+## Scene editor
+
+The **Editor** tab edits the scene that is loaded, in place. The game keeps
+rendering behind it and the editor draws its grid, selection and markers over
+the top, so every change shows the moment it is made. The game is held still
+while the editor is open.
+
+- **Paint** and **Erase** lay down the selected tile with an adjustable brush,
+  optionally flipped, and optionally forcing either collision plane.
+- **Pick** takes a tile and its flip flags from the scene into the brush.
+- **Select** drags out a rectangle, which **Capture** turns into a reusable
+  stamp; **Stamp** lays stamps back down, skipping their empty tiles.
+- **Entity** picks an entity out of the scene and drags it around, with a
+  Snap To Tile Grid for tidying up.
+- **Layers** lists every layer with its size and offsets, chooses which one the
+  brush works on, and toggles each one's visibility.
+- Everything is undoable. A whole brush stroke undoes in one step.
+
+**Save Scene** writes the tile layers back to the scene file. Only the `<data>`
+element of each layer is rewritten, so tilesets, object groups, custom
+properties and anything else in the file survive untouched; loading a scene,
+saving it and loading it again gives back a byte-identical file. Tiled `.tmx`
+scenes can be written back today. Scenes inside a packed `.hatch` file cannot be
+saved, and the Save button says so.
+
+Anything that would discard unsaved scene edits -- opening another project,
+closing one, loading a different scene -- asks first, offering to save, discard
+or cancel.
+
 The game is paused while the editor is open, so anything you inspect holds
-still; turn that off under **Play** if you would rather watch it run. The
-`[studio]` section of `config.ini` holds the editor's own preferences:
+still; turn that off under **View** or **Play** if you would rather watch it
+run. The `[studio]` section of `config.ini` holds the editor's own preferences:
 
 ```ini
 [studio]
-openOnStart=true    ; open the editor as soon as the engine starts
-pauseWhenOpen=true  ; hold the game still while the editor is on screen
+openOnStart=true         ; open the editor as soon as the engine starts
+pauseWhenOpen=true       ; hold the game still while the editor is on screen
+runFromStartScene=true   ; what Project > Run loads
+recent0=../SomeGame      ; recently opened projects
 
 [keys]
-studio=F12          ; key that opens and closes the editor
+studio=F12               ; key that opens and closes the editor
 ```
+
+## Command line
+
+The engine takes the same options as
+[upstream Hatch](https://github.com/HatchGameEngine/HatchGameEngine), so
+shortcuts and scripts written for either one work here:
+
+```
+HatchGameEngine [options] [scene file]
+
+  --project-dir <path>    Run the game in <path>, which holds its
+                          Resources and Scripts folders.
+  --resource-file <path>  Read resources from a packed .hatch file.
+  --scripts-dir <path>    Read scripts from <path> instead of Scripts.
+  --scene <path>          Load this scene at startup, relative to
+                          the Resources folder.
+  --studio                Open the editor on startup.
+  --help                  Show this text.
+```
+
+A single argument that is not an option is still treated as a `.hatch` file or
+as a scene file inside a `Resources` folder, the way the engine has always been
+started from a file manager.
 
 ## Documentation
 
