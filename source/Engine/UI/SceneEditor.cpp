@@ -535,7 +535,12 @@ PRIVATE STATIC void SceneEditor::UpdateViewportInput(float areaX, float areaY, f
             if (UICore::MouseWasPressed && inside)
                 SceneEditor::BeginCommand();
 
-            if (UICore::MouseIsDown && BuildingCommand && inside) {
+            // A press and its release can both arrive before a frame is drawn,
+            // so the tile under the pointer is laid down as soon as the stroke
+            // starts; waiting for the button to still be held would drop every
+            // quick click.
+            if (BuildingCommand && inside &&
+                (UICore::MouseWasPressed || UICore::MouseIsDown)) {
                 if (CurrentTool == TOOL_PAINT)
                     SceneEditor::PaintAt(tileX, tileY);
                 else
@@ -774,10 +779,6 @@ PRIVATE STATIC void SceneEditor::DrawTilePalette(float width) {
     float x, y;
     UICore::PlaceCustomItem(width, rows * cell, &x, &y);
 
-    // Tiles are textures, not flat colour, so the blend colour has to go back
-    // to white or every one of them would come out tinted.
-    Graphics::SetBlendColor(1.0f, 1.0f, 1.0f, 1.0f);
-
     for (size_t i = 0; i < tileCount; i++) {
         float cellX = x + (i % columns) * cell;
         float cellY = y + (i / columns) * cell;
@@ -789,6 +790,11 @@ PRIVATE STATIC void SceneEditor::DrawTilePalette(float width) {
         // Graphics::DrawSprite, which on the OpenGL backend renders a
         // pre-built buffer per frame at its natural size and would ignore the
         // scaling the palette needs.
+        // Tiles are textures rather than flat colour, and the blend colour is
+        // shared state that the highlight rectangles below overwrite, so it has
+        // to go back to white for every one of them.
+        Graphics::SetBlendColor(1.0f, 1.0f, 1.0f, 1.0f);
+
         TileSpriteInfo& info = Scene::TileSpriteInfos[i];
         if (info.Sprite && Graphics::SpriteRangeCheck(info.Sprite, info.AnimationIndex, info.FrameIndex) == false) {
             AnimFrame& frame = info.Sprite->Animations[info.AnimationIndex].Frames[info.FrameIndex];

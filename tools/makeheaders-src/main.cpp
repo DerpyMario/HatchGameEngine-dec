@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstring>
 #include <stdio.h>
 #include <vector>

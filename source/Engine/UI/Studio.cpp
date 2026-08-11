@@ -17,6 +17,7 @@ public:
 #include <Engine/UI/UITheme.h>
 #include <Engine/UI/ResourceEditor.h>
 #include <Engine/UI/SceneEditor.h>
+#include <Engine/UI/TileCollisionEditor.h>
 
 #include <Engine/Bytecode/SourceFileMap.h>
 
@@ -44,6 +45,7 @@ enum StudioTab {
     STUDIO_TAB_PROJECT,
     STUDIO_TAB_SCENES,
     STUDIO_TAB_EDITOR,
+    STUDIO_TAB_COLLISION,
     STUDIO_TAB_RESOURCES,
     STUDIO_TAB_PLAY,
     STUDIO_TAB_SETTINGS,
@@ -53,7 +55,8 @@ enum StudioTab {
 };
 
 static const char* TabNames[STUDIO_TAB_COUNT] = {
-    "Project", "Scenes", "Editor", "Resources", "Play", "Settings", "Console", "Help"
+    "Project", "Scenes", "Editor", "Collision", "Resources", "Play", "Settings",
+    "Console", "Help"
 };
 
 // Widgets are drawn and clicked in the same call, which means a button's
@@ -495,6 +498,7 @@ PUBLIC STATIC void Studio::Update() {
 
                 SceneEditor::Reset();
                 ResourceEditor::Invalidate();
+                TileCollisionEditor::Invalidate();
             }
             else
                 Studio::SetStatus("Could not open \"%s\".", PendingPath);
@@ -536,6 +540,7 @@ PUBLIC STATIC void Studio::Update() {
 
             SceneEditor::Reset();
             ResourceEditor::Invalidate();
+            TileCollisionEditor::Invalidate();
             break;
 
         case STUDIO_ACTION_RUN:
@@ -1389,6 +1394,9 @@ PUBLIC STATIC void Studio::Render() {
         case STUDIO_TAB_EDITOR:
             SceneEditor::Draw(0.0f, contentY, width, contentH);
             break;
+        case STUDIO_TAB_COLLISION:
+            TileCollisionEditor::Draw(0.0f, contentY, width, contentH, split);
+            break;
         case STUDIO_TAB_RESOURCES:
             ResourceEditor::Draw(0.0f, contentY, width, contentH, split);
             break;
@@ -1416,13 +1424,16 @@ PUBLIC STATIC void Studio::Render() {
 
     if (!statusFresh && CurrentTab == STUDIO_TAB_EDITOR && SceneEditor::GetStatus()[0])
         statusLine = SceneEditor::GetStatus();
+    else if (!statusFresh && CurrentTab == STUDIO_TAB_COLLISION && TileCollisionEditor::GetStatus()[0])
+        statusLine = TileCollisionEditor::GetStatus();
 
     UIDraw::Text(UICore::Pad() * 2.0f, statusY + 3.0f * scale, statusLine,
         statusFresh ? UI_COL_SUCCESS : UI_COL_TEXT_FAINT);
 
-    char runState[160];
-    snprintf(runState, sizeof(runState), "%s%s  |  %.0f FPS",
+    char runState[200];
+    snprintf(runState, sizeof(runState), "%s%s%s  |  %.0f FPS",
         SceneEditor::UnsavedChanges ? "scene edited  |  " : "",
+        TileCollisionEditor::UnsavedChanges ? "collision edited  |  " : "",
         Studio::IsPausingGame() ? "game paused" : "game running", Application::FPS);
     UIDraw::TextRight(width - UICore::Pad() * 2.0f, statusY + 3.0f * scale,
         runState, UI_COL_TEXT_FAINT, scale);

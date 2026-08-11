@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
 # set the project name and version
 project(HatchGameEngine VERSION 1.2.2)
@@ -10,7 +10,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   set(CMAKE_CXX_FLAGS "/wd4244 /wd4267 /wd4305 /wd4717 /EHsc")
 else()
-  set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -march=nocona")
+  set(CMAKE_CXX_FLAGS_RELEASE "-Ofast")
+
+  # -march=nocona names an x86 processor, so it is only a flag the compiler
+  # will take on x86, and not even there when several architectures are being
+  # built into the one binary.
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86)$" AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=nocona")
+  endif()
 endif()
 
 # Set up CMake modules path
@@ -21,12 +28,24 @@ file(GLOB_RECURSE CPP_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} "source/*.cpp")
 
 set(HATCH_SOURCES ${C_SOURCES} ${CPP_SOURCES})
 
+# The macOS half of the filesystem code is Objective-C, since the application
+# support directory can only be asked for through Foundation.
+if(APPLE)
+  enable_language(OBJC)
+  file(GLOB_RECURSE OBJC_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} "source/*.m")
+  list(APPEND HATCH_SOURCES ${OBJC_SOURCES})
+endif()
+
 set(HATCH_TARGET_NAME ${PROJECT_NAME})
 if(TARGET_NAME)
   set(HATCH_TARGET_NAME ${TARGET_NAME})
 endif()
 
-if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(APPLE)
+  add_definitions(-DMACOSX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
+   -DNO_LIBAV
+  )
+elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   add_definitions(-DLINUX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
    -DNO_LIBAV
   )
@@ -48,6 +67,17 @@ endif()
 
 option(USE_OPEN_ASSET_IMPORT_LIBRARY "Use Open Asset Import Library" ON)
 option(USE_FREETYPE_LIBRARY "Use FreeType" OFF)
+
+# Builds against an SDL2 that was built from source and installed next to this
+# one, through the CMake package SDL2 installs, which knows every library its
+# static build needs. This is how the release workflow gets an executable that
+# carries SDL2 with it instead of asking for it to be installed, and how it
+# reaches architectures the bundled libraries do not cover.
+option(USE_SDL2_CONFIG "Find SDL2 through its own CMake package" OFF)
+
+# The same idea for GLEW, which is only bundled for 64-bit x86 Windows.
+set(GLEW_LIBRARY "" CACHE FILEPATH "GLEW library to link instead of the bundled one")
+set(GLEW_INCLUDE_DIR "" CACHE PATH "Where that GLEW's headers are")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   set(USE_OPEN_ASSET_IMPORT_LIBRARY OFF)
@@ -120,9 +150,25 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   endif()
 endif()
 
+# SDL2 from its own CMake package, which carries a target that already knows
+# what a static SDL2 has to be linked against on this platform.
+if(USE_SDL2_CONFIG)
+  find_package(SDL2 CONFIG REQUIRED)
+
+  if(TARGET SDL2::SDL2-static)
+    set(SDL2_LIBRARIES SDL2::SDL2-static)
+  else()
+    set(SDL2_LIBRARIES SDL2::SDL2)
+  endif()
+
+  set(SDL2_INCLUDE_DIRS "")
+endif()
+
 # Find the includes
 if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-  find_package(SDL2 REQUIRED)
+  if(NOT USE_SDL2_CONFIG)
+    find_package(SDL2 REQUIRED)
+  endif()
   if(USE_FREETYPE_LIBRARY)
     find_package(Freetype REQUIRED)
   endif()
@@ -139,13 +185,27 @@ if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
     endif()
   endif()
   if(USING_OPENGL)
-    set(OPENGL_LIBRARIES "-lGL -lGLEW")
+    if(APPLE)
+      # macOS has OpenGL as a framework and needs no loader.
+      find_library(OPENGL_FRAMEWORK OpenGL)
+      set(OPENGL_LIBRARIES ${OPENGL_FRAMEWORK})
+    elseif(GLEW_LIBRARY)
+      set(OPENGL_LIBRARIES "${GLEW_LIBRARY};-lGL")
+    else()
+      set(OPENGL_LIBRARIES "-lGL -lGLEW")
+    endif()
   endif()
 else()
-  set(SDL2_INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/meta/win/include/SDL2/")
+  if(NOT USE_SDL2_CONFIG)
+    set(SDL2_INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/meta/win/include/SDL2/")
+  endif()
   if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     if(USING_OPENGL)
-      set(OPENGL_LIBRARIES "${CMAKE_CURRENT_LIST_DIR}/meta/win/lib/msvc/x64/glew32s.lib")
+      if(GLEW_LIBRARY)
+        set(OPENGL_LIBRARIES "${GLEW_LIBRARY}")
+      else()
+        set(OPENGL_LIBRARIES "${CMAKE_CURRENT_LIST_DIR}/meta/win/lib/msvc/x64/glew32s.lib")
+      endif()
     endif()
   else()
     if(USE_OPEN_ASSET_IMPORT_LIBRARY)
@@ -165,6 +225,11 @@ include_directories(
   ${SDL2_INCLUDE_DIRS}
   ${ASSIMP_INCLUDE_DIRS}
 )
+
+if(GLEW_INCLUDE_DIR)
+  include_directories(${GLEW_INCLUDE_DIR})
+  add_definitions(-DGLEW_STATIC)
+endif()
 
 if(USE_OPEN_ASSET_IMPORT_LIBRARY)
   include_directories(${ASSIMP_INCLUDE_DIRS})
@@ -189,7 +254,9 @@ endif()
 
 # Add libraries
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-  if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+  if(USE_SDL2_CONFIG)
+    target_link_libraries(${PROJECT_NAME} ${SDL2_LIBRARIES} Ws2_32.lib opengl32.lib)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_link_libraries(${PROJECT_NAME} "${CMAKE_CURRENT_LIST_DIR}/meta/win/lib/msvc/x64/SDL2.lib"
     Ws2_32.lib opengl32.lib)
   else()
@@ -215,4 +282,10 @@ if(USE_OPEN_ASSET_IMPORT_LIBRARY)
 endif()
 if(USING_OPENGL)
   target_link_libraries(${PROJECT_NAME} ${OPENGL_LIBRARIES})
+endif()
+
+if(APPLE)
+  # Foundation for the Objective-C filesystem code above.
+  find_library(FOUNDATION_FRAMEWORK Foundation)
+  target_link_libraries(${PROJECT_NAME} ${FOUNDATION_FRAMEWORK})
 endif()

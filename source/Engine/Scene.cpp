@@ -2036,6 +2036,167 @@ PRIVATE STATIC void Scene::LoadRSDKTileConfig(int tilesetID, Stream* tileColRead
 
     Memory::Free(tileData);
 }
+// Works out a tile's collision from the column heights that the collision file
+// stores: which sides collide, the angles for each side, and the three flipped
+// copies the collision routines expect to find after it.
+//
+// Split out of the loader so that the collision editor, which produces exactly
+// the same column heights from what the user draws, cannot end up interpreting
+// them differently from the way a loaded file would be.
+PUBLIC STATIC void Scene::ApplyTileCollisionHeights(TileConfig* tile, Uint8* collisionBuffer, bool hasCollision, Uint8 tileSize) {
+    TileConfig *tileDest, *tileLast;
+
+    Uint8* col;
+    // Interpret up/down collision
+    if (tile->IsCeiling) {
+        col = &collisionBuffer[0];
+        for (int c = 0; c < 16; c++) {
+            if (hasCollision && *col < tileSize) {
+                tile->CollisionTop[c] = 0;
+                tile->CollisionBottom[c] = *col ^ 15;
+            }
+            else {
+                tile->CollisionTop[c] =
+                tile->CollisionBottom[c] = 0xFF;
+            }
+            col++;
+        }
+
+        // Interpret left/right collision
+        for (int y = 15; y >= 0; y--) {
+            // Left-to-right check
+            for (int x = 0; x <= 15; x++) {
+                Uint8 data = tile->CollisionBottom[x];
+                if (data != 0xFF && data >= y) {
+                    tile->CollisionLeft[y] = x;
+                    goto HCOL_COLLISION_LINE_LEFT_BOTTOMUP_FOUND;
+                }
+            }
+            tile->CollisionLeft[y] = 0xFF;
+
+            HCOL_COLLISION_LINE_LEFT_BOTTOMUP_FOUND:
+
+            // Right-to-left check
+            for (int x = 15; x >= 0; x--) {
+                Uint8 data = tile->CollisionBottom[x];
+                if (data != 0xFF && data >= y) {
+                    tile->CollisionRight[y] = x;
+                    goto HCOL_COLLISION_LINE_RIGHT_BOTTOMUP_FOUND;
+                }
+            }
+            tile->CollisionRight[y] = 0xFF;
+
+            HCOL_COLLISION_LINE_RIGHT_BOTTOMUP_FOUND:
+            ;
+        }
+    }
+    else {
+        col = &collisionBuffer[0];
+        for (int c = 0; c < 16; c++) {
+            if (hasCollision && *col < tileSize) {
+                tile->CollisionTop[c] = *col;
+                tile->CollisionBottom[c] = 15;
+            }
+            else {
+                tile->CollisionTop[c] =
+                tile->CollisionBottom[c] = 0xFF;
+            }
+            col++;
+        }
+
+        // Interpret left/right collision
+        for (int y = 0; y <= 15; y++) {
+            // Left-to-right check
+            for (int x = 0; x <= 15; x++) {
+                Uint8 data = tile->CollisionTop[x];
+                if (data != 0xFF && data <= y) {
+                    tile->CollisionLeft[y] = x;
+                    goto HCOL_COLLISION_LINE_LEFT_TOPDOWN_FOUND;
+                }
+            }
+            tile->CollisionLeft[y] = 0xFF;
+
+            HCOL_COLLISION_LINE_LEFT_TOPDOWN_FOUND:
+
+            // Right-to-left check
+            for (int x = 15; x >= 0; x--) {
+                Uint8 data = tile->CollisionTop[x];
+                if (data != 0xFF && data <= y) {
+                    tile->CollisionRight[y] = x;
+                    goto HCOL_COLLISION_LINE_RIGHT_TOPDOWN_FOUND;
+                }
+            }
+            tile->CollisionRight[y] = 0xFF;
+
+            HCOL_COLLISION_LINE_RIGHT_TOPDOWN_FOUND:
+            ;
+        }
+    }
+
+    // Interpret angles
+    Uint8 angle = tile->AngleTop;
+    if (angle == 0xFF) {
+        tile->AngleTop = 0x00; // Top
+        tile->AngleLeft = 0xC0; // Left
+        tile->AngleRight = 0x40; // Right
+        tile->AngleBottom = 0x80; // Bottom
+    }
+    else {
+        if (tile->IsCeiling) {
+            tile->AngleTop = 0x00;
+            tile->AngleLeft = angle >= 0x81 && angle <= 0xB6 ? angle : 0xC0;
+            tile->AngleRight = angle >= 0x4A && angle <= 0x7F ? angle : 0x40;
+            tile->AngleBottom = angle;
+        }
+        else {
+            tile->AngleTop = angle;
+            tile->AngleLeft = angle >= 0xCA && angle <= 0xF6 ? angle : 0xC0;
+            tile->AngleRight = angle >= 0x0A && angle <= 0x36 ? angle : 0x40;
+            tile->AngleBottom = 0x80;
+        }
+    }
+
+    // Flip X
+    tileDest = tile + Scene::TileCount;
+    tileDest->AngleTop = -tile->AngleTop;
+    tileDest->AngleLeft = -tile->AngleRight;
+    tileDest->AngleRight = -tile->AngleLeft;
+    tileDest->AngleBottom = -tile->AngleBottom;
+    for (int xD = 0, xS = 15; xD <= 15; xD++, xS--) {
+        tileDest->CollisionTop[xD] = tile->CollisionTop[xS];
+        tileDest->CollisionBottom[xD] = tile->CollisionBottom[xS];
+        // Swaps
+        tileDest->CollisionLeft[xD] = tile->CollisionRight[xD] ^ 15;
+        tileDest->CollisionRight[xD] = tile->CollisionLeft[xD] ^ 15;
+    }
+    // Flip Y
+    tileDest = tile + (Scene::TileCount << 1);
+    tileDest->AngleTop = 0x80 - tile->AngleBottom;
+    tileDest->AngleLeft = 0x80 - tile->AngleLeft;
+    tileDest->AngleRight = 0x80 - tile->AngleRight;
+    tileDest->AngleBottom = 0x80 - tile->AngleTop;
+    for (int xD = 0, xS = 15; xD <= 15; xD++, xS--) {
+        tileDest->CollisionLeft[xD] = tile->CollisionLeft[xS];
+        tileDest->CollisionRight[xD] = tile->CollisionRight[xS];
+        // Swaps
+        tileDest->CollisionTop[xD] = tile->CollisionBottom[xD] ^ 15;
+        tileDest->CollisionBottom[xD] = tile->CollisionTop[xD] ^ 15;
+    }
+    // Flip XY
+    tileLast = tileDest;
+    tileDest = tile + (Scene::TileCount << 1) + Scene::TileCount;
+    tileDest->AngleTop = -tileLast->AngleTop;
+    tileDest->AngleLeft = -tileLast->AngleRight;
+    tileDest->AngleRight = -tileLast->AngleLeft;
+    tileDest->AngleBottom = -tileLast->AngleBottom;
+    for (int xD = 0, xS = 15; xD <= 15; xD++, xS--) {
+        tileDest->CollisionTop[xD] = tile->CollisionBottom[xS] ^ 15;
+        tileDest->CollisionLeft[xD] = tile->CollisionRight[xS] ^ 15;
+        tileDest->CollisionRight[xD] = tile->CollisionLeft[xS] ^ 15;
+        tileDest->CollisionBottom[xD] = tile->CollisionTop[xS] ^ 15;
+    }
+}
+
 PRIVATE STATIC void Scene::LoadHCOLTileConfig(size_t tilesetID, Stream* tileColReader) {
     if (!Scene::Tilesets.size() || tilesetID >= Scene::Tilesets.size())
         return;
@@ -2081,155 +2242,7 @@ PRIVATE STATIC void Scene::LoadHCOLTileConfig(size_t tilesetID, Stream* tileColR
         // Read collision
         tileColReader->ReadBytes(collisionBuffer, tileSize);
 
-        Uint8* col;
-        // Interpret up/down collision
-        if (tile->IsCeiling) {
-            col = &collisionBuffer[0];
-            for (int c = 0; c < 16; c++) {
-                if (hasCollision && *col < tileSize) {
-                    tile->CollisionTop[c] = 0;
-                    tile->CollisionBottom[c] = *col ^ 15;
-                }
-                else {
-                    tile->CollisionTop[c] =
-                    tile->CollisionBottom[c] = 0xFF;
-                }
-                col++;
-            }
-
-            // Interpret left/right collision
-            for (int y = 15; y >= 0; y--) {
-                // Left-to-right check
-                for (int x = 0; x <= 15; x++) {
-                    Uint8 data = tile->CollisionBottom[x];
-                    if (data != 0xFF && data >= y) {
-                        tile->CollisionLeft[y] = x;
-                        goto HCOL_COLLISION_LINE_LEFT_BOTTOMUP_FOUND;
-                    }
-                }
-                tile->CollisionLeft[y] = 0xFF;
-
-                HCOL_COLLISION_LINE_LEFT_BOTTOMUP_FOUND:
-
-                // Right-to-left check
-                for (int x = 15; x >= 0; x--) {
-                    Uint8 data = tile->CollisionBottom[x];
-                    if (data != 0xFF && data >= y) {
-                        tile->CollisionRight[y] = x;
-                        goto HCOL_COLLISION_LINE_RIGHT_BOTTOMUP_FOUND;
-                    }
-                }
-                tile->CollisionRight[y] = 0xFF;
-
-                HCOL_COLLISION_LINE_RIGHT_BOTTOMUP_FOUND:
-                ;
-            }
-        }
-        else {
-            col = &collisionBuffer[0];
-            for (int c = 0; c < 16; c++) {
-                if (hasCollision && *col < tileSize) {
-                    tile->CollisionTop[c] = *col;
-                    tile->CollisionBottom[c] = 15;
-                }
-                else {
-                    tile->CollisionTop[c] =
-                    tile->CollisionBottom[c] = 0xFF;
-                }
-                col++;
-            }
-
-            // Interpret left/right collision
-            for (int y = 0; y <= 15; y++) {
-                // Left-to-right check
-                for (int x = 0; x <= 15; x++) {
-                    Uint8 data = tile->CollisionTop[x];
-                    if (data != 0xFF && data <= y) {
-                        tile->CollisionLeft[y] = x;
-                        goto HCOL_COLLISION_LINE_LEFT_TOPDOWN_FOUND;
-                    }
-                }
-                tile->CollisionLeft[y] = 0xFF;
-
-                HCOL_COLLISION_LINE_LEFT_TOPDOWN_FOUND:
-
-                // Right-to-left check
-                for (int x = 15; x >= 0; x--) {
-                    Uint8 data = tile->CollisionTop[x];
-                    if (data != 0xFF && data <= y) {
-                        tile->CollisionRight[y] = x;
-                        goto HCOL_COLLISION_LINE_RIGHT_TOPDOWN_FOUND;
-                    }
-                }
-                tile->CollisionRight[y] = 0xFF;
-
-                HCOL_COLLISION_LINE_RIGHT_TOPDOWN_FOUND:
-                ;
-            }
-        }
-
-        // Interpret angles
-        Uint8 angle = tile->AngleTop;
-        if (angle == 0xFF) {
-            tile->AngleTop = 0x00; // Top
-            tile->AngleLeft = 0xC0; // Left
-            tile->AngleRight = 0x40; // Right
-            tile->AngleBottom = 0x80; // Bottom
-        }
-        else {
-            if (tile->IsCeiling) {
-                tile->AngleTop = 0x00;
-                tile->AngleLeft = angle >= 0x81 && angle <= 0xB6 ? angle : 0xC0;
-                tile->AngleRight = angle >= 0x4A && angle <= 0x7F ? angle : 0x40;
-                tile->AngleBottom = angle;
-            }
-            else {
-                tile->AngleTop = angle;
-                tile->AngleLeft = angle >= 0xCA && angle <= 0xF6 ? angle : 0xC0;
-                tile->AngleRight = angle >= 0x0A && angle <= 0x36 ? angle : 0x40;
-                tile->AngleBottom = 0x80;
-            }
-        }
-
-        // Flip X
-        tileDest = tile + Scene::TileCount;
-        tileDest->AngleTop = -tile->AngleTop;
-        tileDest->AngleLeft = -tile->AngleRight;
-        tileDest->AngleRight = -tile->AngleLeft;
-        tileDest->AngleBottom = -tile->AngleBottom;
-        for (int xD = 0, xS = 15; xD <= 15; xD++, xS--) {
-            tileDest->CollisionTop[xD] = tile->CollisionTop[xS];
-            tileDest->CollisionBottom[xD] = tile->CollisionBottom[xS];
-            // Swaps
-            tileDest->CollisionLeft[xD] = tile->CollisionRight[xD] ^ 15;
-            tileDest->CollisionRight[xD] = tile->CollisionLeft[xD] ^ 15;
-        }
-        // Flip Y
-        tileDest = tile + (Scene::TileCount << 1);
-        tileDest->AngleTop = 0x80 - tile->AngleBottom;
-        tileDest->AngleLeft = 0x80 - tile->AngleLeft;
-        tileDest->AngleRight = 0x80 - tile->AngleRight;
-        tileDest->AngleBottom = 0x80 - tile->AngleTop;
-        for (int xD = 0, xS = 15; xD <= 15; xD++, xS--) {
-            tileDest->CollisionLeft[xD] = tile->CollisionLeft[xS];
-            tileDest->CollisionRight[xD] = tile->CollisionRight[xS];
-            // Swaps
-            tileDest->CollisionTop[xD] = tile->CollisionBottom[xD] ^ 15;
-            tileDest->CollisionBottom[xD] = tile->CollisionTop[xD] ^ 15;
-        }
-        // Flip XY
-        tileLast = tileDest;
-        tileDest = tile + (Scene::TileCount << 1) + Scene::TileCount;
-        tileDest->AngleTop = -tileLast->AngleTop;
-        tileDest->AngleLeft = -tileLast->AngleRight;
-        tileDest->AngleRight = -tileLast->AngleLeft;
-        tileDest->AngleBottom = -tileLast->AngleBottom;
-        for (int xD = 0, xS = 15; xD <= 15; xD++, xS--) {
-            tileDest->CollisionTop[xD] = tile->CollisionBottom[xS] ^ 15;
-            tileDest->CollisionLeft[xD] = tile->CollisionRight[xS] ^ 15;
-            tileDest->CollisionRight[xD] = tile->CollisionLeft[xS] ^ 15;
-            tileDest->CollisionBottom[xD] = tile->CollisionTop[xS] ^ 15;
-        }
+        Scene::ApplyTileCollisionHeights(tile, collisionBuffer, hasCollision, tileSize);
     }
 
     // Copy over to the other planes

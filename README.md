@@ -16,6 +16,7 @@ by the engine's own renderer and needs no extra libraries or asset files.
 | **Project** | Lists every game folder and `.hatch` file next to the engine, plus recently opened ones. Open one with a click, or scaffold a new project (`Resources` tree and a starter `GameConfig.xml`) and open it straight away. |
 | **Scenes** | Browses the project's scene list by category, shows the resolved path of the selected scene, and loads it. Also lists scene files found under `Resources/Scenes`. |
 | **Editor** | The scene editor. See below. |
+| **Collision** | The tile collision editor. See below. |
 | **Resources** | Browses the project's `Resources` tree with each file's kind and size, loads scenes from it, and tracks whether the open scene has unsaved changes. |
 | **Play** | Pause, step frame by frame, fast forward, restart the scene, recompile scripts, or restart the engine. Toggles hitboxes, object regions, tile collision and the performance overlay, and shows live object, tileset, view and layer information with per-layer visibility switches. |
 | **Settings** | Fullscreen, V-Sync, window size, master/music/sound volume, log level, preferred renderer and the developer hotkeys — written back to `config.ini` with **Save Settings**. |
@@ -70,6 +71,37 @@ Anything that would discard unsaved scene edits -- opening another project,
 closing one, loading a different scene -- asks first, offering to save, discard
 or cancel.
 
+## Tile collision editor
+
+The **Collision** tab is the editor
+[HatchTileCollisionEditor](https://github.com/HatchGameEngine/HatchStudio) is,
+inside the engine and working on the collision the running game is using.
+
+A collision file gives each tile sixteen column heights, a ceiling flag and an
+angle; everything the engine actually collides against -- which sides are solid,
+the angle of each side, the three flipped copies of the tile -- is worked out
+from those when the file loads. The editor edits the heights and asks the engine
+to work the rest out again through the same routine the loader uses, so a tile
+drawn here behaves exactly like the same tile loaded from a file.
+
+- The tile is drawn magnified with its own graphic underneath it, so collision
+  can be laid against the art it is meant to match. Clicking a square gives that
+  column its surface; clicking the same square again takes the column away.
+- **Fill**, **Clear** and **Half** do a whole tile at once.
+- **Ceiling tile** turns the tile over, so its columns hang down from the top.
+- **Angle** is the tile's ground angle, shown in degrees as well as in the
+  0--255 the file stores.
+- Hatch scenes have two collision planes, A and B. The **Plane** dropdown
+  chooses which one is being drawn on and **Copy To Plane B** copies across.
+- The tile picker marks every tile that already has collision, so a tileset can
+  be worked through without guessing.
+
+**Save Tile Collision** writes the scene's collision file back out in the same
+`TCOL` format the engine reads, covering the first tileset the way the loader
+expects. Loading a collision file, saving it and loading it again gives back a
+byte-identical file. As with scenes, collision inside a packed `.hatch` file
+cannot be written back, and the button says so.
+
 The game is paused while the editor is open, so anything you inspect holds
 still; turn that off under **View** or **Play** if you would rather watch it
 run. The `[studio]` section of `config.ini` holds the editor's own preferences:
@@ -109,6 +141,26 @@ as a scene file inside a `Resources` folder, the way the engine has always been
 started from a file manager.
 
 ## Documentation
+
+## Builds
+
+The **Build application** workflow under Actions is started by hand and builds
+one self-contained application for every target:
+
+| Artifact | What it is |
+| --- | --- |
+| `HatchGameEngine-windows-x64` | A single `.exe` |
+| `HatchGameEngine-windows-arm64` | A single `.exe` |
+| `HatchGameEngine-macos-universal` | A `.app` holding one binary with both Apple silicon and Intel in it |
+| `HatchGameEngine-linux-x86_64` | A single executable |
+| `HatchGameEngine-linux-aarch64` | A single executable |
+
+Each job builds SDL2 from source as a static library and links it, along with
+GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
+the machine it lands on beyond what the operating system already has. Windows
+uses the static C runtime, so no Visual C++ redistributable is needed either.
+The Unix artifacts arrive as tarballs because a zip -- which is what GitHub
+wraps artifacts in -- does not carry the executable bit.
 
 ## Building
 ### Windows
