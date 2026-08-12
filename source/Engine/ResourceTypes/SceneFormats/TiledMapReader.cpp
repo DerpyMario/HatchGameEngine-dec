@@ -225,6 +225,15 @@ PRIVATE STATIC Tileset* TiledMapReader::ParseTilesetImage(XMLNode* node, int fir
     ISprite* tileSprite = new ISprite();
     tileSprite->Spritesheets[0] = tileSprite->AddSpriteSheet(imagePath);
 
+    // A scene naming an image that is not there would otherwise be read
+    // straight through the sheet that never loaded. Better to lose the tileset
+    // and say which one than to take the application down with it.
+    if (!tileSprite->Spritesheets[0]) {
+        Log::Print(Log::LOG_ERROR, "Could not load the tileset image \"%s\"!", imagePath);
+        delete tileSprite;
+        return NULL;
+    }
+
     int cols = tileSprite->Spritesheets[0]->Width / Scene::TileWidth;
     int rows = tileSprite->Spritesheets[0]->Height / Scene::TileHeight;
 

@@ -1460,7 +1460,22 @@ PUBLIC STATIC void     GLRenderer::UpdateClipRect() {
         glDisable(GL_SCISSOR_TEST); CHECK_GL();
     }
 }
+// Both of these write the projection into whichever view is current, and there
+// is not always one: the scene renderer leaves none current once it has been
+// through them all, so anything drawing after it -- an overlay, a script -- used
+// to write through a null matrix and take the application down. There is nothing
+// to update without a view, so there is nothing to do.
+PRIVATE STATIC bool    GLRenderer::HaveCurrentViewMatrices() {
+    if (Scene::ViewCurrent < 0 || Scene::ViewCurrent >= MAX_SCENE_VIEWS)
+        return false;
+
+    return Scene::Views[Scene::ViewCurrent].ProjectionMatrix != NULL &&
+           Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix != NULL;
+}
 PUBLIC STATIC void     GLRenderer::UpdateOrtho(float left, float top, float right, float bottom) {
+    if (!GLRenderer::HaveCurrentViewMatrices())
+        return;
+
     // if (Graphics::CurrentRenderTarget)
     //     Matrix4x4::Ortho(Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix, left, right, bottom, top, -500.0f, 500.0f);
     // else
@@ -1469,6 +1484,9 @@ PUBLIC STATIC void     GLRenderer::UpdateOrtho(float left, float top, float righ
     Matrix4x4::Copy(Scene::Views[Scene::ViewCurrent].ProjectionMatrix, Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix);
 }
 PUBLIC STATIC void     GLRenderer::UpdatePerspective(float fovy, float aspect, float nearv, float farv) {
+    if (!GLRenderer::HaveCurrentViewMatrices())
+        return;
+
     MakePerspectiveMatrix(Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix, fovy, nearv, farv, aspect);
     Matrix4x4::Copy(Scene::Views[Scene::ViewCurrent].ProjectionMatrix, Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix);
 }
