@@ -14,11 +14,11 @@ by the engine's own renderer and needs no extra libraries or asset files.
 | Tab | What it does |
 | --- | --- |
 | **Project** | Lists every game folder and `.hatch` file next to the engine, plus recently opened ones. Open one with a click, or scaffold a new project (`Resources` tree and a starter `GameConfig.xml`) and open it straight away. |
-| **Scenes** | Browses the project's scene list by category, shows the resolved path of the selected scene, and loads it. Also lists scene files found under `Resources/Scenes`. |
+| **Scenes** | Browses the project's scene list by category, shows the resolved path of the selected scene, and loads it. Also lists scene files found under `Resources/Scenes`, and creates new ones. |
 | **Editor** | The scene editor. See below. |
 | **Collision** | The tile collision editor. See below. |
 | **Resources** | Browses the project's `Resources` tree with each file's kind and size, loads scenes from it, and tracks whether the open scene has unsaved changes. |
-| **Play** | Pause, step frame by frame, fast forward, restart the scene, recompile scripts, or restart the engine. Toggles hitboxes, object regions, tile collision and the performance overlay, and shows live object, tileset, view and layer information with per-layer visibility switches. |
+| **Play** | Pause, step frame by frame, fast forward, restart the scene, recompile scripts, or restart the engine. Toggles hitboxes, object regions, tile collision and the performance overlay, and shows live object, tileset, view and layer information, a breakdown of where the frame went, and per-layer visibility switches. |
 | **Settings** | Fullscreen, V-Sync, window size, master/music/sound volume, log level, preferred renderer and the developer hotkeys — written back to `config.ini` with **Save Settings**. |
 | **Console** | The engine log inside the window, coloured by severity, filterable, and following new messages as they arrive. |
 | **Help** | Engine and renderer information, and the current developer key bindings. |
@@ -26,9 +26,9 @@ by the engine's own renderer and needs no extra libraries or asset files.
 Along the top is a menu bar in the shape of the one
 [HatchStudio](https://github.com/HatchGameEngine/HatchStudio) uses:
 
-- **File** — New Project (`Ctrl+Alt+N`), Open Project (`Ctrl+Alt+O`), Open Data
-  File (`Ctrl+O`), a Recent Projects submenu, Close Project (`Ctrl+Alt+W`),
-  Save Settings (`Ctrl+S`), Exit.
+- **File** — New Project (`Ctrl+Alt+N`), New Scene (`Ctrl+N`), Open Project
+  (`Ctrl+Alt+O`), Open Data File (`Ctrl+O`), a Recent Projects submenu, Close
+  Project (`Ctrl+Alt+W`), Save Settings (`Ctrl+S`), Exit.
 - **Project** — Run (`Ctrl+R`), Restart Scene (`F6`), Recompile Scripts & Reload
   Scene (`F5`), Restart Engine (`F1`), a Set Run Start Scene radio group
   (run from the game's start scene, or from whichever scene is loaded), Open
@@ -41,6 +41,24 @@ Open Project, Open Data File, Open Scene File and the scripts folder Browse
 button all open a file browser drawn by the engine, so a project anywhere on
 disk can be opened without a command line. Text fields take `Ctrl+C`, `Ctrl+X`
 and `Ctrl+V`.
+
+## Making a scene
+
+**New Scene**, under the Scenes tab or in the File menu, writes a scene into the
+project and opens it, so a level can be started without Tiled and without
+copying another one. Give it a name, a size in tiles, a tile size and how many
+layers it wants, and it lands in `Resources/Scenes/<name>/<name>.tmx`, which is
+where the engine looks for a scene's tile collision alongside it.
+
+The scene that is loaded lends the new one its tilesets, since a new level is
+nearly always another level for the same game -- and it is the only way to know
+a tileset's tile size and count without going and reading the image. The
+reference written out is relative, so no image is copied. With no scene loaded
+the map is still written, just without tilesets, and the layers are there to be
+painted once one is added.
+
+What comes out is an ordinary Tiled map: `Resources/Scenes/MyScene/MyScene.tmx`
+opens in Tiled and reads back into the engine unchanged.
 
 ## Scene editor
 

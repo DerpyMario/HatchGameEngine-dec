@@ -15,6 +15,7 @@ class TiledMapWriter {
 #include <Engine/Scene.h>
 #include <Engine/Scene/SceneEnums.h>
 #include <Engine/Scene/SceneLayer.h>
+#include <Engine/Types/Tileset.h>
 
 // Writes tile layers back into a Tiled map.
 //
@@ -155,6 +156,150 @@ PUBLIC STATIC bool TiledMapWriter::Write(const char* originalPath, const char* o
     }
 
     Log::Print(Log::LOG_IMPORTANT, "Saved %d tile layer(s) to \"%s\".", (int)written, outPath);
+
+    return true;
+}
+
+// ---------------------------------------------------------- new scenes ---
+
+// Tiled keeps a tileset's image as a path relative to the map that uses it, and
+// both paths here are relative to the resources folder, so this walks back out
+// of the new scene's folder and down into wherever the image is.
+PRIVATE STATIC string TiledMapWriter::MakeRelativePath(const char* fromFolder, const char* toPath) {
+    std::string from = fromFolder ? fromFolder : "";
+    std::string to = toPath ? toPath : "";
+
+    // Drop the part of the path they have in common, a whole folder at a time.
+    size_t common = 0;
+    while (true) {
+        size_t slash = from.find('/', common);
+        if (slash == std::string::npos)
+            break;
+        if (to.compare(common, slash + 1 - common, from, common, slash + 1 - common) != 0)
+            break;
+
+        common = slash + 1;
+    }
+
+    std::string relative;
+    for (size_t i = common; i < from.size(); i++) {
+        if (from[i] == '/')
+            relative += "../";
+    }
+
+    return relative + to.substr(common);
+}
+
+// A whole Tiled map, written from nothing.
+//
+// Saving works by rewriting the tile data of a file that already exists, which
+// leaves no way to start a scene that is not a copy of another one. This writes
+// the file a new scene needs: the map, its layers filled with empty tiles, and
+// the tilesets it is to be painted from.
+//
+// The tilesets come from the scene that is loaded, since a new level is nearly
+// always another level for the game being worked on, and that is the only way
+// to know an image's tile size and how many tiles are in it without going and
+// reading the image. With no scene loaded the map is written without any, and
+// the layers are still there to be painted once a tileset is added.
+PUBLIC STATIC bool TiledMapWriter::WriteNew(const char* outPath, const char* sceneFolder, int width, int height, int tileWidth, int tileHeight, int layerCount, bool withTilesets) {
+    if (width < 1 || height < 1 || tileWidth < 1 || tileHeight < 1 || layerCount < 1) {
+        Log::Print(Log::LOG_ERROR, "A scene needs a size, a tile size and at least one layer.");
+        return false;
+    }
+
+    char line[1024];
+    std::string text;
+
+    text += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+
+    snprintf(line, sizeof(line),
+        "<map version=\"1.2\" tiledversion=\"1.2.0\" orientation=\"orthogonal\" "
+        "renderorder=\"right-down\" width=\"%d\" height=\"%d\" tilewidth=\"%d\" tileheight=\"%d\" "
+        "infinite=\"0\" nextlayerid=\"%d\" nextobjectid=\"1\">\n",
+        width, height, tileWidth, tileHeight, layerCount + 1);
+    text += line;
+
+    if (withTilesets) {
+        for (size_t i = 0; i < Scene::Tilesets.size(); i++) {
+            Tileset& tileset = Scene::Tilesets[i];
+            if (!tileset.Filename)
+                continue;
+
+            std::string source = TiledMapWriter::MakeRelativePath(sceneFolder, tileset.Filename);
+
+            // The name Tiled shows is the image's, without folders or suffix.
+            std::string name = source;
+            size_t slash = name.find_last_of('/');
+            if (slash != std::string::npos)
+                name = name.substr(slash + 1);
+            size_t dot = name.find_last_of('.');
+            if (dot != std::string::npos)
+                name = name.substr(0, dot);
+
+            snprintf(line, sizeof(line),
+                " <tileset firstgid=\"%d\" name=\"%s\" tilewidth=\"%d\" tileheight=\"%d\" "
+                "tilecount=\"%d\" columns=\"%d\">\n",
+                (int)tileset.FirstGlobalTileID, name.c_str(),
+                tileset.TileWidth, tileset.TileHeight,
+                tileset.NumCols * tileset.NumRows, tileset.NumCols);
+            text += line;
+
+            snprintf(line, sizeof(line),
+                "  <image source=\"%s\" width=\"%d\" height=\"%d\"/>\n",
+                source.c_str(),
+                tileset.NumCols * tileset.TileWidth,
+                tileset.NumRows * tileset.TileHeight);
+            text += line;
+
+            text += " </tileset>\n";
+        }
+    }
+
+    // Tiled's own defaults for a fresh map, so the names mean something to
+    // anyone who opens this in Tiled afterwards.
+    static const char* layerNames[] = { "Background", "Foreground", "Overlay", "Layer 4" };
+    const int namedLayers = (int)(sizeof(layerNames) / sizeof(layerNames[0]));
+
+    for (int i = 0; i < layerCount; i++) {
+        char name[64];
+        if (i < namedLayers)
+            snprintf(name, sizeof(name), "%s", layerNames[i]);
+        else
+            snprintf(name, sizeof(name), "Layer %d", i + 1);
+
+        snprintf(line, sizeof(line),
+            " <layer id=\"%d\" name=\"%s\" width=\"%d\" height=\"%d\">\n",
+            i + 1, name, width, height);
+        text += line;
+
+        text += "  <data encoding=\"csv\">\n";
+
+        for (int y = 0; y < height; y++) {
+            std::string row;
+            for (int x = 0; x < width; x++) {
+                row += "0";
+                if (x + 1 < width || y + 1 < height)
+                    row += ",";
+            }
+
+            text += row;
+            text += "\n";
+        }
+
+        text += "  </data>\n";
+        text += " </layer>\n";
+    }
+
+    text += "</map>\n";
+
+    if (!File::WriteAllBytes(outPath, text.c_str(), text.size())) {
+        Log::Print(Log::LOG_ERROR, "Could not write \"%s\"!", outPath);
+        return false;
+    }
+
+    Log::Print(Log::LOG_IMPORTANT, "Created a %dx%d scene with %d layer(s) at \"%s\".",
+        width, height, layerCount, outPath);
 
     return true;
 }

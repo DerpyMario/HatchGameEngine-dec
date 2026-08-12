@@ -166,6 +166,83 @@ double  FrameTimeDesired = 1000.0 / TargetFPS;
 int     KeyBinds[(int)KeyBind::Max];
 
 ISprite*    DEBUG_fontSprite = NULL;
+bool        DEBUG_fontMissing = false;
+
+// The overlay is drawn with a font the game supplies. A project that ships
+// neither of the two it looks for used to be read straight through the sheet
+// that was never loaded, which took the whole application down with it. There
+// is nothing to draw the overlay with in that case, so this says so once and
+// gives up on it; the editor's Play tab shows the same timings in the font it
+// carries itself.
+bool        DEBUG_EnsureFont() {
+    if (DEBUG_fontSprite)
+        return true;
+    if (DEBUG_fontMissing)
+        return false;
+
+    bool original = Graphics::TextureInterpolate;
+    Graphics::SetTextureInterpolation(true);
+
+    ISprite* font = new ISprite();
+    font->SpritesheetCount = 1;
+    font->Spritesheets[0] = font->AddSpriteSheet("Debug/Font.png");
+    if (!font->Spritesheets[0])
+        font->Spritesheets[0] = font->AddSpriteSheet("Sprites/Fonts/Font.png");
+
+    if (!font->Spritesheets[0]) {
+        Log::Print(Log::LOG_WARN,
+            "The performance overlay needs Debug/Font.png or Sprites/Fonts/Font.png, and neither is in this game's resources.");
+
+        delete font;
+        DEBUG_fontMissing = true;
+        Graphics::SetTextureInterpolation(original);
+        return false;
+    }
+
+    int cols = font->Spritesheets[0]->Width / 32;
+    int rows = font->Spritesheets[0]->Height / 32;
+
+    font->ReserveAnimationCount(1);
+    font->AddAnimation("Font?", 0, 0, cols * rows);
+    for (int i = 0; i < cols * rows; i++) {
+        font->AddFrame(0,
+            (i % cols) * 32,
+            (i / cols) * 32,
+            32, 32, 0, 0,
+            14);
+    }
+
+    Graphics::SetTextureInterpolation(original);
+
+    DEBUG_fontSprite = font;
+    return true;
+}
+// Scene::Render leaves no view current once it has finished with all of them,
+// and the ortho the overlay sets up for itself is written into whichever view
+// is, so with none it was written through a null matrix and took the whole
+// application down. The overlay borrows the first view it can instead. A view's
+// matrices are rebuilt from the view every frame, so borrowing one costs it
+// nothing.
+int         DEBUG_backupView = -1;
+bool        DEBUG_BorrowView() {
+    DEBUG_backupView = Scene::ViewCurrent;
+
+    if (Scene::ViewCurrent >= 0 && Scene::ViewCurrent < MAX_SCENE_VIEWS &&
+        Scene::Views[Scene::ViewCurrent].ProjectionMatrix)
+        return true;
+
+    for (int i = 0; i < MAX_SCENE_VIEWS; i++) {
+        if (Scene::Views[i].ProjectionMatrix) {
+            Scene::ViewCurrent = i;
+            return true;
+        }
+    }
+
+    return false;
+}
+void        DEBUG_ReturnView() {
+    Scene::ViewCurrent = DEBUG_backupView;
+}
 void        DEBUG_DrawText(char* text, float x, float y) {
     for (char* i = text; *i; i++) {
         Graphics::DrawSprite(DEBUG_fontSprite, 0, (int)*i, x, y, false, false, 1.0f, 1.0f, 0.0f);
@@ -974,6 +1051,51 @@ PUBLIC STATIC void Application::SetShowingPerformance(bool showing) {
     ShowFPS = showing;
 }
 
+// Whether the overlay has anything to draw itself with. The editor asks so it
+// can say why the overlay is not appearing.
+PUBLIC STATIC bool Application::HasPerformanceFont() {
+    return !DEBUG_fontMissing;
+}
+
+// The same timings the overlay breaks a frame down into, so they can be shown
+// somewhere that does not need the game to supply a font.
+
+PUBLIC STATIC int Application::GetFrameMetricCount() {
+    return 7;
+}
+PUBLIC STATIC const char* Application::GetFrameMetricName(int index) {
+    static const char* names[] = {
+        "Event polling",
+        "Garbage collector",
+        "Input polling",
+        "Entity update",
+        "Clear",
+        "World render commands",
+        "Frame present",
+    };
+
+    if (index < 0 || index >= Application::GetFrameMetricCount())
+        return "";
+
+    return names[index];
+}
+PUBLIC STATIC double Application::GetFrameMetric(int index) {
+    double values[] = {
+        MetricEventTime,
+        MetricAfterSceneTime,
+        MetricPollTime,
+        MetricUpdateTime,
+        MetricClearTime,
+        MetricRenderTime,
+        MetricPresentTime,
+    };
+
+    if (index < 0 || index >= Application::GetFrameMetricCount())
+        return 0.0;
+
+    return values[index] < 0.0 ? 0.0 : values[index];
+}
+
 PUBLIC STATIC bool Application::IsFastForwarding() {
     return UpdatesPerFrame != 1;
 }
@@ -1239,34 +1361,7 @@ PRIVATE STATIC void Application::RunFrame(void* p) {
 
     // Show FPS counter
     MetricFPSCounterTime = Clock::GetTicks();
-    if (ShowFPS) {
-        if (!DEBUG_fontSprite) {
-            bool original = Graphics::TextureInterpolate;
-            Graphics::SetTextureInterpolation(true);
-
-            DEBUG_fontSprite = new ISprite();
-
-            int cols, rows;
-            DEBUG_fontSprite->SpritesheetCount = 1;
-            DEBUG_fontSprite->Spritesheets[0] = DEBUG_fontSprite->AddSpriteSheet("Debug/Font.png");
-            if (!DEBUG_fontSprite->Spritesheets[0])
-                DEBUG_fontSprite->Spritesheets[0] = DEBUG_fontSprite->AddSpriteSheet("Sprites/Fonts/Font.png");
-            cols = DEBUG_fontSprite->Spritesheets[0]->Width / 32;
-            rows = DEBUG_fontSprite->Spritesheets[0]->Height / 32;
-
-            DEBUG_fontSprite->ReserveAnimationCount(1);
-            DEBUG_fontSprite->AddAnimation("Font?", 0, 0, cols * rows);
-            for (int i = 0; i < cols * rows; i++) {
-                DEBUG_fontSprite->AddFrame(0,
-                    (i % cols) * 32,
-                    (i / cols) * 32,
-                    32, 32, 0, 0,
-                    14);
-            }
-
-            Graphics::SetTextureInterpolation(original);
-        }
-
+    if (ShowFPS && DEBUG_EnsureFont() && DEBUG_BorrowView()) {
         int ww, wh;
         char textBuffer[256];
         SDL_GetWindowSize(Application::Window, &ww, &wh);
@@ -1443,6 +1538,8 @@ PRIVATE STATIC void Application::RunFrame(void* p) {
                 }
             }
         Graphics::Restore();
+
+        DEBUG_ReturnView();
     }
     MetricFPSCounterTime = Clock::GetTicks() - MetricFPSCounterTime;
 

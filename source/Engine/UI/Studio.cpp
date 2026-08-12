@@ -30,7 +30,9 @@ public:
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Filesystem/File.h>
 #include <Engine/ResourceTypes/ResourceManager.h>
+#include <Engine/ResourceTypes/SceneFormats/TiledMapWriter.h>
 #include <Engine/Scene/SceneInfo.h>
+#include <Engine/Types/Tileset.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // The editor front end. Everything the engine used to need a command line, a
@@ -106,6 +108,18 @@ static char NewProjectName[128] = "MyGame";
 static int  SelectedScene = -1;
 static vector<std::string> SceneFiles;
 static bool SceneFilesScanned = false;
+
+// New scenes. The tile size starts at what Hatch scenes usually use and follows
+// the loaded scene once there is one to follow.
+static char NewSceneName[128] = "MyScene";
+static int  NewSceneWidth = 40;
+static int  NewSceneHeight = 30;
+static int  NewSceneTileWidth = 16;
+static int  NewSceneTileHeight = 16;
+static int  NewSceneLayers = 2;
+static bool NewSceneTakeTilesets = true;
+static bool NewSceneOpen = true;
+static std::string NewScenePending;
 
 // Console filters.
 static bool ShowVerbose = false;
@@ -360,6 +374,75 @@ PRIVATE STATIC void Studio::ScanForSceneFiles() {
     }
 
     SceneFilesScanned = true;
+}
+
+// --------------------------------------------------------------- new scene -
+
+// Writes a new scene into the project and hands back the path to load it by,
+// relative to Resources the way the engine wants it.
+//
+// It goes in a folder of its own, next to the scenes that are already there,
+// because a scene's tile collision sits beside it under the same name and that
+// is the layout the engine looks for.
+PRIVATE STATIC bool Studio::CreateScene(const char* name) {
+    if (!ResourceManager::UsingDataFolder) {
+        Studio::SetStatus("Scenes can only be created in a project folder, not in a .hatch file.");
+        return false;
+    }
+
+    if (!name || !*name) {
+        Studio::SetStatus("Enter a name for the new scene.");
+        return false;
+    }
+
+    for (const char* i = name; *i; i++) {
+        if (*i == '/' || *i == '\\' || *i == ':') {
+            Studio::SetStatus("Scene name cannot contain path separators.");
+            return false;
+        }
+    }
+
+    char folder[1024];
+    snprintf(folder, sizeof(folder), "Resources/Scenes/%s", name);
+
+    char path[1200];
+    snprintf(path, sizeof(path), "%s/%s.tmx", folder, name);
+
+    if (File::Exists(path)) {
+        Studio::SetStatus("\"%s\" already exists.", path);
+        return false;
+    }
+
+    if (!Directory::Exists(folder) && !Directory::CreatePath(folder)) {
+        Studio::SetStatus("Could not create \"%s\".", folder);
+        return false;
+    }
+
+    // The tilesets are written as paths relative to the new scene's folder, so
+    // the writer needs to know where that is under Resources.
+    char sceneFolder[1024];
+    snprintf(sceneFolder, sizeof(sceneFolder), "Scenes/%s/", name);
+
+    bool withTilesets = NewSceneTakeTilesets && Scene::Tilesets.size() > 0;
+
+    if (!TiledMapWriter::WriteNew(path, sceneFolder,
+            NewSceneWidth, NewSceneHeight,
+            NewSceneTileWidth, NewSceneTileHeight,
+            NewSceneLayers, withTilesets)) {
+        Studio::SetStatus("Could not write \"%s\".", path);
+        return false;
+    }
+
+    NewScenePending = std::string("Scenes/") + name + "/" + name + ".tmx";
+
+    SceneFilesScanned = false;
+
+    Studio::SetStatus("Created %s (%dx%d, %d layer%s%s).",
+        NewScenePending.c_str(), NewSceneWidth, NewSceneHeight, NewSceneLayers,
+        NewSceneLayers == 1 ? "" : "s",
+        withTilesets ? ", with this scene's tilesets" : "");
+
+    return true;
 }
 
 // ------------------------------------------------------------- new project -
@@ -631,6 +714,9 @@ PRIVATE STATIC void Studio::DrawMenuBar(float width, float height) {
         if (UIMenu::Item("New Project...", "Ctrl+Alt+N", true))
             Studio::NewProjectCommand();
 
+        if (UIMenu::Item("New Scene...", "Ctrl+N", true))
+            Studio::NewSceneCommand();
+
         if (UIMenu::Item("Open Project...", "Ctrl+Alt+O", true))
             Studio::BrowseFor(STUDIO_BROWSE_PROJECT_FOLDER);
 
@@ -756,6 +842,19 @@ PRIVATE STATIC void Studio::NewProjectCommand() {
     Studio::SetStatus("Name the project under New Project, then press Create.");
 }
 
+PRIVATE STATIC void Studio::NewSceneCommand() {
+    CurrentTab = STUDIO_TAB_SCENES;
+
+    // A new scene takes its tile size from the one that is loaded, since it is
+    // nearly always another level for the same game.
+    if (Scene::TileWidth > 0 && Scene::TileHeight > 0) {
+        NewSceneTileWidth = Scene::TileWidth;
+        NewSceneTileHeight = Scene::TileHeight;
+    }
+
+    Studio::SetStatus("Name the scene under New Scene, then press Create Scene.");
+}
+
 PRIVATE STATIC void Studio::SaveSettingsCommand() {
     Application::SaveSettings();
     Studio::SetStatus("Saved %s.", Application::SettingsFile);
@@ -767,7 +866,9 @@ PRIVATE STATIC void Studio::HandleShortcuts() {
     const Uint16 ctrl = KMOD_CTRL;
     const Uint16 ctrlAlt = KMOD_CTRL | KMOD_ALT;
 
-    if (UICore::WasShortcutPressed(SDLK_n, ctrlAlt))
+    if (UICore::WasShortcutPressed(SDLK_n, ctrl))
+        Studio::NewSceneCommand();
+    else if (UICore::WasShortcutPressed(SDLK_n, ctrlAlt))
         Studio::NewProjectCommand();
     else if (UICore::WasShortcutPressed(SDLK_o, ctrlAlt))
         Studio::BrowseFor(STUDIO_BROWSE_PROJECT_FOLDER);
@@ -938,6 +1039,43 @@ PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bo
 
         if (UICore::Button("Rescan Scene Files"))
             SceneFilesScanned = false;
+
+        UICore::Separator();
+        UICore::Heading("New Scene");
+
+        if (!ResourceManager::UsingDataFolder)
+            UICore::Text("Scenes cannot be added to a .hatch file.", UI_COL_TEXT_FAINT);
+        else {
+            UICore::TextField("Name", NewSceneName, sizeof(NewSceneName));
+            UICore::SliderInt("Width in tiles", &NewSceneWidth, 1, 256);
+            UICore::SliderInt("Height in tiles", &NewSceneHeight, 1, 256);
+            UICore::SliderInt("Tile width", &NewSceneTileWidth, 8, 128);
+            UICore::SliderInt("Tile height", &NewSceneTileHeight, 8, 128);
+            UICore::SliderInt("Layers", &NewSceneLayers, 1, 4);
+
+            // A new level is nearly always another level for the game being
+            // worked on, so the scene that is loaded lends its tilesets. It is
+            // also the only way to know a tileset's size without going and
+            // reading the image.
+            if (Scene::Tilesets.size()) {
+                char label[128];
+                snprintf(label, sizeof(label), "Use this scene's tileset%s",
+                    Scene::Tilesets.size() == 1 ? "" : "s");
+
+                UICore::Checkbox(label, &NewSceneTakeTilesets);
+            }
+            else
+                UICore::Text("Load a scene first to give this one its tilesets.", UI_COL_TEXT_FAINT);
+
+            UICore::Checkbox("Open it once created", &NewSceneOpen);
+
+            if (UICore::Button("Create Scene")) {
+                if (Studio::CreateScene(NewSceneName) && NewSceneOpen) {
+                    Application::QueueSceneChange(NewScenePending.c_str());
+                    Studio::SetStatus("Created and loading \"%s\"...", NewScenePending.c_str());
+                }
+            }
+        }
     UICore::EndPanel();
 }
 
@@ -988,6 +1126,12 @@ PRIVATE STATIC void Studio::DrawPlayTab(float x, float y, float w, float h, bool
         if (UICore::Checkbox("Show performance overlay", &showPerformance))
             Application::SetShowingPerformance(showPerformance);
 
+        // The overlay draws with a font out of the game's own resources, and
+        // most projects do not have one. The breakdown beside this is drawn
+        // with the editor's font, so it is there either way.
+        if (showPerformance && !Application::HasPerformanceFont())
+            UICore::Text("Needs Debug/Font.png in this game -- see Frame Time.");
+
         static const char* collisionModes[] = { "off", "path A", "path B" };
         char collisionLabel[64];
         snprintf(collisionLabel, sizeof(collisionLabel), "Tile collision: %s",
@@ -1015,6 +1159,22 @@ PRIVATE STATIC void Studio::DrawPlayTab(float x, float y, float w, float h, bool
         UICore::FieldFormatted("Tilesets", "%d", (int)Scene::Tilesets.size());
         UICore::FieldFormatted("Tile size", "%d x %d", Scene::TileWidth, Scene::TileHeight);
         UICore::FieldFormatted("Active views", "%d", Scene::ViewsActive);
+
+        UICore::Separator();
+        UICore::Heading("Frame Time");
+
+        // What the performance overlay breaks a frame down into, drawn here
+        // with the editor's own font so it works in a game that has no font of
+        // its own to lend it.
+        double total = 0.0;
+        for (int i = 0; i < Application::GetFrameMetricCount(); i++) {
+            double value = Application::GetFrameMetric(i);
+            total += value;
+
+            UICore::FieldFormatted(Application::GetFrameMetricName(i), "%.3f ms", value);
+        }
+
+        UICore::FieldFormatted("Total", "%.3f ms", total);
 
         UICore::Separator();
         UICore::Heading("Layers");
