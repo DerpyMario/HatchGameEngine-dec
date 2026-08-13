@@ -1,5 +1,8 @@
 #if INTERFACE
 #include <Engine/Includes/Standard.h>
+#include <Engine/Rendering/Scene3DTypes.h>
+
+need_t Scene3DObject;
 
 class SceneEditor3D {
 public:
@@ -16,11 +19,14 @@ public:
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Graphics.h>
 #include <Engine/IO/ResourceStream.h>
+#include <Engine/Math/Matrix4x4.h>
 #include <Engine/Rendering/Material.h>
 #include <Engine/Rendering/Mesh.h>
+#include <Engine/Rendering/Scene3DTypes.h>
 #include <Engine/Rendering/Shader.h>
 #include <Engine/ResourceTypes/IModel.h>
 #include <Engine/ResourceTypes/ResourceManager.h>
+#include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
 #include <Engine/Scene.h>
 #include <Engine/Utilities/StringUtils.h>
 
@@ -54,6 +60,27 @@ static bool  ShadersScanned = false;
 static int   SelectedShader = -1;
 
 static char  StatusText[512] = "";
+
+// The 3D scene being put together, and where it came from.
+static vector<Scene3DObject> Objects;
+static Scene3DSettings Settings;
+static std::string ScenePath;
+static int   SelectedObject = -1;
+static bool  SceneDirty = false;
+
+// The engine's 3D scene the preview draws through. It is made once, the first
+// time something is drawn, and reused.
+static Sint32 PreviewScene = -1;
+
+// Dragging in the preview turns the camera around what it is looking at.
+static bool  Orbiting = false;
+static float OrbitLastX = 0.0f;
+static float OrbitLastY = 0.0f;
+
+static char  NewSceneName[128] = "MyScene3D";
+static vector<std::string> SceneFiles3D;
+static bool  Scenes3DScanned = false;
+static int   SelectedScene3D = -1;
 
 PRIVATE STATIC void SceneEditor3D::SetStatus(const char* format, ...) {
     va_list args;
@@ -177,6 +204,30 @@ PRIVATE STATIC void SceneEditor3D::ScanForShaders() {
     ShadersScanned = true;
 }
 
+PRIVATE STATIC void SceneEditor3D::ScanForScenes() {
+    SceneFiles3D.clear();
+
+    if (ResourceManager::UsingDataFolder && Directory::Exists("Resources")) {
+        vector<char*> files = Directory::GetFiles("Resources", "*.*", true);
+        for (size_t i = 0; i < files.size(); i++) {
+            const char* path = files[i];
+
+            const char* relative = StringUtils::StrCaseStr(path, "Resources/");
+            if (relative)
+                relative += strlen("Resources/");
+            else
+                relative = path;
+
+            if (SceneEditor3D::HasExtension(relative, ".scene3d"))
+                SceneFiles3D.push_back(std::string(relative));
+
+            free(files[i]);
+        }
+    }
+
+    Scenes3DScanned = true;
+}
+
 // --------------------------------------------------------------- models ---
 
 PUBLIC STATIC void SceneEditor3D::Unload() {
@@ -216,6 +267,225 @@ PRIVATE STATIC bool SceneEditor3D::LoadModel(const char* path) {
         path, (int)model->MeshCount, (int)model->VertexCount, (int)model->MaterialCount);
 
     return true;
+}
+
+// ------------------------------------------------------------ 3D scenes ---
+
+PRIVATE STATIC void SceneEditor3D::UnloadScene() {
+    for (size_t i = 0; i < Objects.size(); i++)
+        delete (IModel*)Objects[i].Model;
+
+    Objects.clear();
+    ScenePath.clear();
+    SelectedObject = -1;
+    SceneDirty = false;
+    Settings = Scene3DSettings();
+}
+
+// A placed model is loaded when the scene is, and a model that will not load
+// leaves its place in the scene rather than being dropped, so a scene with a
+// missing file can still be saved without losing what was in it.
+PRIVATE STATIC void SceneEditor3D::LoadObjectModel(Scene3DObject* object) {
+    if (object->Model || object->Failed)
+        return;
+
+    ResourceStream* stream = ResourceStream::New(object->Source);
+    if (!stream) {
+        object->Failed = true;
+        return;
+    }
+
+    IModel* model = new IModel();
+    if (!model->Load(stream, object->Source)) {
+        delete model;
+        object->Failed = true;
+    }
+    else
+        object->Model = model;
+
+    stream->Close();
+}
+
+PRIVATE STATIC bool SceneEditor3D::OpenScene(const char* path) {
+    SceneEditor3D::UnloadScene();
+
+    if (!Scene3DFormat::Read(path, &Settings, &Objects)) {
+        SceneEditor3D::SetStatus("Could not read \"%s\".", path);
+        return false;
+    }
+
+    for (size_t i = 0; i < Objects.size(); i++)
+        SceneEditor3D::LoadObjectModel(&Objects[i]);
+
+    ScenePath = path;
+    SelectedObject = Objects.size() ? 0 : -1;
+
+    SceneEditor3D::SetStatus("Opened %s: %d model(s).", path, (int)Objects.size());
+
+    return true;
+}
+
+PRIVATE STATIC bool SceneEditor3D::SaveScene() {
+    if (ScenePath.empty()) {
+        SceneEditor3D::SetStatus("This scene has nowhere to be saved to yet.");
+        return false;
+    }
+
+    if (!Scene3DFormat::Write(ScenePath.c_str(), &Settings, &Objects)) {
+        SceneEditor3D::SetStatus("Could not write \"%s\".", ScenePath.c_str());
+        return false;
+    }
+
+    SceneDirty = false;
+    SceneEditor3D::SetStatus("Saved %s.", ScenePath.c_str());
+
+    return true;
+}
+
+PRIVATE STATIC bool SceneEditor3D::CreateScene(const char* name) {
+    if (!ResourceManager::UsingDataFolder) {
+        SceneEditor3D::SetStatus("3D scenes can only be created in a project folder.");
+        return false;
+    }
+
+    if (!name || !*name) {
+        SceneEditor3D::SetStatus("Enter a name for the new 3D scene.");
+        return false;
+    }
+
+    for (const char* i = name; *i; i++) {
+        if (*i == '/' || *i == '\\' || *i == ':') {
+            SceneEditor3D::SetStatus("Scene name cannot contain path separators.");
+            return false;
+        }
+    }
+
+    if (!Directory::Exists("Resources/Scenes") && !Directory::CreatePath("Resources/Scenes")) {
+        SceneEditor3D::SetStatus("Could not create Resources/Scenes.");
+        return false;
+    }
+
+    char path[1024];
+    snprintf(path, sizeof(path), "Resources/Scenes/%s.scene3d", name);
+
+    SceneEditor3D::UnloadScene();
+
+    if (!Scene3DFormat::Write(path, &Settings, &Objects)) {
+        SceneEditor3D::SetStatus("Could not write \"%s\".", path);
+        return false;
+    }
+
+    ScenePath = path;
+    Scenes3DScanned = false;
+
+    SceneEditor3D::SetStatus("Created %s. Add models to it and save.", path);
+
+    return true;
+}
+
+// ------------------------------------------------------------- preview ---
+
+// The preview draws through the engine's own 3D scene, which is what a game
+// would draw through, so what shows here is what the renderer actually does
+// with the models rather than a second opinion about them.
+PRIVATE STATIC void SceneEditor3D::DrawPreview(float x, float y, float w, float h) {
+    if (w < 8.0f || h < 8.0f)
+        return;
+
+    UIDraw::FillRect(x, y, w, h, 0xFF101418);
+
+    if (!Objects.size()) {
+        UIDraw::Text(x + 8.0f, y + 8.0f, "Add a model to see it here.", UI_COL_TEXT_FAINT);
+        UIDraw::StrokeRect(x, y, w, h, UI_COL_BORDER);
+        return;
+    }
+
+    if (PreviewScene < 0) {
+        Uint32 made = Graphics::CreateScene3D(SCOPE_GAME);
+        if (made == 0xFFFFFFFF) {
+            UIDraw::Text(x + 8.0f, y + 8.0f, "No 3D scene could be made.", UI_COL_DANGER);
+            UIDraw::StrokeRect(x, y, w, h, UI_COL_BORDER);
+            return;
+        }
+
+        PreviewScene = (Sint32)made;
+    }
+
+    Scene3D* scene = &Graphics::Scene3Ds[PreviewScene];
+
+    scene->FOV = Settings.FOV;
+    scene->NearClippingPlane = Settings.NearClippingPlane;
+    scene->FarClippingPlane = Settings.FarClippingPlane;
+    scene->SetAmbientLighting((Uint32)(Settings.AmbientR * 0x100), (Uint32)(Settings.AmbientG * 0x100), (Uint32)(Settings.AmbientB * 0x100));
+    scene->SetDiffuseLighting((Uint32)(Settings.DiffuseR * 0x100), (Uint32)(Settings.DiffuseG * 0x100), (Uint32)(Settings.DiffuseB * 0x100));
+    scene->SetSpecularLighting((Uint32)(Settings.SpecularR * 0x100), (Uint32)(Settings.SpecularG * 0x100), (Uint32)(Settings.SpecularB * 0x100));
+
+    // Where the camera sits, worked out from how far around and above the point
+    // it is looking at the drag has taken it.
+    float eyeX = Settings.TargetX + cosf(Settings.CameraPitch) * sinf(Settings.CameraYaw) * Settings.CameraDistance;
+    float eyeY = Settings.TargetY + sinf(Settings.CameraPitch) * Settings.CameraDistance;
+    float eyeZ = Settings.TargetZ + cosf(Settings.CameraPitch) * cosf(Settings.CameraYaw) * Settings.CameraDistance;
+
+    Matrix4x4 view;
+    Matrix4x4::LookAt(&view,
+        eyeX, eyeY, eyeZ,
+        Settings.TargetX, Settings.TargetY, Settings.TargetZ,
+        0.0f, 1.0f, 0.0f);
+    scene->SetViewMatrix(&view);
+
+    Graphics::ClearScene3D(PreviewScene);
+    Graphics::BindScene3D(PreviewScene);
+
+    for (size_t i = 0; i < Objects.size(); i++) {
+        Scene3DObject& object = Objects[i];
+        if (!object.Model)
+            continue;
+
+        Matrix4x4 model, rotation, scale;
+        Matrix4x4::IdentityRotationXYZ(&rotation, object.RotationX, object.RotationY, object.RotationZ);
+        Matrix4x4::IdentityScale(&scale, object.ScaleX, object.ScaleY, object.ScaleZ);
+        Matrix4x4::Multiply(&model, &rotation, &scale);
+        Matrix4x4::Translate(&model, &model, object.X, object.Y, object.Z);
+
+        Graphics::DrawModel(object.Model, 0, 0, &model, &rotation);
+    }
+
+    Graphics::DrawScene3D(PreviewScene, scene->DrawMode);
+
+    UIDraw::StrokeRect(x, y, w, h, UI_COL_BORDER_LIGHT);
+
+    // Dragging inside the preview turns the camera.
+    bool over = UICore::IsOver(x, y, w, h);
+
+    if (over && UICore::MouseWasPressed) {
+        Orbiting = true;
+        OrbitLastX = UICore::MouseX;
+        OrbitLastY = UICore::MouseY;
+    }
+
+    if (Orbiting && UICore::MouseIsDown) {
+        Settings.CameraYaw -= (UICore::MouseX - OrbitLastX) * 0.01f;
+        Settings.CameraPitch += (UICore::MouseY - OrbitLastY) * 0.01f;
+
+        // Stopping short of straight up and straight down keeps the camera from
+        // turning over at the poles.
+        if (Settings.CameraPitch > 1.5f)
+            Settings.CameraPitch = 1.5f;
+        if (Settings.CameraPitch < -1.5f)
+            Settings.CameraPitch = -1.5f;
+
+        OrbitLastX = UICore::MouseX;
+        OrbitLastY = UICore::MouseY;
+    }
+
+    if (UICore::MouseWasReleased)
+        Orbiting = false;
+
+    if (over && UICore::MouseWheel != 0.0f) {
+        Settings.CameraDistance *= UICore::MouseWheel > 0.0f ? 0.9f : 1.1f;
+        if (Settings.CameraDistance < 1.0f)
+            Settings.CameraDistance = 1.0f;
+    }
 }
 
 // -------------------------------------------------------------- drawing ---
@@ -430,45 +700,145 @@ PRIVATE STATIC void SceneEditor3D::DrawShaderPanel(float x, float y, float w, fl
     UICore::EndPanel();
 }
 
-PRIVATE STATIC void SceneEditor3D::DrawScenePanel(float x, float y, float w, float h) {
+PRIVATE STATIC void SceneEditor3D::DrawSceneEditPanel(float x, float y, float w, float h) {
     UICore::BeginPanel("3D Scene", x, y, w, h);
-        // The scene's 3D state belongs to whichever 3D scene a script made, so
-        // this shows what the engine is actually set up to draw with.
-        bool any = false;
+        // The preview takes the top of the panel, and what it is showing is
+        // edited underneath it.
+        float previewH = h * 0.45f;
+        float previewX, previewY;
+        UICore::PlaceCustomItem(w - UICore::Pad() * 4.0f, previewH, &previewX, &previewY);
+        SceneEditor3D::DrawPreview(previewX, previewY, w - UICore::Pad() * 4.0f, previewH);
 
-        for (Uint32 i = 0; i < MAX_3D_SCENES; i++) {
-            Scene3D* scene = &Graphics::Scene3Ds[i];
-            if (!scene->Initialized)
-                continue;
+        UICore::Text("Drag to turn the camera; the wheel moves it closer.", UI_COL_TEXT_FAINT);
 
-            any = true;
+        UICore::Field("Scene", ScenePath.empty() ? "(unsaved)" : ScenePath.c_str());
 
-            char heading[64];
-            snprintf(heading, sizeof(heading), "Scene %d", (int)i);
-            UICore::Heading(heading);
+        if (!ResourceManager::UsingDataFolder)
+            UICore::Text("Open a project folder to keep 3D scenes in it.", UI_COL_TEXT_FAINT);
+        else {
+            UICore::TextField("New scene name", NewSceneName, sizeof(NewSceneName));
 
-            UICore::FieldFormatted("Field of view", "%.1f", scene->FOV);
-            UICore::FieldFormatted("Near plane", "%.2f", scene->NearClippingPlane);
-            UICore::FieldFormatted("Far plane", "%.1f", scene->FarClippingPlane);
-            UICore::FieldFormatted("Ambient light", "%.2f %.2f %.2f",
-                scene->Lighting.Ambient.R, scene->Lighting.Ambient.G, scene->Lighting.Ambient.B);
-            UICore::FieldFormatted("Diffuse light", "%.2f %.2f %.2f",
-                scene->Lighting.Diffuse.R, scene->Lighting.Diffuse.G, scene->Lighting.Diffuse.B);
-            UICore::FieldFormatted("Specular light", "%.2f %.2f %.2f",
-                scene->Lighting.Specular.R, scene->Lighting.Specular.G, scene->Lighting.Specular.B);
-            UICore::FieldFormatted("Fog", "%.2f to %.2f, density %.2f",
-                scene->Fog.Start, scene->Fog.End, scene->Fog.Density);
-            UICore::FieldFormatted("Point size", "%.1f", scene->PointSize);
-            UICore::Field("Clips polygons", scene->ClipPolygons ? "yes" : "no");
+            if (UICore::Button("Create 3D Scene"))
+                SceneEditor3D::CreateScene(NewSceneName);
+
+            if (UICore::ButtonEnabled("Save 3D Scene", !ScenePath.empty()))
+                SceneEditor3D::SaveScene();
+
+            if (!Scenes3DScanned)
+                SceneEditor3D::ScanForScenes();
+
+            UICore::ResetRowStriping();
+            for (size_t i = 0; i < SceneFiles3D.size(); i++) {
+                char label[4200];
+                snprintf(label, sizeof(label), "%s##scene3d%d", SceneFiles3D[i].c_str(), (int)i);
+
+                if (UICore::ListItem(label, SelectedScene3D == (int)i))
+                    SelectedScene3D = (int)i;
+            }
+
+            bool haveScene = SelectedScene3D >= 0 && SelectedScene3D < (int)SceneFiles3D.size();
+            if (UICore::ButtonEnabled("Open 3D Scene", haveScene))
+                SceneEditor3D::OpenScene(SceneFiles3D[SelectedScene3D].c_str());
+
+            if (UICore::Button("Rescan 3D Scenes"))
+                Scenes3DScanned = false;
+        }
+
+        UICore::Separator();
+        UICore::Heading("Models In This Scene");
+
+        bool haveModel = SelectedModel >= 0 && SelectedModel < (int)ModelFiles.size();
+        if (UICore::ButtonEnabled("Add The Selected Model", haveModel)) {
+            Scene3DObject object;
+            snprintf(object.Source, sizeof(object.Source), "%s", ModelFiles[SelectedModel].c_str());
+
+            SceneEditor3D::LoadObjectModel(&object);
+
+            Objects.push_back(object);
+            SelectedObject = (int)Objects.size() - 1;
+            SceneDirty = true;
+
+            if (object.Failed)
+                SceneEditor3D::SetStatus("Added \"%s\", which did not load.", object.Source);
+            else
+                SceneEditor3D::SetStatus("Added \"%s\" to the scene.", object.Source);
+        }
+
+        if (!Objects.size())
+            UICore::Text("Nothing in this scene yet.", UI_COL_TEXT_FAINT);
+
+        UICore::ResetRowStriping();
+        for (size_t i = 0; i < Objects.size(); i++) {
+            char label[600];
+            snprintf(label, sizeof(label), "%s%s##object%d",
+                Objects[i].Source, Objects[i].Failed ? "  (did not load)" : "", (int)i);
+
+            if (UICore::ListItem(label, SelectedObject == (int)i))
+                SelectedObject = (int)i;
+        }
+
+        if (SelectedObject >= 0 && SelectedObject < (int)Objects.size()) {
+            Scene3DObject& object = Objects[SelectedObject];
 
             UICore::Separator();
+            UICore::Heading("Placement");
+
+            int values[9] = {
+                (int)object.X, (int)object.Y, (int)object.Z,
+                (int)(object.RotationX * 100.0f), (int)(object.RotationY * 100.0f), (int)(object.RotationZ * 100.0f),
+                (int)(object.ScaleX * 100.0f), (int)(object.ScaleY * 100.0f), (int)(object.ScaleZ * 100.0f)
+            };
+
+            static const char* names[9] = {
+                "X", "Y", "Z",
+                "Turn about X", "Turn about Y", "Turn about Z",
+                "Scale X", "Scale Y", "Scale Z"
+            };
+
+            bool changed = false;
+            for (int i = 0; i < 9; i++) {
+                int minimum = i < 3 ? -4096 : (i < 6 ? -628 : 1);
+                int maximum = i < 3 ? 4096 : (i < 6 ? 628 : 1000);
+
+                if (UICore::SliderInt(names[i], &values[i], minimum, maximum))
+                    changed = true;
+            }
+
+            if (changed) {
+                object.X = (float)values[0];
+                object.Y = (float)values[1];
+                object.Z = (float)values[2];
+                object.RotationX = values[3] / 100.0f;
+                object.RotationY = values[4] / 100.0f;
+                object.RotationZ = values[5] / 100.0f;
+                object.ScaleX = values[6] / 100.0f;
+                object.ScaleY = values[7] / 100.0f;
+                object.ScaleZ = values[8] / 100.0f;
+                SceneDirty = true;
+            }
+
+            if (UICore::Button("Remove From Scene")) {
+                delete (IModel*)Objects[SelectedObject].Model;
+                Objects.erase(Objects.begin() + SelectedObject);
+                SelectedObject = Objects.size() ? 0 : -1;
+                SceneDirty = true;
+            }
         }
 
-        if (!any) {
-            UICore::Text("No 3D scene is set up.", UI_COL_TEXT_DIM);
-            UICore::Text("A game makes one with Scene3D.Create, and its", UI_COL_TEXT_FAINT);
-            UICore::Text("lighting, fog and camera show up here once it has.", UI_COL_TEXT_FAINT);
+        UICore::Separator();
+        UICore::Heading("Camera And Light");
+
+        int fov = (int)Settings.FOV;
+        if (UICore::SliderInt("Field of view", &fov, 10, 170)) {
+            Settings.FOV = (float)fov;
+            SceneDirty = true;
         }
+
+        SceneEditor3D::DrawColor("Ambient", &Settings.AmbientR);
+        SceneEditor3D::DrawColor("Diffuse", &Settings.DiffuseR);
+
+        if (SceneDirty)
+            UICore::Text("This scene has changes that are not saved.", UI_COL_WARNING);
     UICore::EndPanel();
 }
 
@@ -478,7 +848,7 @@ PUBLIC STATIC void SceneEditor3D::Draw(float x, float y, float w, float h, bool 
     float secondX = split ? x + halfW : x;
 
     SceneEditor3D::DrawModelPanel(x, y, halfW, halfH);
-    SceneEditor3D::DrawShaderPanel(x, y + halfH, halfW, h - halfH);
-    SceneEditor3D::DrawMaterialPanel(secondX, y, halfW, halfH);
-    SceneEditor3D::DrawScenePanel(secondX, y + halfH, halfW, h - halfH);
+    SceneEditor3D::DrawShaderPanel(x, y + halfH, halfW, (h - halfH) / 2.0f);
+    SceneEditor3D::DrawMaterialPanel(x, y + halfH + (h - halfH) / 2.0f, halfW, (h - halfH) / 2.0f);
+    SceneEditor3D::DrawSceneEditPanel(secondX, y, halfW, h);
 }

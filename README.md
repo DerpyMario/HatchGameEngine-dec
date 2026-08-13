@@ -138,8 +138,46 @@ could be looked at. The **3D** tab puts it in front of you.
 - **Shaders** finds every shader in the project and builds it. **Rebuild** picks
   up an edit without restarting, and a shader that stops compiling leaves the
   working one in use rather than dropping it.
-- **3D Scene** shows the camera, lighting and fog of whatever 3D scene the game
-  has set up.
+- **3D Scene** is a 3D scene being put together: a preview you drag to turn the
+  camera around and wheel to move closer, the models placed in it with their
+  position, rotation and scale, and the camera and lighting it is lit by.
+
+### 3D scenes
+
+Tile scenes have Tiled and a format that came with it. A 3D scene had neither --
+the engine could draw models, light them and fog them, but only because a script
+said so at runtime, so there was nothing to save and nothing to open.
+
+**Create 3D Scene** writes one to `Resources/Scenes/<name>.scene3d`, **Add The
+Selected Model** puts the model picked in the Models panel into it, and **Save
+3D Scene** writes it back. It is XML, like the rest of a Hatch project's
+configuration, and holds what the engine needs to put the scene back:
+
+```xml
+<scene3d version="1">
+ <camera fov="55" near="2" far="9000" yaw="1.25" pitch="0.33" distance="512"
+         targetX="10" targetY="20" targetZ="30"/>
+ <lighting>
+  <ambient r="0.25" g="0.5" b="0.75"/>
+  <diffuse r="0.1" g="0.2" b="0.3"/>
+  <specular r="0.9" g="0.8" b="0.7"/>
+ </lighting>
+ <fog equation="1" start="5" end="500" density="0.5" smoothness="0.25"
+      r="0.2" g="0.4" b="0.6"/>
+ <model source="Models/alpha.hmdl" x="1" y="2" z="3"
+        rotationX="0.1" rotationY="0.2" rotationZ="0.3"
+        scaleX="1.5" scaleY="2" scaleZ="2.5"/>
+</scene3d>
+```
+
+Models are named by path and stay where they are, the way a tile scene names its
+tilesets. Opening a scene, saving it and opening it again gives back a
+byte-identical file. A model that will not load keeps its place in the scene and
+is marked, rather than being dropped on the way through.
+
+The preview draws through the engine's own 3D scene -- the same one a game
+draws through -- so what shows is what the renderer does with the models, not a
+second opinion about them.
 
 ### Shaders
 
