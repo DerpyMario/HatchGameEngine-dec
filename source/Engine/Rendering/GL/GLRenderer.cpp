@@ -1083,6 +1083,8 @@ PUBLIC STATIC void     GLRenderer::SetGraphicsFunctions() {
     Graphics::Internal.MakePerspectiveMatrix = GLRenderer::MakePerspectiveMatrix;
 
     // Shader-related functions
+    Graphics::Internal.CreateShader = GLRenderer::CreateShader;
+    Graphics::Internal.DeleteShader = GLRenderer::DeleteShader;
     Graphics::Internal.UseShader = GLRenderer::UseShader;
     Graphics::Internal.SetUniformF = GLRenderer::SetUniformF;
     Graphics::Internal.SetUniformI = GLRenderer::SetUniformI;
@@ -1521,7 +1523,47 @@ PUBLIC STATIC void     GLRenderer::MakePerspectiveMatrix(Matrix4x4* out, float f
 }
 
 // Shader-related functions
+// Builds a shader out of GLSL the game supplies. What comes back is opaque to
+// everything above the renderer, which is the only part that knows what a
+// shader actually is.
+PUBLIC STATIC void*    GLRenderer::CreateShader(const char* vertexSource, const char* fragmentSource) {
+    if (!vertexSource || !fragmentSource)
+        return NULL;
+
+    GLShader* shader = new GLShader(std::string(vertexSource), std::string(fragmentSource));
+
+    // The program is created before anything is compiled into it, so having one
+    // says nothing about whether the shader built. Only a shader that compiled
+    // gets as far as being linked, so that is what is worth asking about.
+    GLint linked = GL_FALSE;
+    if (shader->ProgramID)
+        glGetProgramiv(shader->ProgramID, GL_LINK_STATUS, &linked); CHECK_GL();
+
+    if (linked != GL_TRUE) {
+        delete shader;
+        return NULL;
+    }
+
+    return shader;
+}
+PUBLIC STATIC void     GLRenderer::DeleteShader(void* shader) {
+    if (!shader)
+        return;
+
+    if (GLRenderer::CurrentShader == (GLShader*)shader)
+        GLRenderer::CurrentShader = NULL;
+
+    delete (GLShader*)shader;
+}
 PUBLIC STATIC void     GLRenderer::UseShader(void* shader) {
+    // Passing nothing means "stop using whatever was set", which used to be
+    // read as a shader and called through. There is no program to select in
+    // that case; the next draw picks its own shader again.
+    if (!shader) {
+        GLRenderer::CurrentShader = NULL;
+        return;
+    }
+
     if (GLRenderer::CurrentShader != (GLShader*)shader) {
         GLRenderer::CurrentShader = (GLShader*)shader;
         GLRenderer::CurrentShader->Use();

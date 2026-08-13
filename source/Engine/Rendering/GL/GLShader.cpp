@@ -83,8 +83,10 @@ PUBLIC        GLShader::GLShader(Stream* streamVS, Stream* streamFS) {
     size_t lenVS = streamVS->Length();
     size_t lenFS = streamFS->Length();
 
-    char* sourceVS = (char*)malloc(lenVS);
-    char* sourceFS = (char*)malloc(lenFS);
+    // Both get a terminator written at their length below, so both need room
+    // for it.
+    char* sourceVS = (char*)malloc(lenVS + 1);
+    char* sourceFS = (char*)malloc(lenFS + 1);
 
     // const char* sourceVSMod[2];
     const char* sourceFSMod[2];

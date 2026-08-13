@@ -508,6 +508,21 @@ PUBLIC STATIC void     Graphics::DeleteVertexBuffer(Uint32 vertexBufferIndex) {
     Graphics::VertexBuffers[vertexBufferIndex] = NULL;
 }
 
+PUBLIC STATIC void*    Graphics::CreateShader(const char* vertexSource, const char* fragmentSource) {
+    if (!Graphics::GfxFunctions->CreateShader)
+        return NULL;
+
+    return Graphics::GfxFunctions->CreateShader(vertexSource, fragmentSource);
+}
+PUBLIC STATIC void     Graphics::DeleteShader(void* shader) {
+    if (!shader || !Graphics::GfxFunctions->DeleteShader)
+        return;
+
+    if (Graphics::CurrentShader == shader)
+        Graphics::CurrentShader = NULL;
+
+    Graphics::GfxFunctions->DeleteShader(shader);
+}
 PUBLIC STATIC void     Graphics::UseShader(void* shader) {
     Graphics::CurrentShader = shader;
     Graphics::GfxFunctions->UseShader(shader);

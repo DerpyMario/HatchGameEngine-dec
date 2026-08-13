@@ -13,6 +13,7 @@ public:
 
 #include <Engine/FontFace.h>
 #include <Engine/Graphics.h>
+#include <Engine/Rendering/Shader.h>
 #include <Engine/Scene.h>
 #include <Engine/Audio/AudioManager.h>
 #include <Engine/Bytecode/ScriptEntity.h>
@@ -11822,26 +11823,63 @@ VMValue Settings_GetPropertyCount(int argCount, VMValue* args, Uint32 threadID) 
 
 // #region Shader
 /***
+ * Shader.Load
+ * \desc Builds a shader out of a pair of GLSL files in the game's resources. \
+A shader talks to the engine through the same names the engine's own shaders \
+use: the attributes i_position, i_uv and i_color, and the uniforms \
+u_projectionMatrix, u_modelViewMatrix, u_color, u_texture, u_paletteTexture \
+and the u_fog ones.
+ * \param vertexPath (String): Path to the vertex shader.
+ * \param fragmentPath (String): Path to the fragment shader.
+ * \return Returns the shader's index, or -1 if it could not be built.
+ * \ns Shader
+ */
+VMValue Shader_Load(int argCount, VMValue* args, Uint32 threadID) {
+    CHECK_ARGCOUNT(2);
+    char* vertexPath = GET_ARG(0, GetString);
+    char* fragmentPath = GET_ARG(1, GetString);
+    return INTEGER_VAL(Shader::LoadInto(vertexPath, fragmentPath));
+}
+/***
+ * Shader.Reload
+ * \desc Builds a shader again from the files it was loaded from. A shader that \
+no longer compiles leaves the one already loaded in use.
+ * \param shader (Integer): The shader index.
+ * \return Returns whether it was built again.
+ * \ns Shader
+ */
+VMValue Shader_Reload(int argCount, VMValue* args, Uint32 threadID) {
+    CHECK_ARGCOUNT(1);
+    Shader* shader = Shader::Get(GET_ARG(0, GetInteger));
+    return INTEGER_VAL(shader && shader->Reload());
+}
+/***
  * Shader.Set
- * \desc
+ * \desc Draws with the given shader until it is unset.
+ * \param shader (Integer): The shader index, as returned by Shader.Load.
  * \return
  * \ns Shader
  */
 VMValue Shader_Set(int argCount, VMValue* args, Uint32 threadID) {
     CHECK_ARGCOUNT(1);
-    ObjArray* array = GET_ARG(0, GetArray);
-    Graphics::UseShader(array);
+
+    // This used to take an array and hand it straight to the renderer, which
+    // read it as a shader and called through it.
+    Shader* shader = Shader::Get(GET_ARG(0, GetInteger));
+    if (shader)
+        shader->Use();
+
     return NULL_VAL;
 }
 /***
  * Shader.Unset
- * \desc
+ * \desc Goes back to drawing with the engine's own shaders.
  * \return
  * \ns Shader
  */
 VMValue Shader_Unset(int argCount, VMValue* args, Uint32 threadID) {
     CHECK_ARGCOUNT(0);
-    Graphics::UseShader(NULL);
+    Shader::Unuse();
     return NULL_VAL;
 }
 // #endregion
@@ -16900,6 +16938,8 @@ PUBLIC STATIC void StandardLibrary::Link() {
 
     // #region Shader
     INIT_CLASS(Shader);
+    DEF_NATIVE(Shader, Load);
+    DEF_NATIVE(Shader, Reload);
     DEF_NATIVE(Shader, Set);
     DEF_NATIVE(Shader, Unset);
     // #endregion

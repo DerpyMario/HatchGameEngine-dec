@@ -177,6 +177,8 @@ PUBLIC STATIC void     SoftwareRenderer::SetGraphicsFunctions() {
     SoftwareRenderer::BackendFunctions.MakePerspectiveMatrix = SoftwareRenderer::MakePerspectiveMatrix;
 
     // Shader-related functions
+    SoftwareRenderer::BackendFunctions.CreateShader = SoftwareRenderer::CreateShader;
+    SoftwareRenderer::BackendFunctions.DeleteShader = SoftwareRenderer::DeleteShader;
     SoftwareRenderer::BackendFunctions.UseShader = SoftwareRenderer::UseShader;
     SoftwareRenderer::BackendFunctions.SetUniformF = SoftwareRenderer::SetUniformF;
     SoftwareRenderer::BackendFunctions.SetUniformI = SoftwareRenderer::SetUniformI;
@@ -343,6 +345,14 @@ bool CheckClipRegion(int clip_x1, int clip_y1, int clip_x2, int clip_y2) {
 }
 
 // Shader-related functions
+// Only the OpenGL renderer builds shaders from source. Saying so is better than
+// handing back something that is not a shader.
+PUBLIC STATIC void*    SoftwareRenderer::CreateShader(const char* vertexSource, const char* fragmentSource) {
+    Log::Print(Log::LOG_WARN, "The software renderer cannot build shaders from source.");
+    return NULL;
+}
+PUBLIC STATIC void     SoftwareRenderer::DeleteShader(void* shader) {
+}
 PUBLIC STATIC void     SoftwareRenderer::UseShader(void* shader) {
     if (!shader) {
         CurrentBlendState.FilterTable = nullptr;

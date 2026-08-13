@@ -17,6 +17,7 @@ by the engine's own renderer and needs no extra libraries or asset files.
 | **Scenes** | Browses the project's scene list by category, shows the resolved path of the selected scene, and loads it. Also lists scene files found under `Resources/Scenes`, and creates new ones. |
 | **Editor** | The scene editor. See below. |
 | **Collision** | The tile collision editor. See below. |
+| **3D** | The project's models, their materials, and its shaders. See below. |
 | **Resources** | Browses the project's `Resources` tree with each file's kind and size, loads scenes from it, and tracks whether the open scene has unsaved changes. |
 | **Play** | Pause, step frame by frame, fast forward, restart the scene, recompile scripts, or restart the engine. Toggles hitboxes, object regions, tile collision and the performance overlay, and shows live object, tileset, view and layer information, a breakdown of where the frame went, and per-layer visibility switches. |
 | **Settings** | Fullscreen, V-Sync, window size, master/music/sound volume, log level, preferred renderer and the developer hotkeys — written back to `config.ini` with **Save Settings**. |
@@ -119,6 +120,94 @@ drawn here behaves exactly like the same tile loaded from a file.
 expects. Loading a collision file, saving it and loading it again gives back a
 byte-identical file. As with scenes, collision inside a packed `.hatch` file
 cannot be written back, and the button says so.
+
+## 3D
+
+The engine has had 3D in it all along -- models in its own `.hmdl`, `.md3` and
+RSDK formats plus whatever Open Asset Import reads when it is built in,
+materials, lighting, fog, and a renderer for all of it -- but the only way to
+reach any of it was from a script, so a game had to be written before anything
+could be looked at. The **3D** tab puts it in front of you.
+
+- **Models** lists every model in the project, loads one, and says what is in
+  it: meshes and their vertex counts, materials, animations, armatures, and
+  whether it animates by vertices or by bones.
+- **Materials** lists the loaded model's materials and edits one: its diffuse,
+  specular, ambient and emissive colours, its shininess and opacity, and the
+  textures it names.
+- **Shaders** finds every shader in the project and builds it. **Rebuild** picks
+  up an edit without restarting, and a shader that stops compiling leaves the
+  working one in use rather than dropping it.
+- **3D Scene** is a 3D scene being put together: a preview you drag to turn the
+  camera around and wheel to move closer, the models placed in it with their
+  position, rotation and scale, and the camera and lighting it is lit by.
+
+### 3D scenes
+
+Tile scenes have Tiled and a format that came with it. A 3D scene had neither --
+the engine could draw models, light them and fog them, but only because a script
+said so at runtime, so there was nothing to save and nothing to open.
+
+**Create 3D Scene** writes one to `Resources/Scenes/<name>.scene3d`, **Add The
+Selected Model** puts the model picked in the Models panel into it, and **Save
+3D Scene** writes it back. It is XML, like the rest of a Hatch project's
+configuration, and holds what the engine needs to put the scene back:
+
+```xml
+<scene3d version="1">
+ <camera fov="55" near="2" far="9000" yaw="1.25" pitch="0.33" distance="512"
+         targetX="10" targetY="20" targetZ="30"/>
+ <lighting>
+  <ambient r="0.25" g="0.5" b="0.75"/>
+  <diffuse r="0.1" g="0.2" b="0.3"/>
+  <specular r="0.9" g="0.8" b="0.7"/>
+ </lighting>
+ <fog equation="1" start="5" end="500" density="0.5" smoothness="0.25"
+      r="0.2" g="0.4" b="0.6"/>
+ <model source="Models/alpha.hmdl" x="1" y="2" z="3"
+        rotationX="0.1" rotationY="0.2" rotationZ="0.3"
+        scaleX="1.5" scaleY="2" scaleZ="2.5"/>
+</scene3d>
+```
+
+Models are named by path and stay where they are, the way a tile scene names its
+tilesets. Opening a scene, saving it and opening it again gives back a
+byte-identical file. A model that will not load keeps its place in the scene and
+is marked, rather than being dropped on the way through.
+
+The preview draws through the engine's own 3D scene -- the same one a game
+draws through -- so what shows is what the renderer does with the models, not a
+second opinion about them.
+
+### Shaders
+
+A shader is a `.vert` and a `.frag` that share a name, anywhere under
+`Resources`. It talks to the engine through the same names the engine's own
+shaders use, so it only has to declare the parts it wants:
+
+```glsl
+attribute vec3 i_position;   uniform mat4 u_projectionMatrix;
+attribute vec2 i_uv;         uniform mat4 u_modelViewMatrix;
+attribute vec4 i_color;      uniform vec4 u_color;
+                             uniform sampler2D u_texture;
+                             uniform sampler2D u_paletteTexture;
+                             uniform vec4 u_fogColor;
+                             uniform float u_fogLinearStart, u_fogLinearEnd;
+                             uniform float u_fogDensity;
+```
+
+From a script:
+
+```js
+var shader = Shader.Load("Shaders/tint.vert", "Shaders/tint.frag");
+Shader.Set(shader);
+// ... draw ...
+Shader.Unset();
+```
+
+`Shader.Load` gives back -1 if the shader did not build, and the console carries
+whatever the driver said about it. Only the OpenGL renderer builds shaders from
+source; the others say so rather than pretending.
 
 The game is paused while the editor is open, so anything you inspect holds
 still; turn that off under **View** or **Play** if you would rather watch it

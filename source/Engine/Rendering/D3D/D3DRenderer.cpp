@@ -868,6 +868,8 @@ PUBLIC STATIC void     D3DRenderer::SetGraphicsFunctions() {
     Graphics::Internal.MakePerspectiveMatrix = D3DRenderer::MakePerspectiveMatrix;
 
     // Shader-related functions
+    Graphics::Internal.CreateShader = D3DRenderer::CreateShader;
+    Graphics::Internal.DeleteShader = D3DRenderer::DeleteShader;
     Graphics::Internal.UseShader = D3DRenderer::UseShader;
     Graphics::Internal.SetUniformF = D3DRenderer::SetUniformF;
     Graphics::Internal.SetUniformI = D3DRenderer::SetUniformI;
@@ -1115,6 +1117,14 @@ PUBLIC STATIC void     D3DRenderer::MakePerspectiveMatrix(Matrix4x4* out, float 
 }
 
 // Shader-related functions
+// Only the OpenGL renderer builds shaders from source. Saying so is better than
+// handing back something that is not a shader.
+PUBLIC STATIC void*    D3DRenderer::CreateShader(const char* vertexSource, const char* fragmentSource) {
+    Log::Print(Log::LOG_WARN, "The Direct3D renderer cannot build shaders from source.");
+    return NULL;
+}
+PUBLIC STATIC void     D3DRenderer::DeleteShader(void* shader) {
+}
 PUBLIC STATIC void     D3DRenderer::UseShader(void* shader) {
     // if (D3D_CurrentShader != (D3DShader*)shader) {
     //     D3D_CurrentShader = (D3DShader*)shader;

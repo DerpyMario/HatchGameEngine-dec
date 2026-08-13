@@ -276,6 +276,8 @@ CD ..</Command>
     <ClCompile Include="..\source\Engine\UI\ResourceEditor.cpp" />
     <ClCompile Include="..\source\Engine\UI\SceneEditor.cpp" />
     <ClCompile Include="..\source\Engine\UI\TileCollisionEditor.cpp" />
+    <ClCompile Include="..\source\Engine\UI\SceneEditor3D.cpp" />
+    <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\Scene3DFormat.cpp" />
     <ClCompile Include="..\source\Engine\UI\UIFileDialog.cpp" />
     <ClCompile Include="..\source\Engine\UI\UIMenu.cpp" />
     <ClCompile Include="..\source\Engine\UI\UICore.cpp" />

@@ -31,6 +31,7 @@ public:
 #include <Engine/Filesystem/File.h>
 #include <Engine/ResourceTypes/ResourceManager.h>
 #include <Engine/ResourceTypes/SceneFormats/TiledMapWriter.h>
+#include <Engine/UI/SceneEditor3D.h>
 #include <Engine/Scene/SceneInfo.h>
 #include <Engine/Types/Tileset.h>
 #include <Engine/Utilities/StringUtils.h>
@@ -48,6 +49,7 @@ enum StudioTab {
     STUDIO_TAB_SCENES,
     STUDIO_TAB_EDITOR,
     STUDIO_TAB_COLLISION,
+    STUDIO_TAB_3D,
     STUDIO_TAB_RESOURCES,
     STUDIO_TAB_PLAY,
     STUDIO_TAB_SETTINGS,
@@ -57,8 +59,8 @@ enum StudioTab {
 };
 
 static const char* TabNames[STUDIO_TAB_COUNT] = {
-    "Project", "Scenes", "Editor", "Collision", "Resources", "Play", "Settings",
-    "Console", "Help"
+    "Project", "Scenes", "Editor", "Collision", "3D", "Resources", "Play",
+    "Settings", "Console", "Help"
 };
 
 // Widgets are drawn and clicked in the same call, which means a button's
@@ -1557,6 +1559,9 @@ PUBLIC STATIC void Studio::Render() {
         case STUDIO_TAB_COLLISION:
             TileCollisionEditor::Draw(0.0f, contentY, width, contentH, split);
             break;
+        case STUDIO_TAB_3D:
+            SceneEditor3D::Draw(0.0f, contentY, width, contentH, split);
+            break;
         case STUDIO_TAB_RESOURCES:
             ResourceEditor::Draw(0.0f, contentY, width, contentH, split);
             break;
@@ -1584,6 +1589,8 @@ PUBLIC STATIC void Studio::Render() {
 
     if (!statusFresh && CurrentTab == STUDIO_TAB_EDITOR && SceneEditor::GetStatus()[0])
         statusLine = SceneEditor::GetStatus();
+    else if (!statusFresh && CurrentTab == STUDIO_TAB_3D && SceneEditor3D::GetStatus()[0])
+        statusLine = SceneEditor3D::GetStatus();
     else if (!statusFresh && CurrentTab == STUDIO_TAB_COLLISION && TileCollisionEditor::GetStatus()[0])
         statusLine = TileCollisionEditor::GetStatus();
 
