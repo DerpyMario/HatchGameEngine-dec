@@ -18,6 +18,8 @@ struct GraphicsFunctions {
     void     (*UnlockTexture)(Texture* texture);
     void     (*DisposeTexture)(Texture* texture);
 
+    void*    (*CreateShader)(const char* vertexSource, const char* fragmentSource);
+    void     (*DeleteShader)(void* shader);
     void     (*UseShader)(void* shader);
     void     (*SetTextureInterpolation)(bool interpolate);
     void     (*SetUniformTexture)(Texture* texture, int uniform_index, int slot);

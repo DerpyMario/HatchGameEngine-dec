@@ -108,6 +108,8 @@ PUBLIC STATIC void     SDL2Renderer::SetGraphicsFunctions() {
     Graphics::Internal.MakePerspectiveMatrix = SDL2Renderer::MakePerspectiveMatrix;
 
     // Shader-related functions
+    Graphics::Internal.CreateShader = SDL2Renderer::CreateShader;
+    Graphics::Internal.DeleteShader = SDL2Renderer::DeleteShader;
     Graphics::Internal.UseShader = SDL2Renderer::UseShader;
     Graphics::Internal.SetUniformF = SDL2Renderer::SetUniformF;
     Graphics::Internal.SetUniformI = SDL2Renderer::SetUniformI;
@@ -260,6 +262,14 @@ PUBLIC STATIC void     SDL2Renderer::GetMetalSize(int* width, int* height) {
 }
 
 // Shader-related functions
+// Only the OpenGL renderer builds shaders from source. Saying so is better than
+// handing back something that is not a shader.
+PUBLIC STATIC void*    SDL2Renderer::CreateShader(const char* vertexSource, const char* fragmentSource) {
+    Log::Print(Log::LOG_WARN, "The SDL2 renderer cannot build shaders from source.");
+    return NULL;
+}
+PUBLIC STATIC void     SDL2Renderer::DeleteShader(void* shader) {
+}
 PUBLIC STATIC void     SDL2Renderer::UseShader(void* shader) {
 
 }
