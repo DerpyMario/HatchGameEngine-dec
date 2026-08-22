@@ -101,6 +101,20 @@ PUBLIC STATIC FileStream* FileStream::New(const char* filename, Uint32 access) {
                 stream->f = fopen(androidPath, accessString);
             }
         }
+    #elif defined(XBOX)
+        if (access & FileStream::SAVEGAME_ACCESS) {
+            // The Xbox mounts the folder the title was launched from as D:, so
+            // saves sit beside the game the way they do on the Switch. A real
+            // title would put them in a per-title folder on E:\UDATA, which
+            // wants a title ID this engine has no way to know.
+            const char* saveDataPath = "D:\\Saves";
+            if (!Directory::Exists(saveDataPath))
+                Directory::Create(saveDataPath);
+
+            char documentPath[256];
+            snprintf(documentPath, 256, "%s\\%s", saveDataPath, filename);
+            stream->f = fopen(documentPath, accessString);
+        }
     #elif defined(SWITCH)
         if (access & FileStream::SAVEGAME_ACCESS) {
             // Saves in Saves/

@@ -13,7 +13,9 @@ public:
 #include <Engine/Diagnostics/Log.h>
 
 #include <Libraries/Clipper2/clipper.h>
+#ifndef XBOX
 #include <Libraries/poly2tri/poly2tri.h>
+#endif
 
 PRIVATE STATIC bool Geometry::CheckEar(vector<FVector2>& input, unsigned count, unsigned prev, unsigned curr, unsigned next) {
     FVector2& a = input[prev];
@@ -55,6 +57,7 @@ PRIVATE STATIC int Geometry::GetPointForTriangulation(int point, unsigned count)
         return point;
 }
 
+#ifndef XBOX
 static std::vector<p2t::Point*> GetP2TPoints(Polygon2D& input) {
     std::vector<p2t::Point*> points;
 
@@ -68,8 +71,19 @@ static void FreeP2TPoints(std::vector<p2t::Point*>& points) {
     for (unsigned i = 0; i < points.size(); i++)
         delete points[i];
 }
+#endif
 
 PUBLIC STATIC vector<Polygon2D>* Geometry::Triangulate(Polygon2D& input, vector<Polygon2D> holes) {
+#ifdef XBOX
+    // The library this is built on reports degenerate input by throwing, and
+    // there are no exceptions on the Xbox, so it is not built there.
+    (void)input;
+    (void)holes;
+
+    Log::Print(Log::LOG_WARN, "Polygon triangulation is not available on this platform.");
+
+    return new vector<Polygon2D>();
+#else
     vector<FVector2> points = input.Points;
 
     unsigned count = points.size();
@@ -89,7 +103,13 @@ PUBLIC STATIC vector<Polygon2D>* Geometry::Triangulate(Polygon2D& input, vector<
         cdt->AddHole(inputHole);
     }
 
+#if defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
+#else
+    // Built without exceptions, as the Xbox is. There is nothing to catch, so
+    // the work simply runs.
+    {
+#endif
         cdt->Triangulate();
 
         vector<p2t::Triangle*> triangles = cdt->GetTriangles();
@@ -107,9 +127,13 @@ PUBLIC STATIC vector<Polygon2D>* Geometry::Triangulate(Polygon2D& input, vector<
 
             output->push_back(polygon);
         }
+#if defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     } catch (std::runtime_error& err) {
         Log::Print(Log::LOG_ERROR, "Geometry::Triangulate error: %s", err.what());
     }
+#else
+    }
+#endif
 
     FreeP2TPoints(inputPoly);
 
@@ -119,6 +143,7 @@ PUBLIC STATIC vector<Polygon2D>* Geometry::Triangulate(Polygon2D& input, vector<
     delete cdt;
 
     return output;
+#endif
 }
 
 static Clipper2Lib::ClipType GetClipType(unsigned clipType) {

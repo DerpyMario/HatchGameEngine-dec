@@ -36,6 +36,7 @@
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
+#include <cassert>
 #include <vector>
 
 namespace p2t {
@@ -138,7 +139,13 @@ struct P2T_DLL_SYMBOL Edge {
         p = &p2;
       } else if (p1.x == p2.x) {
         // Repeat points
+#ifdef XBOX
+        // Built without exceptions on the Xbox. A repeated point leaves the
+        // edge as it is rather than unwinding out of the triangulation.
+        assert(false && "Edge::Edge: p1 == p2");
+#else
         throw std::runtime_error("Edge::Edge: p1 == p2");
+#endif
       }
     }
 

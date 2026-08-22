@@ -2,6 +2,11 @@
 
 #include <Engine/Includes/Standard.h>
 
+// The generated header declares functions taking a time_t, so it needs to have
+// been told what one is. Most platforms' standard headers drag it in anyway;
+// the Xbox's do not.
+#include <time.h>
+
 class Discord {
 public:
     static bool Initialized;
@@ -9,6 +14,8 @@ public:
 #endif
 
 #include <Engine/Extensions/Discord.h>
+
+#include <time.h>
 #include <Engine/Application.h>
 
 #ifdef WIN32

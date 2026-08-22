@@ -75,7 +75,7 @@ PUBLIC STATIC void Log::Init() {
         }
     #endif
 
-    #if WIN32 || MACOSX || LINUX || SWITCH
+    #if WIN32 || MACOSX || LINUX || SWITCH || XBOX
     WriteToFile = true;
     #endif
 

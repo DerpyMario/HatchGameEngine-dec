@@ -364,7 +364,11 @@ void Triangle::SetDelunayEdgeCW(const Point& p, bool e)
 
 void Triangle::DebugPrint()
 {
+// nxdk's libc++ has no standard streams behind <iostream>, and there is nowhere
+// for this to print to on an Xbox in any case.
+#ifndef XBOX
   std::cout << *points_[0] << " " << *points_[1] << " " << *points_[2] << std::endl;
+#endif
 }
 
 bool Triangle::CircumcicleContains(const Point& point) const

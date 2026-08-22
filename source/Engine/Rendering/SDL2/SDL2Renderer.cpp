@@ -79,7 +79,14 @@ PUBLIC STATIC Uint32   SDL2Renderer::GetWindowFlags() {
 }
 PUBLIC STATIC void     SDL2Renderer::SetVSync(bool enabled) {
     Graphics::VsyncEnabled = enabled;
+    // Turning vsync on and off after the renderer exists arrived in SDL 2.0.18.
+    // Before that it could only be asked for when the renderer was made, which
+    // is what the flags at Init already do.
+#if SDL_VERSION_ATLEAST(2,0,18)
     SDL_RenderSetVSync(Renderer, enabled);
+#else
+    (void)enabled;
+#endif
 }
 PUBLIC STATIC void     SDL2Renderer::SetGraphicsFunctions() {
     Graphics::PixelOffset = 0.0f;

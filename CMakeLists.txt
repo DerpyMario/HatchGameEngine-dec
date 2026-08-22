@@ -28,6 +28,17 @@ file(GLOB_RECURSE CPP_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} "source/*.cpp")
 
 set(HATCH_SOURCES ${C_SOURCES} ${CPP_SOURCES})
 
+# The Xbox reaches its GPU through nxdk's pbkit, so the OpenGL renderer has
+# nothing to talk to and its headers are not there to be found.
+if(NXDK)
+  list(FILTER HATCH_SOURCES EXCLUDE REGEX "source/Engine/Rendering/GL/")
+
+  # The triangulation library reports degenerate input by throwing, and nxdk
+  # has no exceptions to throw. Rather than turn every one of those into an
+  # abort, it is left out; Geometry::Triangulate says so and returns nothing.
+  list(FILTER HATCH_SOURCES EXCLUDE REGEX "source/Libraries/poly2tri/")
+endif()
+
 # The macOS half of the filesystem code is Objective-C, since the application
 # support directory can only be asked for through Foundation.
 if(APPLE)
@@ -41,7 +52,16 @@ if(TARGET_NAME)
   set(HATCH_TARGET_NAME ${TARGET_NAME})
 endif()
 
-if(APPLE)
+# NXDK is set by nxdk's toolchain file. It also sets WIN32, since the Xbox is
+# given a subset of the Windows API, so the Xbox has to be asked about first or
+# it would be built as a PC.
+if(NXDK)
+  # SDL_MAIN_HANDLED is not set here: nxdk's SDL defines it itself, and setting
+  # it again only earns a redefinition warning in every translation unit.
+  add_definitions(-DXBOX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
+   -DNO_LIBAV
+  )
+elseif(APPLE)
   add_definitions(-DMACOSX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
    -DNO_LIBAV
   )
@@ -85,6 +105,19 @@ endif()
 
 # Renderers
 option(USING_OPENGL "Use OpenGL" ON)
+
+# The Xbox's GPU is reached through nxdk's own pbkit rather than OpenGL, so the
+# engine falls back to what it already has for machines without it: the SDL2
+# backend over its own software rasteriser. Open Asset Import is far too much
+# for the machine, and the scripts are compiled ahead of time on a PC.
+if(NXDK)
+  # See the header for why this is forced into everything.
+  add_compile_options(-include "${CMAKE_SOURCE_DIR}/source/Engine/Includes/XboxCompat.h")
+
+  set(USING_OPENGL OFF)
+  set(USE_OPEN_ASSET_IMPORT_LIBRARY OFF)
+  set(USE_FREETYPE_LIBRARY OFF)
+endif()
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   option(USING_DIRECT3D "Use Direct3D" OFF)
 endif()
@@ -165,7 +198,17 @@ if(USE_SDL2_CONFIG)
 endif()
 
 # Find the includes
-if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(NXDK)
+  set(SDL2_INCLUDE_DIRS "${NXDK_DIR}/lib/sdl/SDL2/include")
+  set(SDL2_LIBRARIES "${NXDK_DIR}/lib/libSDL2.lib")
+
+  add_definitions(-DUSING_LIBPNG -DUSING_LIBPNG_HEADER=<png.h>)
+  set(PNG_FOUND TRUE)
+  set(PNG_LIBRARIES "${NXDK_DIR}/lib/libpng.lib" "${NXDK_DIR}/lib/libzlib.lib")
+  # nxdk keeps libpng's generated configuration a level above the sources.
+  include_directories("${NXDK_DIR}/lib/libpng/libpng" "${NXDK_DIR}/lib/libpng"
+                      "${NXDK_DIR}/lib/zlib/zlib" "${NXDK_DIR}/lib/zlib")
+elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   if(NOT USE_SDL2_CONFIG)
     find_package(SDL2 REQUIRED)
   endif()
@@ -236,7 +279,9 @@ if(USE_OPEN_ASSET_IMPORT_LIBRARY)
 endif()
 
 # Include libraries
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(NXDK)
+  # nxdk supplies everything, so none of the bundled Windows libraries apply.
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   # Add all of the Windows include files
   include_directories(
     meta/win/include
@@ -253,7 +298,9 @@ else()
 endif()
 
 # Add libraries
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(NXDK)
+  target_link_libraries(${PROJECT_NAME} ${SDL2_LIBRARIES})
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   if(USE_SDL2_CONFIG)
     target_link_libraries(${PROJECT_NAME} ${SDL2_LIBRARIES} Ws2_32.lib opengl32.lib)
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
@@ -288,4 +335,47 @@ if(APPLE)
   # Foundation for the Objective-C filesystem code above.
   find_library(FOUNDATION_FRAMEWORK Foundation)
   target_link_libraries(${PROJECT_NAME} ${FOUNDATION_FRAMEWORK})
+endif()
+
+# What the linker produces for the Xbox is a Windows executable, which the
+# console does not boot. cxbe relinks it into the XBE the Xbox does, named the
+# way a disc or a dashboard expects to find it.
+if(NXDK)
+  set(CXBE "${NXDK_DIR}/tools/cxbe/cxbe")
+
+  # cxbe is a host tool, and nxdk builds it on demand rather than shipping it,
+  # so a checkout that has only ever had its libraries built will not have one
+  # yet. Building it here keeps the Xbox target working from a plain checkout.
+  if(NOT EXISTS "${CXBE}")
+    # nxdk's makefile sets CXX to its own cross-compiler, which is a
+    # freestanding, no-exception i386 target that cxbe is not written for and
+    # that this machine could not run the result of anyway. The host compiler
+    # has to be passed on the command line to override that -- the environment
+    # would lose to the makefile's own assignment.
+    find_program(HOST_CXX NAMES c++ g++ clang++)
+
+    if(NOT HOST_CXX)
+      message(FATAL_ERROR
+        "No host C++ compiler was found to build nxdk's cxbe with. Run "
+        "'make cxbe' in ${NXDK_DIR} and configure again.")
+    endif()
+
+    message(STATUS "Building nxdk's cxbe with ${HOST_CXX}")
+    execute_process(
+      COMMAND ${CMAKE_MAKE_PROGRAM} -C "${NXDK_DIR}/tools/cxbe" "CXX=${HOST_CXX}"
+      RESULT_VARIABLE CXBE_RESULT
+      OUTPUT_QUIET)
+
+    if(NOT CXBE_RESULT EQUAL 0 OR NOT EXISTS "${CXBE}")
+      message(FATAL_ERROR
+        "cxbe could not be built. Run 'make cxbe' in ${NXDK_DIR} and configure again.")
+    endif()
+  endif()
+
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND "${CXBE}"
+            -OUT:"$<TARGET_FILE_DIR:${PROJECT_NAME}>/default.xbe"
+            -TITLE:"${HATCH_TARGET_NAME}"
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+    COMMENT "Relinking into default.xbe")
 endif()

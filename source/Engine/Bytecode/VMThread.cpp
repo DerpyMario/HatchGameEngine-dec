@@ -1978,12 +1978,18 @@ PRIVATE bool   VMThread::CallValue(VMValue callee, int argCount) {
                 NativeFn nativeFn = AS_NATIVE(callee);
 
                 VMValue returnValue = NULL_VAL;
+#if defined(__EXCEPTIONS) || defined(_CPPUNWIND)
                 try {
                     returnValue = nativeFn(argCount, StackTop - argCount, ID);
                 }
                 catch (const char* err) {
                     (void)err;
                 }
+#else
+                // Built without exceptions, which is how the Xbox is built.
+                // Nothing in the engine throws, so there is nothing to catch.
+                returnValue = nativeFn(argCount, StackTop - argCount, ID);
+#endif
 
                 StackTop -= argCount; // Pop arguments
                 StackTop -= 1; // Pop receiver / class
@@ -2007,6 +2013,7 @@ PRIVATE bool   VMThread::CallForObject(VMValue callee, int argCount) {
             NativeFn native = AS_NATIVE(callee);
 
             VMValue returnValue = NULL_VAL;
+#if defined(__EXCEPTIONS) || defined(_CPPUNWIND)
             try {
                 // Calling a native function for an object needs to correctly pass the
                 // receiver, which is the reason these +1 and -1 are here.
@@ -2015,6 +2022,11 @@ PRIVATE bool   VMThread::CallForObject(VMValue callee, int argCount) {
             catch (const char* err) {
                 (void)err;
             }
+#else
+            // Calling a native function for an object needs to correctly pass the
+            // receiver, which is the reason these +1 and -1 are here.
+            returnValue = native(argCount + 1, StackTop - argCount - 1, ID);
+#endif
 
             StackTop -= argCount; // Pop arguments
             StackTop -= 1; // Pop receiver / class

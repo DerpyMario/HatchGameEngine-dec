@@ -1,7 +1,25 @@
 #ifndef INCLUDES_WS_H
 #define INCLUDES_WS_H
 
-#ifdef _WIN32
+// The Xbox reaches the network through nxdk's lwIP, which is not the BSD
+// socket layer this was written against and has to be brought up by the title
+// before it will do anything. Rather than half-wire it, the socket calls become
+// failures here: a game can still ask for a connection, and simply never gets
+// one. The engine's networking is documented as not working anyway.
+#ifdef XBOX
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <stdint.h>
+
+    // Only what the class declaration needs to name. Nothing on the Xbox calls
+    // through any of it.
+    typedef int socket_t;
+    #define INVALID_SOCKET (-1)
+    #define socketerrno 0
+    #define SOCKET_EAGAIN_EINPROGRESS 0
+    #define SOCKET_EWOULDBLOCK 0
+#elif defined(_WIN32)
     #if defined(_MSC_VER) && !defined(_CRT_SECURE_NO_WARNINGS)
         #define _CRT_SECURE_NO_WARNINGS // _CRT_SECURE_NO_WARNINGS for sscanf errors in MSVC2013 Express
     #endif

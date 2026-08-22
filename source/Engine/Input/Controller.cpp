@@ -50,6 +50,7 @@ static SDL_GameControllerButton ButtonEnums[] = {
     CONST_BUTTON(DPAD_DOWN),
     CONST_BUTTON(DPAD_LEFT),
     CONST_BUTTON(DPAD_RIGHT),
+#if SDL_VERSION_ATLEAST(2,0,14)
     CONST_BUTTON(MISC1),
     CONST_BUTTON(MISC1),
     CONST_BUTTON(TOUCHPAD),
@@ -58,6 +59,16 @@ static SDL_GameControllerButton ButtonEnums[] = {
     CONST_BUTTON(PADDLE3),
     CONST_BUTTON(PADDLE4),
     CONST_BUTTON(MISC1)
+#else
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID),
+    CONST_BUTTON(INVALID)
+#endif
 };
 
 #undef CONST_BUTTON
@@ -75,6 +86,12 @@ static SDL_GameControllerAxis AxisEnums[] = {
 #undef CONST_AXIS
 
 PRIVATE STATIC ControllerType Controller::DetermineType(void* gamecontroller) {
+#if !SDL_VERSION_ATLEAST(2,0,12)
+    // Older SDL cannot be asked, and the default below is what it would have
+    // answered for anything it did not recognise.
+    (void)gamecontroller;
+    return ControllerType::Xbox360;
+#else
     switch (SDL_GameControllerGetType((SDL_GameController*)gamecontroller)) {
         case SDL_CONTROLLER_TYPE_XBOX360:
             return ControllerType::Xbox360;
@@ -107,6 +124,7 @@ PRIVATE STATIC ControllerType Controller::DetermineType(void* gamecontroller) {
         default:
             return ControllerType::Xbox360;
     }
+#endif
 }
 
 PUBLIC bool          Controller::Open(int index) {
@@ -119,7 +137,9 @@ PUBLIC bool          Controller::Open(int index) {
     JoystickID = SDL_JoystickInstanceID(JoystickDevice);
     Connected = true;
 
+#if SDL_VERSION_ATLEAST(2,0,18)
     if (SDL_GameControllerHasRumble(Device))
+#endif
         Rumble = new ControllerRumble(Device);
 
     ButtonsPressed = (bool*)Memory::Calloc((int)ControllerButton::Max, sizeof(bool));
@@ -169,7 +189,13 @@ PUBLIC char*          Controller::GetName() {
 }
 // Sets the LEDs in some controllers
 PUBLIC void           Controller::SetPlayerIndex(int index) {
+    // Setting the player index, and the lights that go with it, arrived in
+    // SDL 2.0.12.
+#if SDL_VERSION_ATLEAST(2,0,12)
     SDL_GameControllerSetPlayerIndex(Device, index);
+#else
+    (void)index;
+#endif
 }
 
 PUBLIC bool          Controller::GetButton(int button) {
