@@ -86,7 +86,12 @@ extern "C" {
     #include <windows.h>
 #endif
 
-#if   WIN32
+// The Xbox is asked about before Windows: nxdk gives the Xbox a subset of the
+// Windows API and defines WIN32 along with it, so a chain that asked about
+// Windows first would call an Xbox a PC.
+#if   XBOX
+    Platforms Application::Platform = Platforms::Xbox;
+#elif WIN32
     Platforms Application::Platform = Platforms::Windows;
 #elif MACOSX
     Platforms Application::Platform = Platforms::MacOS;
@@ -96,8 +101,6 @@ extern "C" {
     Platforms Application::Platform = Platforms::Switch;
 #elif PLAYSTATION
     Platforms Application::Platform = Platforms::PlayStation;
-#elif XBOX
-    Platforms Application::Platform = Platforms::Xbox;
 #elif ANDROID
     Platforms Application::Platform = Platforms::Android;
 #elif IOS

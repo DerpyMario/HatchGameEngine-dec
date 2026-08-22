@@ -10,7 +10,7 @@ private:
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Utilities/StringUtils.h>
 
-#if WIN32
+#if WIN32 || XBOX
     #include <windows.h>
     #include <direct.h>
     #define MAX_PATH_SIZE 1024
@@ -26,7 +26,7 @@ bool CompareFunction(char* i, char* j) {
 }
 
 PUBLIC STATIC bool          Directory::Exists(const char* path) {
-    #if WIN32
+    #if WIN32 || XBOX
         DWORD ftyp = GetFileAttributesA(path);
         if (ftyp == INVALID_FILE_ATTRIBUTES) return false;  // Something is wrong with your path
         if (ftyp & FILE_ATTRIBUTE_DIRECTORY) return true;
@@ -40,7 +40,7 @@ PUBLIC STATIC bool          Directory::Exists(const char* path) {
     return false;
 }
 PUBLIC STATIC bool          Directory::Create(const char* path) {
-    #if WIN32
+    #if WIN32 || XBOX
         return CreateDirectoryA(path, NULL);
     #else
         return mkdir(path, 0777) == 0;
@@ -48,7 +48,7 @@ PUBLIC STATIC bool          Directory::Create(const char* path) {
 }
 
 PUBLIC STATIC bool          Directory::GetCurrentWorkingDirectory(char* out, size_t sz) {
-    #if WIN32
+    #if WIN32 || XBOX
         return _getcwd(out, sz) != NULL;
     #else
         return getcwd(out, sz) != NULL;
@@ -58,7 +58,7 @@ PUBLIC STATIC bool          Directory::GetCurrentWorkingDirectory(char* out, siz
 // Resource paths are all resolved relative to the working directory, so opening
 // a different project from the editor means moving into its folder.
 PUBLIC STATIC bool          Directory::SetCurrentWorkingDirectory(const char* path) {
-    #if WIN32
+    #if WIN32 || XBOX
         return _chdir(path) == 0;
     #else
         return chdir(path) == 0;
@@ -93,7 +93,7 @@ PUBLIC STATIC bool          Directory::CreatePath(const char* path) {
 }
 
 PUBLIC STATIC void          Directory::GetFiles(vector<char*>* files, const char* path, const char* searchPattern, bool allDirs) {
-    #if WIN32
+    #if WIN32 || XBOX
         char winPath[MAX_PATH_SIZE];
         snprintf(winPath, MAX_PATH_SIZE, "%s%s*", path, path[strlen(path) - 1] == '/' ? "" : "/");
 
@@ -170,7 +170,7 @@ PUBLIC STATIC vector<char*> Directory::GetFiles(const char* path, const char* se
 }
 
 PUBLIC STATIC void          Directory::GetDirectories(vector<char*>* files, const char* path, const char* searchPattern, bool allDirs) {
-    #if WIN32
+    #if WIN32 || XBOX
         char winPath[MAX_PATH_SIZE];
         snprintf(winPath, MAX_PATH_SIZE, "%s%s*", path, path[strlen(path) - 1] == '/' ? "" : "/");
 

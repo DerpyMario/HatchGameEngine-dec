@@ -26,6 +26,13 @@ public:
 
 #include <Engine/Network/WebSocketClient.h>
 
+// The Xbox reaches the network through nxdk's lwIP, which is not the BSD socket
+// layer this was written against and has to be brought up by the title before
+// it will do anything. Rather than half-wire it, no connection is ever made: a
+// game can still ask for one and simply gets nothing back. The engine's
+// networking is documented as not working as it is.
+#ifndef XBOX
+
 const char* BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 enum     opcode_type {
@@ -779,3 +786,25 @@ PUBLIC        void             WebSocketClient::Close() {
         WSACleanup();
     #endif
 }
+
+#else
+
+WebSocketClient* WebSocketClient::New(const char* url) { (void)url; return NULL; }
+void WebSocketClient::Poll(int timeout) { (void)timeout; }
+void WebSocketClient::Dispatch(void(*callback)(void* mem, size_t size)) { (void)callback; }
+size_t WebSocketClient::BytesToRead() { return 0; }
+size_t WebSocketClient::ReadBytes(void* data, size_t n) { (void)data; (void)n; return 0; }
+Uint32 WebSocketClient::ReadUint32() { return 0; }
+Sint32 WebSocketClient::ReadSint32() { return 0; }
+float WebSocketClient::ReadFloat() { return 0.0f; }
+char* WebSocketClient::ReadString() { return NULL; }
+void WebSocketClient::SendData(int type, const void* message, int64_t message_size) {
+    (void)type; (void)message; (void)message_size;
+}
+void WebSocketClient::SendBinary(const void* message, int64_t message_size) {
+    (void)message; (void)message_size;
+}
+void WebSocketClient::SendText(const char* message) { (void)message; }
+void WebSocketClient::Close() { }
+
+#endif /* XBOX */

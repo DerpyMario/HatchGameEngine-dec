@@ -14,6 +14,8 @@ private:
 
 #if WIN32
     #include <io.h>
+#elif XBOX
+    #include <windows.h>
 #else
     #include <unistd.h>
 #endif
@@ -25,6 +27,10 @@ private:
 PUBLIC STATIC bool File::Exists(const char* path) {
     #if WIN32
         return _access(path, 0) != -1;
+    #elif XBOX
+        DWORD attributes = GetFileAttributesA(path);
+        return attributes != INVALID_FILE_ATTRIBUTES &&
+               !(attributes & FILE_ATTRIBUTE_DIRECTORY);
     #elif MACOSX
         if (access(path, F_OK) != -1)
             return true;

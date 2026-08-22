@@ -8,6 +8,9 @@ public:
 #endif
 
 #include <Engine/Utilities/StringUtils.h>
+
+// ToNumber reads errno to tell a number that was too big from one that was not.
+#include <errno.h>
 #include <Engine/Diagnostics/Memory.h>
 
 PUBLIC STATIC char* StringUtils::Create(void* src, size_t length) {
