@@ -56,9 +56,10 @@ endif()
 # given a subset of the Windows API, so the Xbox has to be asked about first or
 # it would be built as a PC.
 if(NXDK)
+  # SDL_MAIN_HANDLED is not set here: nxdk's SDL defines it itself, and setting
+  # it again only earns a redefinition warning in every translation unit.
   add_definitions(-DXBOX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
    -DNO_LIBAV
-   -DSDL_MAIN_HANDLED
   )
 elseif(APPLE)
   add_definitions(-DMACOSX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
@@ -340,8 +341,39 @@ endif()
 # console does not boot. cxbe relinks it into the XBE the Xbox does, named the
 # way a disc or a dashboard expects to find it.
 if(NXDK)
+  set(CXBE "${NXDK_DIR}/tools/cxbe/cxbe")
+
+  # cxbe is a host tool, and nxdk builds it on demand rather than shipping it,
+  # so a checkout that has only ever had its libraries built will not have one
+  # yet. Building it here keeps the Xbox target working from a plain checkout.
+  if(NOT EXISTS "${CXBE}")
+    # nxdk's makefile sets CXX to its own cross-compiler, which is a
+    # freestanding, no-exception i386 target that cxbe is not written for and
+    # that this machine could not run the result of anyway. The host compiler
+    # has to be passed on the command line to override that -- the environment
+    # would lose to the makefile's own assignment.
+    find_program(HOST_CXX NAMES c++ g++ clang++)
+
+    if(NOT HOST_CXX)
+      message(FATAL_ERROR
+        "No host C++ compiler was found to build nxdk's cxbe with. Run "
+        "'make cxbe' in ${NXDK_DIR} and configure again.")
+    endif()
+
+    message(STATUS "Building nxdk's cxbe with ${HOST_CXX}")
+    execute_process(
+      COMMAND ${CMAKE_MAKE_PROGRAM} -C "${NXDK_DIR}/tools/cxbe" "CXX=${HOST_CXX}"
+      RESULT_VARIABLE CXBE_RESULT
+      OUTPUT_QUIET)
+
+    if(NOT CXBE_RESULT EQUAL 0 OR NOT EXISTS "${CXBE}")
+      message(FATAL_ERROR
+        "cxbe could not be built. Run 'make cxbe' in ${NXDK_DIR} and configure again.")
+    endif()
+  endif()
+
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND "${NXDK_DIR}/tools/cxbe/cxbe"
+    COMMAND "${CXBE}"
             -OUT:"$<TARGET_FILE_DIR:${PROJECT_NAME}>/default.xbe"
             -TITLE:"${HATCH_TARGET_NAME}"
             "$<TARGET_FILE:${PROJECT_NAME}>"

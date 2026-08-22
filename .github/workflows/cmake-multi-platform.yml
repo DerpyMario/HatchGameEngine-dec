@@ -283,3 +283,79 @@ jobs:
           name: HatchGameEngine-windows-${{ matrix.arch }}
           path: dist/HatchGameEngine.exe
           if-no-files-found: error
+
+  xbox:
+    # 24.04 rather than the 22.04 the other Linux jobs use: nxdk tests itself
+    # against the clang of the current Ubuntu, and 22.04's clang 14 is behind
+    # what it expects.
+    name: Xbox (original)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # nxdk is the open-source Xbox toolchain. It builds with clang and lld
+      # targeting i386, so nothing here comes from Microsoft's SDK.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake clang lld llvm pkgconf bison flex
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Check out nxdk
+        run: |
+          git clone --recursive --depth 1 https://github.com/XboxDev/nxdk.git "${GITHUB_WORKSPACE}/nxdk"
+
+      # NXDK_ONLY builds nxdk's libraries without building a title alongside
+      # them, which is exactly what a project bringing its own build system
+      # wants. It produces the C++ runtime, SDL2, libpng and zlib the engine
+      # links against.
+      - name: Build the nxdk libraries
+        run: |
+          export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk"
+          export PATH="${NXDK_DIR}/bin:${PATH}"
+          make -C "${NXDK_DIR}" NXDK_ONLY=1 --jobs $(nproc)
+
+          for lib in libc++ libSDL2 libpng libzlib libpdclib; do
+            if [ ! -f "${NXDK_DIR}/lib/${lib}.lib" ]; then
+              echo "nxdk did not produce ${lib}.lib"
+              exit 1
+            fi
+          done
+
+      - name: Configure
+        run: |
+          export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk"
+          export PATH="${NXDK_DIR}/bin:${PATH}"
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE="${NXDK_DIR}/share/toolchain-nxdk.cmake" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk"
+          export PATH="${NXDK_DIR}/bin:${PATH}"
+          cmake --build build --parallel
+
+      - name: Package
+        run: |
+          # A title boots from a file called default.xbe, so what comes out of
+          # here is dropped straight onto a disc image or a hard drive folder.
+          if [ "$(head -c 4 build/default.xbe)" != "XBEH" ]; then
+            echo "build/default.xbe is not an XBE"
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp build/default.xbe dist/default.xbe
+
+          tar -czf HatchGameEngine-xbox.tar.gz -C dist default.xbe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-xbox
+          path: HatchGameEngine-xbox.tar.gz
+          if-no-files-found: error

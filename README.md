@@ -261,6 +261,7 @@ one self-contained application for every target:
 | `HatchGameEngine-macos-universal` | A `.app` holding one binary with both Apple silicon and Intel in it |
 | `HatchGameEngine-linux-x86_64` | A single executable |
 | `HatchGameEngine-linux-aarch64` | A single executable |
+| `HatchGameEngine-xbox` | A `default.xbe` for the original Xbox |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -269,9 +270,52 @@ uses the static C runtime, so no Visual C++ redistributable is needed either.
 The Unix artifacts arrive as tarballs because a zip -- which is what GitHub
 wraps artifacts in -- does not carry the executable bit.
 
+The Xbox job is the exception: it builds nxdk instead of SDL2 and GLEW, and what
+it produces is a title rather than an application. See below.
+
 ## Building
 ### Windows
 Included in /VisualC is a Visual Studio 2019 solution. You'll need the x86 version of the [Microsoft Visual C++ Redistributable for Visual Studio 2015, 2017 and 2019](https://support.microsoft.com/en-us/topic/the-latest-supported-visual-c-downloads-2647da03-1eea-4433-9aff-95f26a218cc0) installed to compile in Visual Studio.
+
+### Xbox
+
+The original Xbox is built with [nxdk](https://github.com/XboxDev/nxdk), an
+open-source toolchain that was written from scratch and shares nothing with
+Microsoft's SDK. Nothing from that SDK is needed, used, or supported here.
+
+```sh
+git clone --recursive https://github.com/XboxDev/nxdk.git
+export NXDK_DIR="$PWD/nxdk"
+export PATH="$NXDK_DIR/bin:$PATH"
+
+# nxdk's own libraries: the C++ runtime, SDL2, libpng and zlib.
+make -C "$NXDK_DIR" NXDK_ONLY=1 --jobs $(nproc)
+
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE="$NXDK_DIR/share/toolchain-nxdk.cmake" \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+`build/default.xbe` is the result, named the way a disc or a dashboard expects
+to find it. Building it needs clang, lld, llvm, make, bison, flex and cmake on
+the machine doing the building.
+
+What the console gets is shaped by what nxdk provides, so some of the engine
+does not come along:
+
+| | |
+| --- | --- |
+| Rendering | The SDL2 backend over the software rasteriser. There is no OpenGL on the Xbox, and the GL renderer is left out of the build entirely. |
+| 3D models | No Open Asset Import Library, so the formats it reads are unavailable. The engine's own model formats are unaffected. |
+| Polygon triangulation | `Geometry.Triangulate` returns nothing and logs a warning. The library behind it reports bad input by throwing, and nxdk has no exception runtime to catch it with. |
+| Networking | `WebSocketClient` is present but never connects. nxdk reaches the network through lwIP, which a title has to bring up itself, and which is not the socket layer the client was written against. |
+| Fonts | No FreeType. |
+| Saves | Written to `D:\Saves`, on the drive the title was launched from. |
+
+The engine's Xbox code is reached with `#if XBOX`. nxdk defines `_WIN32` as
+well, since the console is given a subset of the Windows API, so anywhere the
+two differ the Xbox has to be asked about first.
 
 ## Dependecies
 Required:
@@ -280,6 +324,7 @@ Required:
 - Android Studio (for Android building)
 - Xcode 12 (for iOS building)
 - devKitPro (for Nintendo Switch/3DS homebrew building) (wip)
+- [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)

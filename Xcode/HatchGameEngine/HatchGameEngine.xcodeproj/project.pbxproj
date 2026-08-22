@@ -93,6 +93,7 @@
 		CA11DE0000000000000000CC /* ResourceEditor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE0000000000000000CA /* ResourceEditor.cpp */; };
 		CA11DE0000000000000000CE /* TileCollisionEditor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE0000000000000000CD /* TileCollisionEditor.cpp */; };
 		CA11DE0000000000000000D0 /* SceneEditor3D.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE0000000000000000CF /* SceneEditor3D.cpp */; };
+		CA11DE0000000000000000D2 /* Scene3DFormat.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE0000000000000000D1 /* Scene3DFormat.cpp */; };
 		CA11DE000000000000000067 /* UIMenu.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000065 /* UIMenu.cpp */; };
 		CA11DE000000000000000068 /* UIFileDialog.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000066 /* UIFileDialog.cpp */; };
 		CA11DE000000000000000005 /* UICore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA11DE000000000000000002 /* UICore.cpp */; };
@@ -250,6 +251,7 @@
 		CA11DE0000000000000000CA /* ResourceEditor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ResourceEditor.cpp; sourceTree = "<group>"; };
 		CA11DE0000000000000000CD /* TileCollisionEditor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TileCollisionEditor.cpp; sourceTree = "<group>"; };
 		CA11DE0000000000000000CF /* SceneEditor3D.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SceneEditor3D.cpp; sourceTree = "<group>"; };
+		CA11DE0000000000000000D1 /* Scene3DFormat.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Scene3DFormat.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000065 /* UIMenu.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UIMenu.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000066 /* UIFileDialog.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UIFileDialog.cpp; sourceTree = "<group>"; };
 		CA11DE000000000000000002 /* UICore.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = UICore.cpp; sourceTree = "<group>"; };
@@ -514,6 +516,7 @@
 				D037A4DB28A06E6C0028AF07 /* HatchSceneReader.cpp */,
 				D0B14557268B6FA700CDA5EF /* TiledMapReader.cpp */,
 				D0B14558268B6FA700CDA5EF /* RSDKSceneReader.cpp */,
+				CA11DE0000000000000000D1 /* Scene3DFormat.cpp */,
 			);
 			path = SceneFormats;
 			sourceTree = "<group>";
@@ -907,6 +910,7 @@
 				CA11DE0000000000000000CC /* ResourceEditor.cpp in Sources */,
 				CA11DE0000000000000000CE /* TileCollisionEditor.cpp in Sources */,
 				CA11DE0000000000000000D0 /* SceneEditor3D.cpp in Sources */,
+				CA11DE0000000000000000D2 /* Scene3DFormat.cpp in Sources */,
 				CA11DE000000000000000067 /* UIMenu.cpp in Sources */,
 				CA11DE000000000000000068 /* UIFileDialog.cpp in Sources */,
 				CA11DE000000000000000005 /* UICore.cpp in Sources */,
