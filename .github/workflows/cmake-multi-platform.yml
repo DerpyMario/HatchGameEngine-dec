@@ -359,3 +359,72 @@ jobs:
           name: HatchGameEngine-xbox
           path: HatchGameEngine-xbox.tar.gz
           if-no-files-found: error
+
+  web:
+    name: WebAssembly (WebGL)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      # Pinned rather than tracking latest, the same way SDL2 and GLEW are
+      # above: a toolchain that changes underneath the build is a build that
+      # breaks without anything in the repository having changed.
+      - name: Install the Emscripten SDK
+        env:
+          EMSDK_VERSION: "6.0.8"
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "${GITHUB_WORKSPACE}/emsdk"
+          "${GITHUB_WORKSPACE}/emsdk/emsdk" install "${EMSDK_VERSION}"
+          "${GITHUB_WORKSPACE}/emsdk/emsdk" activate "${EMSDK_VERSION}"
+
+      - name: Configure
+        run: |
+          . "${GITHUB_WORKSPACE}/emsdk/emsdk_env.sh"
+          emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      # SDL2, libpng and zlib are built here as Emscripten ports, downloaded and
+      # cached by the toolchain rather than fetched by this workflow.
+      - name: Build
+        run: |
+          . "${GITHUB_WORKSPACE}/emsdk/emsdk_env.sh"
+          cmake --build build --parallel
+
+      - name: Package
+        run: |
+          mkdir -p dist
+
+          # The page is only useful with all three: the loader is what fetches
+          # the wasm, and the html is what hosts the canvas.
+          for part in html js wasm; do
+            file="build/HatchGameEngine-Release.${part}"
+            if [ ! -s "${file}" ]; then
+              echo "the build did not produce ${file}"
+              exit 1
+            fi
+            cp "${file}" "dist/index.${part}"
+          done
+
+          # index.html is what a static host serves for a bare URL, and the
+          # loader is named inside it, so that reference is renamed to match.
+          sed -i 's/HatchGameEngine-Release\.js/index.js/g' dist/index.html
+          sed -i 's/HatchGameEngine-Release\.wasm/index.wasm/g' dist/index.js
+
+          echo "What the page is made of:"
+          ls -l dist
+
+          tar -czf HatchGameEngine-web.tar.gz -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-web
+          path: HatchGameEngine-web.tar.gz
+          if-no-files-found: error

@@ -201,8 +201,12 @@ PUBLIC STATIC void Studio::Dispose() {
 }
 
 PUBLIC STATIC bool Studio::IsAvailable() {
-    // Nothing here makes sense without a mouse and a resizable window.
-    return Initialized && Application::IsPC();
+    // Nothing here makes sense without a mouse and a resizable window. A
+    // browser has both, but it is not a PC as far as IsPC is concerned: that
+    // one answers the question scripts ask about the operating system, and the
+    // browser is not one of the three it names.
+    return Initialized &&
+        (Application::IsPC() || Application::Platform == Platforms::Web);
 }
 
 PUBLIC STATIC void Studio::Show() {

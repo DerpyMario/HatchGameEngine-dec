@@ -15,7 +15,10 @@ else()
   # -march=nocona names an x86 processor, so it is only a flag the compiler
   # will take on x86, and not even there when several architectures are being
   # built into the one binary.
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86)$" AND NOT CMAKE_OSX_ARCHITECTURES)
+  # Emscripten reports an x86 processor even though what it emits is wasm, so it
+  # has to be excluded by name rather than by the processor check.
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86)$"
+     AND NOT CMAKE_OSX_ARCHITECTURES AND NOT EMSCRIPTEN)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=nocona")
   endif()
 endif()
@@ -59,6 +62,14 @@ if(NXDK)
   # SDL_MAIN_HANDLED is not set here: nxdk's SDL defines it itself, and setting
   # it again only earns a redefinition warning in every translation unit.
   add_definitions(-DXBOX -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
+   -DNO_LIBAV
+  )
+elseif(EMSCRIPTEN)
+  # Asked about before the catch-all below, which would otherwise call the
+  # browser Linux: Emscripten is a Unix as far as CMake's system name goes.
+  # emcc predefines __EMSCRIPTEN__; EMSCRIPTEN is the spelling the rest of the
+  # engine's platform checks use.
+  add_definitions(-DEMSCRIPTEN -DTARGET_NAME=\"${HATCH_TARGET_NAME}\"
    -DNO_LIBAV
   )
 elseif(APPLE)
@@ -117,6 +128,19 @@ if(NXDK)
   set(USING_OPENGL OFF)
   set(USE_OPEN_ASSET_IMPORT_LIBRARY OFF)
   set(USE_FREETYPE_LIBRARY OFF)
+endif()
+
+# The browser keeps OpenGL: WebGL 2 is OpenGL ES 3.0, which the GL renderer
+# already has a path for, and everything is reached through SDL2 and the
+# libraries Emscripten ports rather than anything found on the machine.
+if(EMSCRIPTEN)
+  set(USE_OPEN_ASSET_IMPORT_LIBRARY OFF)
+  set(USE_FREETYPE_LIBRARY OFF)
+
+  # Ports are built on demand and cached, and have to be named at compile time
+  # as well as link time so their headers are on the include path.
+  set(HATCH_EMSCRIPTEN_PORTS -sUSE_SDL=2 -sUSE_LIBPNG=1 -sUSE_ZLIB=1)
+  add_compile_options(${HATCH_EMSCRIPTEN_PORTS})
 endif()
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   option(USING_DIRECT3D "Use Direct3D" OFF)
@@ -208,6 +232,19 @@ if(NXDK)
   # nxdk keeps libpng's generated configuration a level above the sources.
   include_directories("${NXDK_DIR}/lib/libpng/libpng" "${NXDK_DIR}/lib/libpng"
                       "${NXDK_DIR}/lib/zlib/zlib" "${NXDK_DIR}/lib/zlib")
+elseif(EMSCRIPTEN)
+  # Nothing is found on the build machine: SDL2, libpng and zlib all come from
+  # Emscripten's own ports, named above and again at link time.
+  set(SDL2_INCLUDE_DIRS "")
+  set(SDL2_LIBRARIES "")
+
+  add_definitions(-DUSING_LIBPNG)
+  set(PNG_FOUND TRUE)
+  set(PNG_LIBRARIES "")
+
+  # WebGL is provided by the browser and bound by Emscripten itself, so there is
+  # no loader to link and no GLEW to find.
+  set(OPENGL_LIBRARIES "")
 elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   if(NOT USE_SDL2_CONFIG)
     find_package(SDL2 REQUIRED)
@@ -281,6 +318,8 @@ endif()
 # Include libraries
 if(NXDK)
   # nxdk supplies everything, so none of the bundled Windows libraries apply.
+elseif(EMSCRIPTEN)
+  # Ports supply everything, so none of the bundled libraries apply either.
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   # Add all of the Windows include files
   include_directories(
@@ -300,6 +339,9 @@ endif()
 # Add libraries
 if(NXDK)
   target_link_libraries(${PROJECT_NAME} ${SDL2_LIBRARIES})
+elseif(EMSCRIPTEN)
+  # Handled by the link options below, which is where Emscripten wants its
+  # ports and its settings named.
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   if(USE_SDL2_CONFIG)
     target_link_libraries(${PROJECT_NAME} ${SDL2_LIBRARIES} Ws2_32.lib opengl32.lib)
@@ -335,6 +377,60 @@ if(APPLE)
   # Foundation for the Objective-C filesystem code above.
   find_library(FOUNDATION_FRAMEWORK Foundation)
   target_link_libraries(${PROJECT_NAME} ${FOUNDATION_FRAMEWORK})
+endif()
+
+# The browser build is linked by emcc, which takes the shape of the finished
+# page as link options rather than as libraries.
+if(EMSCRIPTEN)
+  # A .html suffix is what tells emcc to emit the page as well as the wasm and
+  # its loader, so the build produces something that can just be opened.
+  set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".html")
+
+  set(HATCH_WEB_PRELOAD "" CACHE PATH
+      "A directory to bake into the page's filesystem, mounted at /")
+
+  target_link_options(${PROJECT_NAME} PRIVATE
+    ${HATCH_EMSCRIPTEN_PORTS}
+
+    # WebGL 2 is OpenGL ES 3.0, which is the profile the GL renderer's ES path
+    # is written against. Asking for 2 as the minimum as well keeps the build
+    # from quietly falling back to WebGL 1, where that path would not work.
+    -sMIN_WEBGL_VERSION=2
+    -sMAX_WEBGL_VERSION=2
+    -sFULL_ES3=1
+
+    # The engine sizes its allocations from the content it is given, which is
+    # not known when the page is built.
+    -sALLOW_MEMORY_GROWTH=1
+    -sINITIAL_MEMORY=134217728
+
+    # The bytecode VM recurses through the interpreter, and the default 64KB of
+    # stack does not survive it.
+    -sSTACK_SIZE=4194304
+
+    # Emscripten drops the filesystem from a build that never mentions one at
+    # link time, and the engine reaches for it at runtime rather than up front.
+    # IDBFS is what makes saves outlive the tab.
+    -sFORCE_FILESYSTEM=1
+    -lidbfs.js
+
+    # main() returns as soon as the browser loop is handed over, and the runtime
+    # has to still be there afterwards to run it.
+    -sEXIT_RUNTIME=0
+    -sEXPORTED_RUNTIME_METHODS=['FS','callMain']
+
+    --shell-file "${CMAKE_SOURCE_DIR}/meta/web/shell.html"
+  )
+
+  # The page is an input to the link, but naming it in a link option does not
+  # tell CMake that, so editing it would otherwise leave the built page stale.
+  set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY
+    LINK_DEPENDS "${CMAKE_SOURCE_DIR}/meta/web/shell.html")
+
+  if(HATCH_WEB_PRELOAD)
+    target_link_options(${PROJECT_NAME} PRIVATE
+      "--preload-file" "${HATCH_WEB_PRELOAD}@/")
+  endif()
 endif()
 
 # What the linker produces for the Xbox is a Windows executable, which the

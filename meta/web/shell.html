@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>Hatch Game Engine</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #101014;
+        color: #d8d8e0;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      #frame {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* The canvas takes the space that is left, and the engine is told the
+         size in pixels rather than being scaled up by the page, so what it
+         draws lands on real pixels. */
+      #stage {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      /* The backing store is SDL's to size, from whatever window size the
+         engine asks for. The page only scales it, and fitCanvas below sets the
+         element's own width and height rather than letting it stretch or using
+         object-fit: SDL turns a pointer position into a canvas pixel by scaling
+         against the element's box, so a box that does not match what is painted
+         inside it puts every click in the wrong place. */
+      #stage {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      canvas.emscripten {
+        display: block;
+        border: 0;
+        outline: none;
+        background: #000;
+      }
+
+      #status {
+        flex: 0 0 auto;
+        padding: 6px 10px;
+        background: #17171d;
+        border-top: 1px solid #26262f;
+        white-space: pre;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      #progress {
+        width: 100%;
+        height: 2px;
+        border: 0;
+        background: #26262f;
+      }
+
+      #progress::-webkit-progress-bar { background: #26262f; }
+      #progress::-webkit-progress-value { background: #5b8cff; }
+      #progress::-moz-progress-bar { background: #5b8cff; }
+
+      #progress[hidden] { display: none; }
+    </style>
+  </head>
+
+  <body>
+    <div id="frame">
+      <div id="stage">
+        <canvas class="emscripten" id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+      </div>
+      <progress id="progress" value="0" max="100"></progress>
+      <div id="status">Loading…</div>
+    </div>
+
+    <script type="text/javascript">
+      var statusElement = document.getElementById('status');
+      var progressElement = document.getElementById('progress');
+      var canvasElement = document.getElementById('canvas');
+
+      var Module = {
+        canvas: canvasElement,
+
+        print: function (text) {
+          console.log(text);
+        },
+
+        printErr: function (text) {
+          console.error(text);
+        },
+
+        setStatus: function (text) {
+          statusElement.textContent = text || 'Running';
+
+          // Emscripten reports loading progress inside the status text, which
+          // is the only place the count of outstanding requests appears.
+          var match = /([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/.exec(text);
+          if (match) {
+            progressElement.hidden = false;
+            progressElement.value = parseInt(match[2], 10) * 100;
+            progressElement.max = parseInt(match[4], 10) * 100;
+          }
+          else {
+            progressElement.hidden = true;
+          }
+        },
+
+        preRun: [function () {
+          // Saved games and settings live in IndexedDB so they outlive the tab.
+          // The mount has to happen before the engine looks for them, and the
+          // read back is asynchronous, so main is held until it has finished.
+          try {
+            FS.mkdir('/save');
+            FS.mount(IDBFS, {}, '/save');
+
+            Module.addRunDependency('idbfs-load');
+            FS.syncfs(true, function (err) {
+              if (err) console.error('could not read saves back:', err);
+              Module.removeRunDependency('idbfs-load');
+            });
+          }
+          catch (e) {
+            // A browser with storage turned off still runs the engine; it just
+            // does not remember anything between visits.
+            console.warn('saves will not persist:', e);
+          }
+        }],
+
+        totalDependencies: 0,
+
+        monitorRunDependencies: function (left) {
+          this.totalDependencies = Math.max(this.totalDependencies, left);
+          Module.setStatus(left
+            ? 'Preparing… (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')'
+            : '');
+        }
+      };
+
+      Module.setStatus('Downloading…');
+
+      window.onerror = function (message) {
+        Module.setStatus('Stopped: ' + message);
+      };
+
+      // Scales the canvas to the largest box of its own proportions that fits
+      // the space, and leaves the backing store alone -- that belongs to SDL,
+      // which sets it from the engine's window size and would be fighting
+      // anything the page did to it.
+      var stageElement = document.getElementById('stage');
+      var lastFit = '';
+
+      function fitCanvas() {
+        var backingW = canvasElement.width;
+        var backingH = canvasElement.height;
+        if (!backingW || !backingH) return;
+
+        var availableW = stageElement.clientWidth;
+        var availableH = stageElement.clientHeight;
+        if (!availableW || !availableH) return;
+
+        var scale = Math.min(availableW / backingW, availableH / backingH);
+        var width = Math.floor(backingW * scale);
+        var height = Math.floor(backingH * scale);
+
+        var fit = backingW + 'x' + backingH + '@' + width + 'x' + height;
+        if (fit === lastFit) return;
+        lastFit = fit;
+
+        canvasElement.style.width = width + 'px';
+        canvasElement.style.height = height + 'px';
+      }
+
+      // The engine can change its window size while running, which changes the
+      // backing store without the page being told, so this is checked each
+      // frame rather than only on resize. It does nothing unless something
+      // actually moved.
+      (function watch() {
+        fitCanvas();
+        requestAnimationFrame(watch);
+      })();
+
+      // Keystrokes belong to the game once it has been clicked on, rather than
+      // scrolling the page underneath it.
+      canvasElement.addEventListener('click', function () {
+        canvasElement.focus();
+      });
+    </script>
+
+    {{{ SCRIPT }}}
+  </body>
+</html>

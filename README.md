@@ -262,6 +262,7 @@ one self-contained application for every target:
 | `HatchGameEngine-linux-x86_64` | A single executable |
 | `HatchGameEngine-linux-aarch64` | A single executable |
 | `HatchGameEngine-xbox` | A `default.xbe` for the original Xbox |
+| `HatchGameEngine-web` | A page -- `index.html`, `index.js`, `index.wasm` -- to drop on any static host |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -270,8 +271,9 @@ uses the static C runtime, so no Visual C++ redistributable is needed either.
 The Unix artifacts arrive as tarballs because a zip -- which is what GitHub
 wraps artifacts in -- does not carry the executable bit.
 
-The Xbox job is the exception: it builds nxdk instead of SDL2 and GLEW, and what
-it produces is a title rather than an application. See below.
+The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
+the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
+produce is a title and a web page rather than an application. See below.
 
 ## Building
 ### Windows
@@ -317,6 +319,59 @@ The engine's Xbox code is reached with `#if XBOX`. nxdk defines `_WIN32` as
 well, since the console is given a subset of the Windows API, so anywhere the
 two differ the Xbox has to be asked about first.
 
+### WebAssembly
+
+The browser is built with [Emscripten](https://emscripten.org/), and renders
+through WebGL 2 -- which is OpenGL ES 3.0, a profile the GL renderer already had
+a path for.
+
+```sh
+git clone --depth 1 https://github.com/emscripten-core/emsdk.git
+./emsdk/emsdk install latest
+./emsdk/emsdk activate latest
+. ./emsdk/emsdk_env.sh
+
+emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+That writes `build/HatchGameEngine-Release.html` along with the `.js` that loads
+it and the `.wasm` itself. All three have to be served together, over HTTP --
+opening the file from disk will not work, because a browser will not fetch the
+wasm from a `file://` page. Anything that serves static files will do:
+
+```sh
+python3 -m http.server --directory build
+```
+
+SDL2, libpng and zlib come from Emscripten's ports, so there is nothing to
+install for them; the first build downloads and caches them.
+
+To bake a game into the page rather than shipping an empty engine, point
+`HATCH_WEB_PRELOAD` at the folder to include. Its contents are mounted at the
+root of the page's filesystem, which is where the engine looks:
+
+```sh
+emcmake cmake -S . -B build -DHATCH_WEB_PRELOAD=/path/to/MyGame
+```
+
+The page itself is `meta/web/shell.html`, and it is a normal HTML file --
+editing it changes the page the build produces.
+
+What is different in a browser:
+
+| | |
+| --- | --- |
+| The frame loop | Driven by the browser through `requestAnimationFrame` rather than by the engine. A page that spun in its own loop would never hand control back, and nothing it drew would reach the screen. |
+| Saved games and settings | Kept under `/save`, which the page mounts from IndexedDB, so they survive a reload. Everything else the engine writes goes to a filesystem that lives as long as the tab. |
+| `Thread.RunEvent` | Does nothing, and says so. Threads in a browser need SharedArrayBuffer, which needs the host to send `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers -- more than a static host can be assumed to do. |
+| 3D models | No Open Asset Import Library. The engine's own model formats are unaffected. |
+| Fonts | No FreeType. |
+| Networking | No `WebSocketClient`. |
+| Fog | ES will not index a uniform array with a value that is not constant, so the fog curve is worked out in the shader rather than looked up. It can differ from the desktop table by one step of 256 at a handful of depths; `GLShaderBuilder::BuildFogTableLookup` says exactly where and why. |
+
+The engine's browser code is reached with `#if EMSCRIPTEN`.
+
 ## Dependecies
 Required:
 - SDL2 (https://www.libsdl.org/)
@@ -325,6 +380,7 @@ Required:
 - Xcode 12 (for iOS building)
 - devKitPro (for Nintendo Switch/3DS homebrew building) (wip)
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
+- [Emscripten](https://emscripten.org/) (for WebAssembly building)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)

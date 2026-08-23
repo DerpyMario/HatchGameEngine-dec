@@ -187,13 +187,18 @@ size_t GL_VertexIndexBufferStride;
 #define GL_SUPPORTS_MULTISAMPLING
 #define GL_SUPPORTS_SMOOTHING
 #define GL_SUPPORTS_RENDERBUFFER
+#define GL_SUPPORTS_POINT_SIZE
 #define GL_MONOCHROME_PIXELFORMAT GL_RED
 #define CHECK_GL() GLShader::CheckGLError(__LINE__)
 
-#if GL_ES_VERSION_2_0 || GL_ES_VERSION_3_0
-#define GL_ES
+// GL_ES itself comes from GL/Includes.h, which is the file that knows which
+// OpenGL was included. What is left here is what this renderer does about it.
+#ifdef GL_ES
 #undef GL_SUPPORTS_MULTISAMPLING
 #undef GL_SUPPORTS_SMOOTHING
+// ES has no glPointSize: the size of a point comes from gl_PointSize, written
+// by the vertex shader.
+#undef GL_SUPPORTS_POINT_SIZE
 #undef GL_MONOCHROME_PIXELFORMAT
 #define GL_MONOCHROME_PIXELFORMAT GL_LUMINANCE
 #endif
@@ -798,7 +803,17 @@ void GL_SetState(GL_State& state, GL_VertexBuffer *driverData, Matrix4x4* projMa
             GL_BuildFogTable();
         }
 
-        glUniform1fv(shader->LocFogTable, 256, FogTable); CHECK_GL();
+        // Desktop shaders read the table straight out of a uniform array.
+        // GLSL ES will not index one with a value that is not constant, so its
+        // shaders work the same curve out for themselves and want the
+        // smoothness it is built from instead. Whichever the shader declared is
+        // the one with a location.
+        if (shader->LocFogTable != -1) {
+            glUniform1fv(shader->LocFogTable, 256, FogTable); CHECK_GL();
+        }
+        if (shader->LocFogSmoothness != -1) {
+            glUniform1f(shader->LocFogSmoothness, FogSmoothness); CHECK_GL();
+        }
     }
 }
 void GL_UpdateStateFromFace(GL_State& state, GL_VertexBufferFace& face, Scene3D* scene, GLenum cullWindingOrder) {
@@ -1955,7 +1970,9 @@ PUBLIC STATIC void     GLRenderer::DrawScene3D(Uint32 sceneIndex, Uint32 drawMod
         }
     #endif
 
-    glPointSize(scene->PointSize); CHECK_GL();
+    #ifdef GL_SUPPORTS_POINT_SIZE
+        glPointSize(scene->PointSize); CHECK_GL();
+    #endif
 
     Matrix4x4 projMat = scene->ProjectionMatrix;
     Matrix4x4 viewMat = scene->ViewMatrix;
@@ -2094,7 +2111,9 @@ PUBLIC STATIC void     GLRenderer::DrawScene3D(Uint32 sceneIndex, Uint32 drawMod
         }
     #endif
 
-    glPointSize(1.0f); CHECK_GL();
+    #ifdef GL_SUPPORTS_POINT_SIZE
+        glPointSize(1.0f); CHECK_GL();
+    #endif
     glDisable(GL_CULL_FACE); CHECK_GL();
     glDepthMask(GL_TRUE); CHECK_GL();
     glFrontFace(GL_CCW); CHECK_GL();
