@@ -27,6 +27,9 @@
 #elif XBOX
     // SDL2 includes
     #include <SDL.h>
+#elif EMSCRIPTEN
+    // SDL2 includes
+    #include <SDL.h>
 #elif LINUX
     // SDL2 includes
     #include <SDL.h>

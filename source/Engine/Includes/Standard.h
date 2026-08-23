@@ -52,7 +52,12 @@ enum class Platforms {
     Xbox,
     Android,
     iOS,
-    Unknown
+    Unknown,
+    // Added after Unknown rather than beside the other platforms: scripts get
+    // these as constants and compile their values into their bytecode, so
+    // inserting one in the middle would change what already-built bytecode
+    // means.
+    Web
 };
 
 enum class KeyBind {

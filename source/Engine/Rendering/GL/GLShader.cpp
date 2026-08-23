@@ -26,6 +26,7 @@ public:
     GLint  LocFogLinearEnd;
     GLint  LocFogDensity;
     GLint  LocFogTable;
+    GLint  LocFogSmoothness;
 
     char   FilenameV[256];
     char   FilenameF[256];
@@ -172,6 +173,7 @@ PRIVATE void  GLShader::AttachAndLink() {
     LocFogLinearEnd = GetUniformLocation("u_fogLinearEnd");
     LocFogDensity = GetUniformLocation("u_fogDensity");
     LocFogTable = GetUniformLocation("u_fogTable");
+    LocFogSmoothness = GetUniformLocation("u_fogSmoothness");
 
     CachedBlendColors[0] = CachedBlendColors[1] = CachedBlendColors[2] = CachedBlendColors[3] = 0.0;
 }

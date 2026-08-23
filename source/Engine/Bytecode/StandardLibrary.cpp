@@ -13986,7 +13986,16 @@ VMValue Thread_RunEvent(int argCount, VMValue* args, Uint32 threadID) {
         memcpy(bundle + 1, args + 1, subArgCount * sizeof(VMValue));
 
     // SDL_DetachThread
-    SDL_CreateThread(_Thread_RunEvent, "_Thread_RunEvent", bundle);
+    SDL_Thread* thread = SDL_CreateThread(_Thread_RunEvent, "_Thread_RunEvent", bundle);
+    if (thread == NULL) {
+        // The callback will never run, so nothing is going to free the bundle
+        // it was handed. Worth saying out loud: in a browser SDL has no threads
+        // to give unless the page was built and served for them, so this is how
+        // that shows up rather than as a script that quietly does nothing.
+        Log::Print(Log::LOG_ERROR, "Could not start a thread: %s", SDL_GetError());
+        ScriptManager::ThreadCount--;
+        free(bundle);
+    }
 
     return NULL_VAL;
 }

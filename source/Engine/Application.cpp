@@ -78,6 +78,10 @@ extern "C" {
 }
 #endif
 
+#ifdef EMSCRIPTEN
+    #include <emscripten.h>
+#endif
+
 #ifdef MSYS
     #if !defined(_CRT_SECURE_NO_WARNINGS)
         #define _CRT_SECURE_NO_WARNINGS
@@ -91,6 +95,8 @@ extern "C" {
 // Windows first would call an Xbox a PC.
 #if   XBOX
     Platforms Application::Platform = Platforms::Xbox;
+#elif EMSCRIPTEN
+    Platforms Application::Platform = Platforms::Web;
 #elif WIN32
     Platforms Application::Platform = Platforms::Windows;
 #elif MACOSX
@@ -435,7 +441,14 @@ PUBLIC STATIC void Application::Init(int argc, char* args[]) {
 
     Application::ParseCommandLineArgs();
 
-    Application::InitSettings("config.ini");
+    // In a browser the working directory is a filesystem that goes away with
+    // the tab. /save is the one mounted from IndexedDB, so settings written
+    // there are still around on the next visit -- see meta/web/shell.html.
+    #ifdef EMSCRIPTEN
+        Application::InitSettings("/save/config.ini");
+    #else
+        Application::InitSettings("config.ini");
+    #endif
 
     Graphics::ChooseBackend();
 
@@ -502,6 +515,8 @@ PUBLIC STATIC void Application::Init(int argc, char* args[]) {
             platform = "Android"; break;
         case Platforms::iOS:
             platform = "iOS"; break;
+        case Platforms::Web:
+            platform = "Web"; break;
         default:
             platform = "Unknown"; break;
     }
@@ -1582,6 +1597,72 @@ PRIVATE STATIC void Application::DelayFrame() {
         Clock::Delay(1);
     }
 }
+// One turn of the main loop, without the waiting. Desktop calls this and then
+// paces itself; the browser calls it from a callback and is paced by the
+// display, so the two need the same body but not the same loop around it.
+PRIVATE STATIC void Application::RunLoopIteration() {
+    if (BenchmarkFrameCount == 0)
+        BenchmarkTickStart = Clock::GetTicks();
+
+    Application::RunFrame(NULL);
+
+    BenchmarkFrameCount++;
+    if (BenchmarkFrameCount == TargetFPS) {
+        double measuredSecond = Clock::GetTicks() - BenchmarkTickStart;
+        FPS = 1000.0 / floor(measuredSecond) * TargetFPS;
+        BenchmarkFrameCount = 0;
+    }
+
+    if (AutomaticPerformanceSnapshots && MetricFrameTime > AutomaticPerformanceSnapshotFrameTimeThreshold) {
+        if (Clock::GetTicks() - AutomaticPerformanceSnapshotLastTime > AutomaticPerformanceSnapshotMinInterval) {
+            AutomaticPerformanceSnapshotLastTime = Clock::GetTicks();
+            TakeSnapshot = true;
+        }
+    }
+
+    if (TakeSnapshot) {
+        TakeSnapshot = false;
+        Application::GetPerformanceSnapshot();
+    }
+}
+
+PRIVATE STATIC void Application::Shutdown() {
+    Studio::Dispose();
+
+    Scene::Dispose();
+
+    if (DEBUG_fontSprite) {
+        DEBUG_fontSprite->Dispose();
+        delete DEBUG_fontSprite;
+        DEBUG_fontSprite = NULL;
+    }
+
+    Application::Cleanup();
+
+    Memory::PrintLeak();
+}
+
+#ifdef EMSCRIPTEN
+// The browser owns the loop. A page that spun on its own would never hand
+// control back, and nothing it drew would ever reach the screen.
+PRIVATE STATIC void Application::RunWebFrame() {
+    if (!Running) {
+        emscripten_cancel_main_loop();
+        Application::Shutdown();
+
+        // A tab cannot close itself, so the page is left holding the last frame
+        // drawn. Saying so beats leaving it looking like the engine hung.
+        EM_ASM({
+            if (typeof Module !== 'undefined' && Module.setStatus)
+                Module.setStatus('The engine has shut down. Reload to start it again.');
+        });
+        return;
+    }
+
+    Application::RunLoopIteration();
+}
+#endif
+
 PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     Application::Init(argc, args);
     if (!Running)
@@ -1607,54 +1688,27 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     Graphics::Clear();
     Graphics::Present();
 
-    #ifdef IOS
+    #if defined(IOS)
         // Initialize the Game Center for scoring and matchmaking
         // InitGameCenter();
 
         // Set up the game to run in the window animation callback on iOS
         // so that Game Center and so forth works correctly.
         SDL_iPhoneSetAnimationCallback(Application::Window, 1, RunFrame, NULL);
+    #elif defined(EMSCRIPTEN)
+        // A frame rate of 0 asks for requestAnimationFrame, which paces the
+        // page against the display rather than against a timer, so the engine
+        // does not delay for itself here. The second argument makes this call
+        // never return, which is what leaves the runtime alive to be called
+        // back into.
+        emscripten_set_main_loop(Application::RunWebFrame, 0, 1);
     #else
         while (Running) {
-            if (BenchmarkFrameCount == 0)
-                BenchmarkTickStart = Clock::GetTicks();
-
-            Application::RunFrame(NULL);
+            Application::RunLoopIteration();
             Application::DelayFrame();
-
-            BenchmarkFrameCount++;
-            if (BenchmarkFrameCount == TargetFPS) {
-                double measuredSecond = Clock::GetTicks() - BenchmarkTickStart;
-                FPS = 1000.0 / floor(measuredSecond) * TargetFPS;
-                BenchmarkFrameCount = 0;
-            }
-
-            if (AutomaticPerformanceSnapshots && MetricFrameTime > AutomaticPerformanceSnapshotFrameTimeThreshold) {
-                if (Clock::GetTicks() - AutomaticPerformanceSnapshotLastTime > AutomaticPerformanceSnapshotMinInterval) {
-                    AutomaticPerformanceSnapshotLastTime = Clock::GetTicks();
-                    TakeSnapshot = true;
-                }
-            }
-
-            if (TakeSnapshot) {
-                TakeSnapshot = false;
-                Application::GetPerformanceSnapshot();
-            }
         }
 
-        Studio::Dispose();
-
-        Scene::Dispose();
-
-        if (DEBUG_fontSprite) {
-            DEBUG_fontSprite->Dispose();
-            delete DEBUG_fontSprite;
-            DEBUG_fontSprite = NULL;
-        }
-
-        Application::Cleanup();
-
-        Memory::PrintLeak();
+        Application::Shutdown();
     #endif
 }
 
@@ -1910,6 +1964,13 @@ PUBLIC STATIC void Application::InitSettings(const char* filename) {
 
     // NOTE: If no settings could be loaded, create settings with default values.
     if (!Application::Settings) {
+        // LoadSettings only records the name of a file it managed to read, and
+        // on a first run there is nothing to read yet. Without this the fresh
+        // settings are given an empty filename, and saving them later writes
+        // nowhere -- the editor's Save Settings button appeared to do nothing
+        // until a config.ini already existed.
+        Application::SetSettingsFilename(filename);
+
         Application::Settings = INI::New(Application::SettingsFile);
 
         Application::Settings->SetBool("display", "fullscreen", false);

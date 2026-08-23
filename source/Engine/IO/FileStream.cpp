@@ -5,6 +5,7 @@ class FileStream : public Stream {
 public:
     FILE*  f;
     size_t size;
+    bool   Persistent = false;
     enum {
         READ_ACCESS = 0,
         WRITE_ACCESS = 1,
@@ -23,6 +24,10 @@ public:
 extern "C" {
     #include <Engine/Platforms/MacOS/Filesystem.h>
 }
+#endif
+
+#ifdef EMSCRIPTEN
+#include <Engine/Includes/WebStorage.h>
 #endif
 
 PUBLIC STATIC FileStream* FileStream::New(const char* filename, Uint32 access) {
@@ -115,6 +120,17 @@ PUBLIC STATIC FileStream* FileStream::New(const char* filename, Uint32 access) {
             snprintf(documentPath, 256, "%s\\%s", saveDataPath, filename);
             stream->f = fopen(documentPath, accessString);
         }
+    #elif defined(EMSCRIPTEN)
+        if (access & (FileStream::SAVEGAME_ACCESS | FileStream::PREFERENCES_ACCESS)) {
+            if (!Directory::Exists(WEB_SAVE_PATH))
+                Directory::Create(WEB_SAVE_PATH);
+
+            char documentPath[256];
+            snprintf(documentPath, 256, "%s/%s", WEB_SAVE_PATH, filename);
+            stream->f = fopen(documentPath, accessString);
+
+            stream->Persistent = stream->f != NULL;
+        }
     #elif defined(SWITCH)
         if (access & FileStream::SAVEGAME_ACCESS) {
             // Saves in Saves/
@@ -134,6 +150,14 @@ PUBLIC STATIC FileStream* FileStream::New(const char* filename, Uint32 access) {
     if (!stream->f)
         goto FREE;
 
+    #ifdef EMSCRIPTEN
+    // The branch above sets this for the paths it builds. A caller naming a
+    // path under the mount directly -- which is how settings are opened -- gets
+    // here instead, so the name it asked for is checked too.
+    if (!stream->Persistent)
+        stream->Persistent = WebStorage_IsPersistent(filename);
+    #endif
+
     fseek(stream->f, 0, SEEK_END);
     stream->size = ftell(stream->f);
     fseek(stream->f, 0, SEEK_SET);
@@ -148,6 +172,12 @@ PUBLIC STATIC FileStream* FileStream::New(const char* filename, Uint32 access) {
 PUBLIC        void        FileStream::Close() {
     fclose(f);
     f = NULL;
+
+    #ifdef EMSCRIPTEN
+    if (Persistent)
+        WebStorage_Flush();
+    #endif
+
     Stream::Close();
 }
 PUBLIC        void        FileStream::Seek(Sint64 offset) {

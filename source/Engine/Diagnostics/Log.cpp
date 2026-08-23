@@ -75,6 +75,9 @@ PUBLIC STATIC void Log::Init() {
         }
     #endif
 
+    // Emscripten is left out on purpose. Its filesystem is a page-lifetime one,
+    // so a log file there is written and then thrown away when the tab closes;
+    // the console the messages already go to is where a browser is read anyway.
     #if WIN32 || MACOSX || LINUX || SWITCH || XBOX
     WriteToFile = true;
     #endif

@@ -5,6 +5,7 @@
 class SDLStream : public Stream {
 public:
     SDL_RWops* f;
+    bool       Persistent = false;
     enum {
         READ_ACCESS = 0,
         WRITE_ACCESS = 1,
@@ -14,6 +15,10 @@ public:
 #endif
 
 #include <Engine/IO/SDLStream.h>
+
+#ifdef EMSCRIPTEN
+#include <Engine/Includes/WebStorage.h>
+#endif
 
 PUBLIC STATIC SDLStream* SDLStream::New(const char* filename, Uint32 access) {
     SDLStream* stream = new SDLStream;
@@ -33,6 +38,12 @@ PUBLIC STATIC SDLStream* SDLStream::New(const char* filename, Uint32 access) {
     if (!stream->f)
         goto FREE;
 
+    #ifdef EMSCRIPTEN
+    // Settings are written through this one, and in a browser they are written
+    // to the directory that outlives the tab.
+    stream->Persistent = WebStorage_IsPersistent(filename);
+    #endif
+
     return stream;
 
     FREE:
@@ -43,6 +54,12 @@ PUBLIC STATIC SDLStream* SDLStream::New(const char* filename, Uint32 access) {
 PUBLIC        void        SDLStream::Close() {
     SDL_RWclose(f);
     f = NULL;
+
+    #ifdef EMSCRIPTEN
+    if (Persistent)
+        WebStorage_Flush();
+    #endif
+
     Stream::Close();
 }
 PUBLIC        void        SDLStream::Seek(Sint64 offset) {
