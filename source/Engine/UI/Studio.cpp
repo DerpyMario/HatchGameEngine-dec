@@ -26,6 +26,8 @@ public:
 #include <Engine/InputManager.h>
 #include <Engine/Scene.h>
 #include <Engine/Exporters/MegaDriveExporter.h>
+#include <Engine/Exporters/Sega32XExporter.h>
+#include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Audio/AudioManager.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
@@ -99,9 +101,9 @@ static int  PendingValueB = 0;
 
 static int  CurrentTab = STUDIO_TAB_PROJECT;
 
-// Where the Mega Drive export writes to. Relative paths land beside the
-// project, which is where someone would look for it.
-static char MegaDrivePath[512] = "MegaDrive";
+// Where a SEGA export writes to. Relative paths land beside the project, which
+// is where someone would look for it.
+static char SegaExportPath[512] = "SegaExport";
 static bool Initialized = false;
 
 // Project browser.
@@ -1052,23 +1054,41 @@ PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bo
             SceneFilesScanned = false;
 
         UICore::Separator();
-        UICore::Heading("Export For Mega Drive");
+        UICore::Heading("Export For SEGA");
 
         if (!Scene::CurrentScene[0])
             UICore::Text("Load a scene to export it.", UI_COL_TEXT_FAINT);
         else {
-            UICore::TextField("Folder", MegaDrivePath, sizeof(MegaDrivePath));
+            UICore::TextField("Folder", SegaExportPath, sizeof(SegaExportPath));
 
-            if (UICore::Button("Export Mega Drive Project")) {
-                MegaDriveExportResult exported = MegaDriveExporter::ExportScene(MegaDrivePath);
+            // Genesis is not offered separately: it is the Mega Drive under its
+            // North American name, the same machine down to the VDP.
+            if (UICore::Button("Mega Drive / Genesis")) {
+                MegaDriveExportResult exported = MegaDriveExporter::ExportScene(SegaExportPath);
 
                 Studio::SetStatus("%s", exported.Message);
                 Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
             }
 
-            UICore::Text("Writes an SGDK project: the scene's tiles, palettes", UI_COL_TEXT_FAINT);
-            UICore::Text("and map, in the forms the VDP reads. Build it with", UI_COL_TEXT_FAINT);
-            UICore::Text("SGDK to get a ROM. Game logic does not come across.", UI_COL_TEXT_FAINT);
+            if (UICore::Button("32X")) {
+                Sega32XExportResult exported = Sega32XExporter::ExportScene(SegaExportPath);
+
+                Studio::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            if (UICore::Button("Mega CD")) {
+                MegaCDExportResult exported = MegaCDExporter::ExportScene(SegaExportPath);
+
+                Studio::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            UICore::Text("Writes a project that builds into a cartridge or a", UI_COL_TEXT_FAINT);
+            UICore::Text("disc. The Mega Drive and Mega CD get the scene as", UI_COL_TEXT_FAINT);
+            UICore::Text("tiles for their VDP; the 32X has a framebuffer, so", UI_COL_TEXT_FAINT);
+            UICore::Text("it gets it drawn, with far more colour. Game logic", UI_COL_TEXT_FAINT);
+            UICore::Text("does not come across to any of them.", UI_COL_TEXT_FAINT);
         }
 
         UICore::Separator();

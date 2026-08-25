@@ -14,6 +14,9 @@ public:
     static INI*        Settings;
     static char        SettingsFile[4096];
     static string      MegaDriveExportPath;
+    static string      Sega32XExportPath;
+    static string      Sega32XRuntimePath;
+    static string      MegaCDExportPath;
 
     static XMLNode*    GameConfig;
 
@@ -69,6 +72,8 @@ public:
 #include <Engine/TextFormats/XML/XMLNode.h>
 #include <Engine/UI/Studio.h>
 #include <Engine/Exporters/MegaDriveExporter.h>
+#include <Engine/Exporters/Sega32XExporter.h>
+#include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Utilities/StringUtils.h>
 
 #include <Engine/Media/MediaSource.h>
@@ -120,6 +125,9 @@ extern "C" {
 INI*        Application::Settings = NULL;
 char        Application::SettingsFile[4096];
 string      Application::MegaDriveExportPath;
+string      Application::Sega32XExportPath;
+string      Application::Sega32XRuntimePath;
+string      Application::MegaCDExportPath;
 
 XMLNode*    Application::GameConfig = NULL;
 
@@ -298,6 +306,11 @@ PRIVATE STATIC void Application::PrintCommandLineUsage() {
     printf("  --studio                Open the editor on startup.\n");
     printf("  --export-megadrive <p>  Convert the loaded scene into a Mega Drive\n");
     printf("                          project under <p> and exit. Needs --scene.\n");
+    printf("                          --export-genesis is the same machine.\n");
+    printf("  --export-32x <p>        The same, for the SEGA 32X.\n");
+    printf("  --export-megacd <p>     The same, for the SEGA Mega CD.\n");
+    printf("  --32x-runtime <p>       Where meta/32x/runtime is, when it is not\n");
+    printf("                          beside the engine or the working directory.\n");
     printf("  --help                  Show this text.\n\n");
     printf("With no arguments the editor opens if there is no game to run.\n");
 }
@@ -344,12 +357,39 @@ PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, siz
         return i + 1;
     }
 
-    if (arg == "--export-megadrive") {
+    if (arg == "--export-megadrive" || arg == "--export-genesis") {
         std::string outputPath = Application::GetCmdLineOption(i + 1);
         if (!outputPath.size())
             return i;
 
         MegaDriveExportPath = outputPath;
+        return i + 1;
+    }
+
+    if (arg == "--32x-runtime") {
+        std::string runtimePath = Application::GetCmdLineOption(i + 1);
+        if (!runtimePath.size())
+            return i;
+
+        Sega32XRuntimePath = runtimePath;
+        return i + 1;
+    }
+
+    if (arg == "--export-megacd" || arg == "--export-segacd") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        if (!outputPath.size())
+            return i;
+
+        MegaCDExportPath = outputPath;
+        return i + 1;
+    }
+
+    if (arg == "--export-32x") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        if (!outputPath.size())
+            return i;
+
+        Sega32XExportPath = outputPath;
         return i + 1;
     }
 
@@ -1699,6 +1739,26 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     if (Application::MegaDriveExportPath.size()) {
         MegaDriveExportResult exported =
             MegaDriveExporter::ExportScene(Application::MegaDriveExportPath.c_str());
+
+        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
+
+    if (Application::Sega32XExportPath.size()) {
+        Sega32XExportResult exported =
+            Sega32XExporter::ExportScene(Application::Sega32XExportPath.c_str());
+
+        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
+
+    if (Application::MegaCDExportPath.size()) {
+        MegaCDExportResult exported =
+            MegaCDExporter::ExportScene(Application::MegaCDExportPath.c_str());
 
         Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
 

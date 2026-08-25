@@ -264,6 +264,8 @@ one self-contained application for every target:
 | `HatchGameEngine-xbox` | A `default.xbe` for the original Xbox |
 | `HatchGameEngine-web` | A page -- `index.html`, `index.js`, `index.wasm` -- to drop on any static host |
 | `HatchGameEngine-megadrive-sample-rom` | A Mega Drive ROM built from the sample scene, proving the exporter still works |
+| `HatchGameEngine-32x-sample-rom` | A 32X ROM built from the same scene |
+| `HatchGameEngine-megacd-sample-iso` | A Mega CD disc image built from the same scene |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -276,9 +278,12 @@ The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
 the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
 produce is a title and a web page rather than an application. See below.
 
-The Mega Drive job is not a build of the engine at all -- the engine does not run
-on that hardware. It checks the export the other way round: that a scene still
-converts into a project SGDK compiles into a ROM that boots.
+The three SEGA jobs are not builds of the engine at all -- it does not run on any
+of that hardware. They check the export the other way round: that a scene still
+converts into a project which builds into a ROM or a disc. The Mega Drive job
+goes further and reads its own output back, rebuilding the picture from the
+palette, patterns and nametable and comparing it against the tileset and map it
+came from.
 
 ## Building
 ### Windows
@@ -377,7 +382,11 @@ What is different in a browser:
 
 The engine's browser code is reached with `#if EMSCRIPTEN`.
 
-### SEGA Mega Drive
+### SEGA Mega Drive / Genesis
+
+Genesis is the Mega Drive under its North American name -- the same machine down
+to the VDP -- so there is one export for both, and `--export-genesis` is an alias
+for `--export-megadrive`.
 
 The engine does not run on a Mega Drive, and cannot be made to. Its memory pools
 ask for 22 MiB where the machine has 64 KB of work RAM -- some three hundred and
@@ -445,6 +454,92 @@ export says so.
 Only the first visible tile layer is converted. The second plane and the sprite
 engine are where the rest would go, and that is a game rather than a conversion.
 
+### SEGA 32X
+
+The 32X is the one machine in this family that does not want tiles. It adds two
+SH-2s and a VDP of its own with 256 KB held as two framebuffers, and in
+packed-pixel mode it reads one byte per pixel straight out of one. So the export
+draws the scene rather than taking it apart, which is both closer to what the
+engine does and keeps far more of the art: fifteen bits of colour against the
+Mega Drive's nine, and 255 of them on screen at once against 61.
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --scene Scenes/Level1.tmx \
+                --export-32x path/to/output
+```
+
+What comes out:
+
+| File | What it holds |
+| --- | --- |
+| `res/palette.bin` | 256 colour words, fifteen bits each, five per channel |
+| `res/image.bin` | the scene as a picture, one byte a pixel |
+| `sh_src/m_main.c` | the SH-2 program that shows it and scrolls it |
+| `sh_src/cart_header.inc` | the cartridge header, carrying the scene's name |
+| `md_src/`, `sh_src/mars*` | the startup every 32X program needs |
+
+The startup comes from the 32X skeleton in
+[Marsdev](https://github.com/andwn/marsdev), under the MIT licence, and is kept
+in `meta/32x/runtime` so an export is a complete project rather than a pile of
+data needing a skeleton found for it. The exporter copies it in. When the engine
+is run from somewhere that has no `meta/` beside it, `--32x-runtime` says where
+it is.
+
+Building needs an SH-2 compiler and an m68k one. Marsdev supplies both:
+
+```sh
+cd path/to/output
+export MARSDEV=/path/to/mars
+make
+```
+
+A distribution's own cross compilers work too, if they are named:
+
+```sh
+make SHBIN= MDBIN= SHPREFIX=sh-elf- MDPREFIX=m68k-linux-gnu-
+```
+
+`out/rom.32x` is the result. It needs an emulator that does 32X -- PicoDrive,
+Ares and Kega Fusion do; Genesis Plus GX does not.
+
+Nothing packages a bare-metal SH-2 compiler, and a distribution's SH toolchain is
+usually configured for a little-endian SH-4 and will refuse `-m2`. The CI job
+builds one and caches it; `.github/workflows/cmake-multi-platform.yml` has the
+recipe.
+
+### SEGA Mega CD
+
+The Mega CD adds a second 68000, half a megabyte of RAM and a disc drive to a
+Mega Drive. It adds no graphics hardware at all, so the art is converted exactly
+as the cartridge export converts it -- the same code, in `SegaVDPConverter` --
+and what the disc changes is only that the art no longer has to be inside the
+program to reach the VDP.
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --scene Scenes/Level1.tmx \
+                --export-megacd path/to/output
+```
+
+That writes a [Megadev](https://github.com/drojaazu/megadev) project: an initial
+program, a sub program, the art as one file for the disc, and a cue sheet.
+
+```sh
+cd path/to/output
+make MEGADEV_PATH=/path/to/megadev
+```
+
+`hatch.iso` is the result. Megadev builds it with an m68k cross compiler and
+mkisofs, both of which most distributions package.
+
+The disc image is checked as far as it can be here: it carries the
+`SEGADISCSYSTEM` signature the BIOS looks for, its header and region codes are
+in place, the art is in the ISO filesystem, and those bytes are identical to the
+ones the pixel-verified cartridge export produces. What is **not** checked is
+that it boots -- that needs the console's BIOS, which is Sega's firmware and not
+something this repository will go and find.
+
 ## Dependecies
 Required:
 - SDL2 (https://www.libsdl.org/)
@@ -455,6 +550,8 @@ Required:
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 - [Emscripten](https://emscripten.org/) (for WebAssembly building)
 - [SGDK](https://github.com/Stephane-D/SGDK) (to build the Mega Drive export into a ROM)
+- [Marsdev](https://github.com/andwn/marsdev) (to build the 32X export into a ROM)
+- [Megadev](https://github.com/drojaazu/megadev) (to build the Mega CD export into a disc image)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)
