@@ -428,3 +428,108 @@ jobs:
           name: HatchGameEngine-web
           path: HatchGameEngine-web.tar.gz
           if-no-files-found: error
+
+  megadrive:
+    # Not a build of the engine -- it does not run on a Mega Drive and cannot be
+    # made to. This checks the other direction: that the exporter still turns a
+    # scene into a project SGDK compiles into a ROM that boots.
+    name: Mega Drive (export)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # m68k-linux-gnu is a Linux-targeted cross compiler rather than the
+      # m68k-elf one SGDK expects, but the instruction set is the same and
+      # nothing here uses the parts that differ -- the ROM is linked freestanding
+      # against SGDK's own script.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake default-jre-headless \
+            gcc-m68k-linux-gnu binutils-m68k-linux-gnu \
+            xvfb libglew-dev libgl1-mesa-dev libsdl2-dev
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel
+
+      - name: Check out SGDK
+        run: git clone --depth 1 https://github.com/Stephane-D/SGDK.git "${GITHUB_WORKSPACE}/sgdk"
+
+      # SGDK ships these as Windows binaries and builds them from source
+      # everywhere else. Its library needs them before it will build.
+      - name: Build SGDK
+        run: |
+          sgdk="${GITHUB_WORKSPACE}/sgdk"
+          mkdir -p "${GITHUB_WORKSPACE}/mdbin"
+
+          for tool in sjasm bintos; do
+            cmake -S "${sgdk}/tools/${tool}" -B "build-${tool}" \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+            cmake --build "build-${tool}" --parallel
+            find "build-${tool}" -maxdepth 2 -type f -executable -name "${tool}*" \
+              -exec cp {} "${GITHUB_WORKSPACE}/mdbin/" \;
+          done
+
+          make -C "${sgdk}/tools/convsym" --jobs $(nproc)
+          find "${sgdk}/tools/convsym" -name convsym -type f -executable \
+            -exec cp {} "${GITHUB_WORKSPACE}/mdbin/" \;
+
+          PATH="${GITHUB_WORKSPACE}/mdbin:${PATH}" \
+            make -C "${sgdk}" -f makelib.gen release PREFIX=m68k-linux-gnu- GDK=.
+
+      - name: Export the sample scene
+        run: |
+          # The engine creates its textures through a renderer, so it wants a
+          # display even when all it is being asked for is a conversion.
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/sample.tmx \
+              --export-megadrive "${GITHUB_WORKSPACE}/mdexport"
+
+          for part in res/tiles.bin res/map.bin res/palette.bin res/resources.res src/main.c Makefile; do
+            if [ ! -s "${GITHUB_WORKSPACE}/mdexport/${part}" ]; then
+              echo "the exporter did not write ${part}"
+              exit 1
+            fi
+          done
+
+      - name: Build the ROM
+        run: |
+          cd "${GITHUB_WORKSPACE}/mdexport"
+
+          # Ubuntu's gcc adds a build-id note that lands on top of the ROM's
+          # own vectors in SGDK's linker script. The m68k-elf toolchain SGDK
+          # normally uses does not, so this is only needed here.
+          PATH="${GITHUB_WORKSPACE}/mdbin:${PATH}" GDK="${GITHUB_WORKSPACE}/sgdk" \
+            make -f "${GITHUB_WORKSPACE}/sgdk/makefile.gen" \
+              PREFIX=m68k-linux-gnu- \
+              CC='m68k-linux-gnu-gcc -Wl,--build-id=none'
+
+          rom=out/rom.bin
+          if [ ! -s "${rom}" ]; then
+            echo "no ROM was produced"
+            exit 1
+          fi
+
+          # A cartridge names the console at 0x100. If that is not there, what
+          # came out is not something a Mega Drive would run.
+          if ! dd if="${rom}" bs=1 skip=256 count=16 2>/dev/null | grep -q "SEGA"; then
+            echo "the ROM has no SEGA signature at 0x100"
+            exit 1
+          fi
+
+          echo "ROM: $(stat -c%s "${rom}") bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-megadrive-sample-rom
+          path: mdexport/out/rom.bin
+          if-no-files-found: error
