@@ -25,6 +25,7 @@ public:
 #include <Engine/Graphics.h>
 #include <Engine/InputManager.h>
 #include <Engine/Scene.h>
+#include <Engine/Exporters/MegaDriveExporter.h>
 #include <Engine/Audio/AudioManager.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
@@ -97,6 +98,10 @@ static int  PendingValueA = 0;
 static int  PendingValueB = 0;
 
 static int  CurrentTab = STUDIO_TAB_PROJECT;
+
+// Where the Mega Drive export writes to. Relative paths land beside the
+// project, which is where someone would look for it.
+static char MegaDrivePath[512] = "MegaDrive";
 static bool Initialized = false;
 
 // Project browser.
@@ -1045,6 +1050,26 @@ PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bo
 
         if (UICore::Button("Rescan Scene Files"))
             SceneFilesScanned = false;
+
+        UICore::Separator();
+        UICore::Heading("Export For Mega Drive");
+
+        if (!Scene::CurrentScene[0])
+            UICore::Text("Load a scene to export it.", UI_COL_TEXT_FAINT);
+        else {
+            UICore::TextField("Folder", MegaDrivePath, sizeof(MegaDrivePath));
+
+            if (UICore::Button("Export Mega Drive Project")) {
+                MegaDriveExportResult exported = MegaDriveExporter::ExportScene(MegaDrivePath);
+
+                Studio::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            UICore::Text("Writes an SGDK project: the scene's tiles, palettes", UI_COL_TEXT_FAINT);
+            UICore::Text("and map, in the forms the VDP reads. Build it with", UI_COL_TEXT_FAINT);
+            UICore::Text("SGDK to get a ROM. Game logic does not come across.", UI_COL_TEXT_FAINT);
+        }
 
         UICore::Separator();
         UICore::Heading("New Scene");

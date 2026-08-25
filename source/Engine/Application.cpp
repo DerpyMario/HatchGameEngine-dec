@@ -13,6 +13,7 @@ class Application {
 public:
     static INI*        Settings;
     static char        SettingsFile[4096];
+    static string      MegaDriveExportPath;
 
     static XMLNode*    GameConfig;
 
@@ -67,6 +68,7 @@ public:
 #include <Engine/TextFormats/XML/XMLParser.h>
 #include <Engine/TextFormats/XML/XMLNode.h>
 #include <Engine/UI/Studio.h>
+#include <Engine/Exporters/MegaDriveExporter.h>
 #include <Engine/Utilities/StringUtils.h>
 
 #include <Engine/Media/MediaSource.h>
@@ -117,6 +119,7 @@ extern "C" {
 
 INI*        Application::Settings = NULL;
 char        Application::SettingsFile[4096];
+string      Application::MegaDriveExportPath;
 
 XMLNode*    Application::GameConfig = NULL;
 
@@ -293,6 +296,8 @@ PRIVATE STATIC void Application::PrintCommandLineUsage() {
     printf("  --scene <path>          Load this scene at startup, relative to\n");
     printf("                          the Resources folder.\n");
     printf("  --studio                Open the editor on startup.\n");
+    printf("  --export-megadrive <p>  Convert the loaded scene into a Mega Drive\n");
+    printf("                          project under <p> and exit. Needs --scene.\n");
     printf("  --help                  Show this text.\n\n");
     printf("With no arguments the editor opens if there is no game to run.\n");
 }
@@ -336,6 +341,15 @@ PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, siz
             return i;
 
         SceneToLoad = scenePath;
+        return i + 1;
+    }
+
+    if (arg == "--export-megadrive") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        if (!outputPath.size())
+            return i;
+
+        MegaDriveExportPath = outputPath;
         return i + 1;
     }
 
@@ -1678,6 +1692,19 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     Scene::Restart();
     Application::UpdateWindowTitle();
     Application::SetWindowSize(Application::WindowWidth, Application::WindowHeight);
+
+    // Asked to convert rather than to run. The scene is loaded by this point,
+    // which is all the exporter needs, so it happens here and the engine stops
+    // without ever opening on anything.
+    if (Application::MegaDriveExportPath.size()) {
+        MegaDriveExportResult exported =
+            MegaDriveExporter::ExportScene(Application::MegaDriveExportPath.c_str());
+
+        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
 
     // Launched with nothing to run -- no scene, no project. Rather than sitting
     // on an empty window, open the editor so there is something to click.

@@ -263,6 +263,7 @@ one self-contained application for every target:
 | `HatchGameEngine-linux-aarch64` | A single executable |
 | `HatchGameEngine-xbox` | A `default.xbe` for the original Xbox |
 | `HatchGameEngine-web` | A page -- `index.html`, `index.js`, `index.wasm` -- to drop on any static host |
+| `HatchGameEngine-megadrive-sample-rom` | A Mega Drive ROM built from the sample scene, proving the exporter still works |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -274,6 +275,10 @@ wraps artifacts in -- does not carry the executable bit.
 The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
 the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
 produce is a title and a web page rather than an application. See below.
+
+The Mega Drive job is not a build of the engine at all -- the engine does not run
+on that hardware. It checks the export the other way round: that a scene still
+converts into a project SGDK compiles into a ROM that boots.
 
 ## Building
 ### Windows
@@ -372,6 +377,74 @@ What is different in a browser:
 
 The engine's browser code is reached with `#if EMSCRIPTEN`.
 
+### SEGA Mega Drive
+
+The engine does not run on a Mega Drive, and cannot be made to. Its memory pools
+ask for 22 MiB where the machine has 64 KB of work RAM -- some three hundred and
+fifty times over on that alone -- and its software rasteriser wants a framebuffer
+where the VDP offers a grid of tiles and nothing to draw into. Nor could the
+scripting come across: Hatch games are bytecode for a VM that would have to be
+rewritten for a 68000 and then would not fit.
+
+What does cross over is the art, and that is the part that is tedious to redo by
+hand. The engine converts a scene into the three things the VDP reads directly
+and writes an [SGDK](https://github.com/Stephane-D/SGDK) project around them:
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --scene Scenes/Level1.tmx \
+                --export-megadrive path/to/output
+```
+
+The editor has the same thing under **Scenes → Export For Mega Drive**. There is
+a sample scene in `meta/megadrive/sample` to try it on.
+
+What comes out:
+
+| File | What it holds |
+| --- | --- |
+| `res/palette.bin` | up to four palettes of fifteen colours, as 9-bit VDP colour words |
+| `res/tiles.bin` | the unique 8x8 patterns, four bits per pixel, 32 bytes each |
+| `res/map.bin` | the nametable: tile index, palette, and a flip bit per axis |
+| `res/resources.res` | the script that turns those into arrays SGDK can reach |
+| `src/main.c` | a program that shows the scene and scrolls it with the pad |
+| `Makefile` | points at SGDK's own |
+
+Build it with SGDK, and `out/rom.bin` runs on hardware or in any emulator:
+
+```sh
+cd path/to/output
+export GDK=/path/to/SGDK
+make
+```
+
+Three properties of the hardware shape the conversion, and are worth knowing
+before wondering why the output looks the way it does:
+
+**Colour is nine bits** -- three per channel, 512 possible. Everything is
+rounded into that before it is counted, so two source colours that differ only
+below that become one.
+
+**A nametable entry names one palette for the whole tile.** Palettes cannot be
+handed out by how common a colour is across the layer, because a tile whose
+colours are split across two of them cannot be drawn at all. They are fitted
+tile by tile instead, opening new palettes while the hardware has any left. Art
+drawn within the machine's limits comes through untouched; art that was not gets
+its overflowing colours matched to the nearest that fit, and the export says how
+many.
+
+**A tile carries a flip bit per axis**, so a mirrored tile costs nothing beyond
+the entry naming it. Every pattern is checked against those already emitted in
+all four orientations before more VRAM is spent on it. In the sample scene that
+turns 4096 cells into 11 tiles.
+
+The plane is at most 64x64 cells, or 128x32 -- the VDP will not take more. A
+layer larger than that is exported as much as fits, from the top left, and the
+export says so.
+
+Only the first visible tile layer is converted. The second plane and the sprite
+engine are where the rest would go, and that is a game rather than a conversion.
+
 ## Dependecies
 Required:
 - SDL2 (https://www.libsdl.org/)
@@ -381,6 +454,7 @@ Required:
 - devKitPro (for Nintendo Switch/3DS homebrew building) (wip)
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 - [Emscripten](https://emscripten.org/) (for WebAssembly building)
+- [SGDK](https://github.com/Stephane-D/SGDK) (to build the Mega Drive export into a ROM)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)
