@@ -484,21 +484,42 @@ jobs:
           PATH="${GITHUB_WORKSPACE}/mdbin:${PATH}" \
             make -C "${sgdk}" -f makelib.gen release PREFIX=m68k-linux-gnu- GDK=.
 
-      - name: Export the sample scene
+      - name: Export the sample scenes
         run: |
           # The engine creates its textures through a renderer, so it wants a
           # display even when all it is being asked for is a conversion.
-          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
-            ./build/HatchGameEngine-Release \
-              --project-dir meta/megadrive/sample \
-              --scene Scenes/sample.tmx \
-              --export-megadrive "${GITHUB_WORKSPACE}/mdexport"
+          #
+          # Both scenes, not just one. sample.tmx is 32 columns across and
+          # wide.tmx is 40, and a layer's rows are stored as far apart as the
+          # next power of two above its width -- so only the second of them
+          # catches a converter that walks the layer by its width instead.
+          for scene in sample wide; do
+            xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+              ./build/HatchGameEngine-Release \
+                --project-dir meta/megadrive/sample \
+                --scene "Scenes/${scene}.tmx" \
+                --export-megadrive "${GITHUB_WORKSPACE}/mdexport-${scene}"
+          done
 
           for part in res/tiles.bin res/map.bin res/palette.bin res/resources.res src/main.c Makefile; do
-            if [ ! -s "${GITHUB_WORKSPACE}/mdexport/${part}" ]; then
+            if [ ! -s "${GITHUB_WORKSPACE}/mdexport-sample/${part}" ]; then
               echo "the exporter did not write ${part}"
               exit 1
             fi
+          done
+
+          ln -s "${GITHUB_WORKSPACE}/mdexport-sample" "${GITHUB_WORKSPACE}/mdexport"
+
+      # Reads the export back and rebuilds the picture from it, then compares
+      # that against the tileset and map it came from. Checking that a ROM
+      # builds only says the bytes are well formed; this says they are right.
+      - name: Check the export against the art it was made from
+        run: |
+          for scene in sample wide; do
+            python3 tools/verify-megadrive-export.py \
+              "${GITHUB_WORKSPACE}/mdexport-${scene}" \
+              meta/megadrive/sample/Resources/Scenes \
+              "${scene}.tmx"
           done
 
       - name: Build the ROM
@@ -532,4 +553,236 @@ jobs:
         with:
           name: HatchGameEngine-megadrive-sample-rom
           path: mdexport/out/rom.bin
+          if-no-files-found: error
+
+  megacd:
+    # Not a build of the engine either. The Mega CD adds a second 68000, half a
+    # megabyte of RAM and a disc drive to a Mega Drive, which still leaves it
+    # about twenty megabytes short. This checks the export: that a scene turns
+    # into a project Megadev builds into a disc image.
+    name: Mega CD (export)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Megadev asks for the m68k cross compiler by its Linux-targeted name,
+      # which is the one the distribution packages, and for mkisofs, which is
+      # what genisoimage installs itself as on some releases and not others.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake xvfb \
+            gcc-m68k-linux-gnu binutils-m68k-linux-gnu genisoimage \
+            libglew-dev libgl1-mesa-dev libsdl2-dev
+
+          command -v mkisofs >/dev/null || \
+            sudo ln -s "$(command -v genisoimage)" /usr/local/bin/mkisofs
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel
+
+      - name: Check out Megadev
+        run: git clone --depth 1 https://github.com/drojaazu/megadev.git "${GITHUB_WORKSPACE}/megadev"
+
+      - name: Export the sample scene
+        run: |
+          # The engine makes its textures through a renderer, so it wants a
+          # display even when all it is being asked for is a conversion.
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/sample.tmx \
+              --export-megacd "${GITHUB_WORKSPACE}/mcdexport"
+
+      - name: Build the disc image
+        run: |
+          cd "${GITHUB_WORKSPACE}/mcdexport"
+          make MEGADEV_PATH="${GITHUB_WORKSPACE}/megadev"
+
+          iso=hatch.iso
+          if [ ! -s "${iso}" ]; then
+            echo "no disc image was produced"
+            exit 1
+          fi
+
+          # A Mega CD disc names the system in its first sector. Without that
+          # the BIOS will not look at it, whatever else is on the disc.
+          if [ "$(dd if="${iso}" bs=1 count=14 2>/dev/null)" != "SEGADISCSYSTEM" ]; then
+            echo "the image does not begin with SEGADISCSYSTEM"
+            exit 1
+          fi
+
+          # And the art has to have actually reached the filesystem.
+          if ! grep -qa "HATCH.BIN" "${iso}"; then
+            echo "the art file is not in the disc filesystem"
+            exit 1
+          fi
+
+          echo "disc image: $(stat -c%s "${iso}") bytes"
+
+      # The art on the disc is the same conversion the cartridge export uses, so
+      # it should come out byte for byte identical. If it ever does not, one of
+      # the two has drifted.
+      - name: Check the disc carries what the cartridge does
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/sample.tmx \
+              --export-megadrive "${GITHUB_WORKSPACE}/mdexport"
+
+          cat "${GITHUB_WORKSPACE}/mdexport/res/palette.bin" \
+              "${GITHUB_WORKSPACE}/mdexport/res/tiles.bin" \
+              "${GITHUB_WORKSPACE}/mdexport/res/map.bin" > /tmp/cartridge.bin
+
+          if ! cmp /tmp/cartridge.bin "${GITHUB_WORKSPACE}/mcdexport/disc/hatch.bin"; then
+            echo "the disc and the cartridge no longer carry the same art"
+            exit 1
+          fi
+
+          echo "disc and cartridge art are identical"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-megacd-sample-iso
+          path: mcdexport/hatch.iso
+          if-no-files-found: error
+
+  sega32x:
+    # Not a build of the engine: the 32X's SH-2s have 256 KB between them. This
+    # checks the export -- that a scene turns into a project which builds into a
+    # ROM the console would boot.
+    name: 32X (export)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake xvfb texinfo \
+            gcc-m68k-linux-gnu binutils-m68k-linux-gnu \
+            libglew-dev libgl1-mesa-dev libsdl2-dev
+
+      # Nothing packages a bare-metal SH-2 compiler. The distribution's SH
+      # toolchain is configured for a little-endian SH-4 and refuses -m2, so the
+      # one thing that will build a 32X ROM has to be built. It only depends on
+      # its own version, so it is cached rather than rebuilt every run.
+      - name: Cache the SH-2 toolchain
+        id: sh2cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sh2
+          key: sh2-elf-binutils-2.42-gcc-13.2.0-${{ runner.os }}
+
+      - name: Build the SH-2 toolchain
+        if: steps.sh2cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          prefix="${HOME}/sh2"
+          work="${RUNNER_TEMP}/sh2src"
+          mkdir -p "${work}" && cd "${work}"
+
+          curl -fsSLO https://ftp.gnu.org/gnu/binutils/binutils-2.42.tar.xz
+          curl -fsSLO https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
+          tar xf binutils-2.42.tar.xz
+          tar xf gcc-13.2.0.tar.xz
+
+          # MAKEINFO=true: the documentation needs texinfo and is of no use to a
+          # build that only ever runs the compiler.
+          mkdir build-binutils && cd build-binutils
+          ../binutils-2.42/configure --target=sh-elf --prefix="${prefix}" \
+            --disable-nls --disable-werror --with-sysroot MAKEINFO=true
+          make -j"$(nproc)" MAKEINFO=true
+          make install MAKEINFO=true
+          cd ..
+
+          export PATH="${prefix}/bin:${PATH}"
+
+          cd gcc-13.2.0 && ./contrib/download_prerequisites && cd ..
+
+          # Freestanding, so there are no libc headers to point at and nothing
+          # to build beyond the compiler and libgcc.
+          mkdir build-gcc && cd build-gcc
+          ../gcc-13.2.0/configure --target=sh-elf --prefix="${prefix}" \
+            --disable-nls --enable-languages=c --without-headers \
+            --disable-libssp --disable-libquadmath --disable-threads \
+            --disable-libgomp --disable-libatomic --disable-shared \
+            --with-multilib-list=m2
+          make -j"$(nproc)" all-gcc
+          make install-gcc
+          make -j"$(nproc)" all-target-libgcc
+          make install-target-libgcc
+
+      - name: Check the toolchain targets the right machine
+        run: |
+          export PATH="${HOME}/sh2/bin:${PATH}"
+          printf 'int f(int a,int b){return a*b+7;}\n' > /tmp/sh.c
+          sh-elf-gcc -m2 -mb -ffreestanding -nostdlib -O2 -c /tmp/sh.c -o /tmp/sh.o
+
+          # An SH-2 ROM that came out little-endian would build and never run.
+          if ! sh-elf-readelf -h /tmp/sh.o | grep -q "big endian"; then
+            echo "the toolchain is not producing big-endian objects"
+            exit 1
+          fi
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel
+
+      - name: Export the sample scene
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/sample.tmx \
+              --32x-runtime "${GITHUB_WORKSPACE}/meta/32x/runtime" \
+              --export-32x "${GITHUB_WORKSPACE}/x32export"
+
+      - name: Build the ROM
+        run: |
+          export PATH="${HOME}/sh2/bin:${PATH}"
+          cd "${GITHUB_WORKSPACE}/x32export"
+
+          make SHBIN= MDBIN= SHPREFIX=sh-elf- MDPREFIX=m68k-linux-gnu-
+
+          rom=out/rom.32x
+          if [ ! -s "${rom}" ]; then
+            echo "no ROM was produced"
+            exit 1
+          fi
+
+          # A 32X cartridge says so at 0x100, and the console checks.
+          if [ "$(dd if="${rom}" bs=1 skip=256 count=8 2>/dev/null)" != "SEGA 32X" ]; then
+            echo "the ROM does not identify itself as a 32X cartridge"
+            exit 1
+          fi
+
+          # And the header should carry the scene's name rather than whatever
+          # the runtime it was built from was called.
+          title=$(dd if="${rom}" bs=1 skip=288 count=48 2>/dev/null)
+          case "${title}" in
+            SAMPLE*) ;;
+            *) echo "the header title is \"${title}\", not the scene's"; exit 1 ;;
+          esac
+
+          echo "ROM: $(stat -c%s "${rom}") bytes, title \"${title}\""
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-32x-sample-rom
+          path: x32export/out/rom.32x
           if-no-files-found: error

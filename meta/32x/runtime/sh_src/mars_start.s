@@ -11,22 +11,12 @@
 		.long	0x000003F0
 	.endr
 
-		.ascii	"SEGA 32X        "
-		.ascii	"SKYCHASE 2024.04"
-		.ascii	"SAMPLE PROGRAM                                  "
-		.ascii	"SAMPLE PROGRAM                                  "
-		.ascii	"GM CHANGEME-00  "
-		.ascii	"J6              "
-		.long	0x000000
-		.long	0x3FFFFF
-		.long	0xFF0000
-		.long	0xFFFFFF
-		.long	0x20202020
-		.long	0x20202020
-		.long	0x20202020
-		.ascii	"            "
-		.ascii	"                                        "
-		.ascii	"JUE             "
+! The cartridge header. Every field in it is fixed width and the ones that
+! follow are found by counting from the start, so it is generated rather than
+! edited: the exporter writes cart_header.inc with the scene's own name padded
+! to the width the field has. Building this runtime outside an export needs a
+! cart_header.inc beside it.
+		.include "cart_header.inc"
 
 /* M68000 jmp (addr).l */
 .macro	md_jmp	_addr
