@@ -550,7 +550,7 @@ Required:
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 - [Emscripten](https://emscripten.org/) (for WebAssembly building)
 - [SGDK](https://github.com/Stephane-D/SGDK) (to build the Mega Drive export into a ROM)
-- [Marsdev](https://github.com/andwn/marsdev) (to build the 32X export into a ROM)
+- [Marsdev](https://github.com/andwn/marsdev) (to build the Genesis\32X export into a ROM)
 - [Megadev](https://github.com/drojaazu/megadev) (to build the Mega CD export into a disc image)
 
 Optional:
