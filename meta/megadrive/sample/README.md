@@ -18,3 +18,14 @@ HatchGameEngine --project-dir meta/megadrive/sample \
 
 That writes an SGDK project. The **Mega Drive** section of the repository's
 README covers building it into a ROM.
+
+## wide.tmx
+
+The same tiles over a map 40 columns across. Forty is not a power of two, and a
+scene layer's rows are stored as far apart as the next power of two above its
+width -- so a converter that walks the layer by its width instead of its stride
+reads the wrong tiles for every row after the first.
+
+That is not hypothetical: it is what the Mega Drive export did until it was
+caught, and `sample.tmx` never showed it because 32 columns is a power of two.
+Both scenes are exported in CI for that reason.
