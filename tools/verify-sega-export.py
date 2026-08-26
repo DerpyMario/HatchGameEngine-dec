@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Checks a Mega Drive export against the art it was made from.
+"""Checks a SEGA export against the art it was made from.
+
+Handles the Mega Drive (and the Mega CD, which shares its VDP) and the Game
+Gear, whose VDP came from the Master System instead and agrees with the Mega
+Drive's about almost nothing: bitplanes rather than packed nibbles, twelve bits
+of colour rather than nine, two palettes rather than four, and a different
+nametable layout. Both are decoded here, because the whole point is to arrive at
+the picture by a different route than the exporter did.
 
 Reads back what the exporter wrote -- the palette words, the tile patterns, the
 nametable's indices and flip bits -- reassembles the picture the VDP would draw
@@ -17,7 +24,7 @@ sample it was tested on was 32 columns across, where the two are the same
 number. Run it on a layer whose width is not a power of two and it would have
 been caught the first time.
 
-Usage:  verify-megadrive-export.py <export dir> <scenes dir> <map.tmx>
+Usage:  verify-sega-export.py <megadrive|gamegear> <export dir> <scenes dir> <map.tmx>
 """
 
 import re
@@ -91,8 +98,13 @@ def read_map(path):
 
 
 def to_nine_bits(value):
-    """What a channel becomes once the VDP has had it."""
+    """What a channel becomes once the Mega Drive's VDP has had it."""
     return (value >> 5) * 255 // 7
+
+
+def to_twelve_bits(value):
+    """The Game Gear keeps four bits a channel rather than three."""
+    return (value >> 4) * 255 // 15
 
 
 def plane_size(cells):
@@ -103,12 +115,92 @@ def plane_size(cells):
     raise SystemExit("a nametable of %d cells is not a plane the VDP offers" % cells)
 
 
+def check_gamegear(export, scenes, mapname):
+    _, _, tiles_png = read_png("%s/tileset.png" % scenes)
+    map_w, map_h, gids = read_map("%s/%s" % (scenes, mapname))
+
+    palette_bytes = open("%s/res/palette.bin" % export, "rb").read()
+    patterns = open("%s/res/tiles.bin" % export, "rb").read()
+    nametable_bytes = open("%s/res/map.bin" % export, "rb").read()
+
+    # Little endian here, unlike the Mega Drive: this is a Z80 machine.
+    palette = struct.unpack("<32H", palette_bytes)
+    nametable = struct.unpack("<%dH" % (len(nametable_bytes) // 2), nametable_bytes)
+
+    def palette_rgb(word):
+        return ((word & 0x0F) * 255 // 15,
+                ((word >> 4) & 0x0F) * 255 // 15,
+                ((word >> 8) & 0x0F) * 255 // 15)
+
+    # The map covers the whole layer here rather than a fixed plane.
+    plane_w = map_w * 2
+    plane_h = len(nametable) // plane_w
+
+    compared = differing = 0
+
+    for cy in range(plane_h):
+        for cx in range(plane_w):
+            entry = nametable[cx + cy * plane_w]
+            index = entry & 0x01FF
+            flip_x = (entry >> 9) & 1
+            flip_y = (entry >> 10) & 1
+            which = (entry >> 11) & 1
+
+            tile_x, tile_y = cx // 2, cy // 2
+
+            for py in range(8):
+                for px in range(8):
+                    compared += 1
+
+                    if tile_x >= map_w or tile_y >= map_h:
+                        wanted = (0, 0, 0)
+                    else:
+                        gid = gids[tile_x + tile_y * map_w]
+                        if gid == 0:
+                            wanted = (0, 0, 0)
+                        else:
+                            source = gid - 1
+                            r, g, b, a = tiles_png[(cy % 2) * 8 + py][source * 16 + (cx % 2) * 8 + px]
+                            wanted = (0, 0, 0) if a < 128 else (
+                                to_twelve_bits(r), to_twelve_bits(g), to_twelve_bits(b))
+
+                    sx = 7 - px if flip_x else px
+                    sy = 7 - py if flip_y else py
+
+                    # Four bitplanes, one byte each per row, leftmost pixel in
+                    # the high bit.
+                    colour = 0
+                    for plane in range(4):
+                        if patterns[index * 32 + sy * 4 + plane] & (0x80 >> sx):
+                            colour |= 1 << plane
+
+                    got = (0, 0, 0) if colour == 0 else palette_rgb(palette[which * 16 + colour])
+
+                    if wanted != got:
+                        differing += 1
+
+    print("%s: map %dx%d cells, %d pixels compared, %d differing"
+          % (mapname, plane_w, plane_h, compared, differing))
+
+    return 1 if differing else 0
+
+
 def main():
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         print(__doc__)
         return 2
 
-    export, scenes, mapname = sys.argv[1], sys.argv[2], sys.argv[3]
+    machine, export, scenes, mapname = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+    if machine == "gamegear":
+        result = check_gamegear(export, scenes, mapname)
+        if result:
+            print("the export does not match the art it was made from")
+        return result
+
+    if machine != "megadrive":
+        print("unknown machine %r -- expected megadrive or gamegear" % machine)
+        return 2
 
     _, _, tiles_png = read_png("%s/tileset.png" % scenes)
     map_w, map_h, gids = read_map("%s/%s" % (scenes, mapname))

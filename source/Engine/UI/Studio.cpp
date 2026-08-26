@@ -28,6 +28,7 @@ public:
 #include <Engine/Exporters/MegaDriveExporter.h>
 #include <Engine/Exporters/Sega32XExporter.h>
 #include <Engine/Exporters/MegaCDExporter.h>
+#include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Audio/AudioManager.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
@@ -1079,6 +1080,13 @@ PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bo
 
             if (UICore::Button("Mega CD")) {
                 MegaCDExportResult exported = MegaCDExporter::ExportScene(SegaExportPath);
+
+                Studio::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            if (UICore::Button("Game Gear")) {
+                GameGearExportResult exported = GameGearExporter::ExportScene(SegaExportPath);
 
                 Studio::SetStatus("%s", exported.Message);
                 Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);

@@ -17,6 +17,7 @@ public:
     static string      Sega32XExportPath;
     static string      Sega32XRuntimePath;
     static string      MegaCDExportPath;
+    static string      GameGearExportPath;
 
     static XMLNode*    GameConfig;
 
@@ -74,6 +75,7 @@ public:
 #include <Engine/Exporters/MegaDriveExporter.h>
 #include <Engine/Exporters/Sega32XExporter.h>
 #include <Engine/Exporters/MegaCDExporter.h>
+#include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Utilities/StringUtils.h>
 
 #include <Engine/Media/MediaSource.h>
@@ -128,6 +130,7 @@ string      Application::MegaDriveExportPath;
 string      Application::Sega32XExportPath;
 string      Application::Sega32XRuntimePath;
 string      Application::MegaCDExportPath;
+string      Application::GameGearExportPath;
 
 XMLNode*    Application::GameConfig = NULL;
 
@@ -309,6 +312,7 @@ PRIVATE STATIC void Application::PrintCommandLineUsage() {
     printf("                          --export-genesis is the same machine.\n");
     printf("  --export-32x <p>        The same, for the SEGA 32X.\n");
     printf("  --export-megacd <p>     The same, for the SEGA Mega CD.\n");
+    printf("  --export-gamegear <p>   The same, for the SEGA Game Gear.\n");
     printf("  --32x-runtime <p>       Where meta/32x/runtime is, when it is not\n");
     printf("                          beside the engine or the working directory.\n");
     printf("  --help                  Show this text.\n\n");
@@ -381,6 +385,15 @@ PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, siz
             return i;
 
         MegaCDExportPath = outputPath;
+        return i + 1;
+    }
+
+    if (arg == "--export-gamegear") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        if (!outputPath.size())
+            return i;
+
+        GameGearExportPath = outputPath;
         return i + 1;
     }
 
@@ -1759,6 +1772,16 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     if (Application::MegaCDExportPath.size()) {
         MegaCDExportResult exported =
             MegaCDExporter::ExportScene(Application::MegaCDExportPath.c_str());
+
+        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
+
+    if (Application::GameGearExportPath.size()) {
+        GameGearExportResult exported =
+            GameGearExporter::ExportScene(Application::GameGearExportPath.c_str());
 
         Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
 

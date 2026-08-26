@@ -266,6 +266,7 @@ one self-contained application for every target:
 | `HatchGameEngine-megadrive-sample-rom` | A Mega Drive ROM built from the sample scene, proving the exporter still works |
 | `HatchGameEngine-32x-sample-rom` | A 32X ROM built from the same scene |
 | `HatchGameEngine-megacd-sample-iso` | A Mega CD disc image built from the same scene |
+| `HatchGameEngine-gamegear-sample-rom` | A Game Gear cartridge built from the same scene |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -278,12 +279,12 @@ The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
 the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
 produce is a title and a web page rather than an application. See below.
 
-The three SEGA jobs are not builds of the engine at all -- it does not run on any
+The four SEGA jobs are not builds of the engine at all -- it does not run on any
 of that hardware. They check the export the other way round: that a scene still
-converts into a project which builds into a ROM or a disc. The Mega Drive job
-goes further and reads its own output back, rebuilding the picture from the
-palette, patterns and nametable and comparing it against the tileset and map it
-came from.
+converts into a project which builds into a ROM or a disc. The Mega Drive and
+Game Gear jobs go further and read their own output back, rebuilding the picture
+from the palette, patterns and nametable and comparing it against the tileset
+and map it came from.
 
 ## Building
 ### Windows
@@ -540,6 +541,58 @@ ones the pixel-verified cartridge export produces. What is **not** checked is
 that it boots -- that needs the console's BIOS, which is Sega's firmware and not
 something this repository will go and find.
 
+### SEGA Game Gear
+
+The Game Gear is a Master System that fits in a pocket, and its VDP is the
+Master System's -- which is not the Mega Drive's, and agrees with it about
+almost nothing:
+
+| | Mega Drive | Game Gear |
+| --- | --- | --- |
+| A tile | four bits a pixel, packed two to a byte | four bitplanes, four bytes a row |
+| Colour | nine bits, three a channel | twelve bits, four a channel |
+| Palettes | four of sixteen | two of sixteen |
+| Tiles in VRAM | 2048 | 448 |
+| On screen at once | 61 colours | 30 |
+
+Same 32 bytes to a tile, entirely different arrangement. So this export does not
+share the Mega Drive's converter -- only `SegaSceneArt`, where the pixels come
+from. Sharing further would mean a converter full of flags that is wrong for
+both machines.
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --scene Scenes/Level1.tmx \
+                --export-gamegear path/to/output
+```
+
+That writes the palettes, patterns and map as C arrays in `res/data.c` -- SDCC
+has no way to include a binary, and the map is larger than the Game Gear's work
+RAM, so it has to be `const` and live in ROM -- plus a Z80 program that puts the
+visible window of it on screen and scrolls with the pad.
+
+```sh
+cd path/to/output
+export DEVKITSMS=/path/to/devkitSMS
+make
+```
+
+Needs SDCC and [devkitSMS](https://github.com/sverx/devkitSMS). `out/rom.gg` is
+the result, and Genesis Plus GX runs it, so the emulator the Mega Drive export
+already wanted covers this one too.
+
+One warning worth passing on: devkitSMS ships its library, its startup code and
+its `ihx2sms` converter prebuilt, and those binaries do not necessarily match the
+SDCC in front of them. With the shipped `ihx2sms` the cartridge came out with
+tile data where its reset vector belongs and ran as a black screen -- the linker
+output was correct and the conversion was not. The generated `Makefile` takes
+`SMSLIB_LIB`, `CRT0` and `IHX2SMS` so all three can be pointed at ones built
+from the sources beside them, which is what the CI job does.
+
+The tightest limit here is VRAM: 16 KB, with the nametable at the top, leaving
+448 tiles below it. Colour is the other one. A scene drawn for a Mega Drive will
+spend some of both.
+
 ## Dependecies
 Required:
 - SDL2 (https://www.libsdl.org/)
@@ -552,6 +605,7 @@ Required:
 - [SGDK](https://github.com/Stephane-D/SGDK) (to build the Mega Drive export into a ROM)
 - [Marsdev](https://github.com/andwn/marsdev) (to build the 32X export into a ROM)
 - [Megadev](https://github.com/drojaazu/megadev) (to build the Mega CD export into a disc image)
+- SDCC and [devkitSMS](https://github.com/sverx/devkitSMS) (to build the Game Gear export into a cartridge)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)
