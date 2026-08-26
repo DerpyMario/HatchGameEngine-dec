@@ -516,7 +516,7 @@ jobs:
       - name: Check the export against the art it was made from
         run: |
           for scene in sample wide; do
-            python3 tools/verify-megadrive-export.py \
+            python3 tools/verify-sega-export.py megadrive \
               "${GITHUB_WORKSPACE}/mdexport-${scene}" \
               meta/megadrive/sample/Resources/Scenes \
               "${scene}.tmx"
@@ -785,4 +785,93 @@ jobs:
         with:
           name: HatchGameEngine-32x-sample-rom
           path: x32export/out/rom.32x
+          if-no-files-found: error
+
+  gamegear:
+    # Not a build of the engine: a Z80 with 8 KB of work RAM. This checks the
+    # export -- that a scene turns into a project SDCC builds into a cartridge.
+    name: Game Gear (export)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake xvfb sdcc sdcc-libraries \
+            libglew-dev libgl1-mesa-dev libsdl2-dev
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel
+
+      # devkitSMS ships its library, its startup code and its ihx2sms converter
+      # prebuilt, and those binaries do not necessarily match the SDCC in front
+      # of them. They are built from the sources beside them instead. This is
+      # not belt and braces: with the shipped ihx2sms the cartridge came out
+      # with tile data where its reset vector belongs and ran as a black screen.
+      - name: Check out and build devkitSMS
+        run: |
+          git clone --depth 1 https://github.com/sverx/devkitSMS.git "${GITHUB_WORKSPACE}/devkitSMS"
+          dk="${GITHUB_WORKSPACE}/devkitSMS"
+
+          make -C "${dk}/crt0/src"
+          make -C "${dk}/SMSlib/src"
+          cc -O2 -o "${GITHUB_WORKSPACE}/ihx2sms" "${dk}/ihx2sms/src/ihx2sms.c"
+
+      - name: Export the sample scene
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/sample.tmx \
+              --export-gamegear "${GITHUB_WORKSPACE}/ggexport"
+
+      # Reads the export back and rebuilds the picture from it -- bitplanes,
+      # twelve-bit colour words and all -- then compares that against the
+      # tileset and map it came from.
+      - name: Check the export against the art it was made from
+        run: |
+          python3 tools/verify-sega-export.py gamegear \
+            "${GITHUB_WORKSPACE}/ggexport" \
+            meta/megadrive/sample/Resources/Scenes \
+            sample.tmx
+
+      - name: Build the cartridge
+        run: |
+          dk="${GITHUB_WORKSPACE}/devkitSMS"
+          cd "${GITHUB_WORKSPACE}/ggexport"
+
+          make DEVKITSMS="${dk}" \
+               SMSLIB_LIB="${dk}/SMSlib/src/SMSlib_GG.lib" \
+               CRT0="${dk}/crt0/src/crt0_sms.rel" \
+               IHX2SMS="${GITHUB_WORKSPACE}/ihx2sms"
+
+          rom=out/rom.gg
+          if [ ! -s "${rom}" ]; then
+            echo "no cartridge was produced"
+            exit 1
+          fi
+
+          # A Z80 starts at address 0 with interrupts disabled. F3 is DI, and if
+          # it is not the first byte then whatever is there is not the program --
+          # which is exactly how the broken converter showed up.
+          first=$(dd if="${rom}" bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' ')
+          if [ "${first}" != "f3" ]; then
+            echo "the cartridge does not begin with DI -- got 0x${first}"
+            exit 1
+          fi
+
+          echo "cartridge: $(stat -c%s "${rom}") bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-gamegear-sample-rom
+          path: ggexport/out/rom.gg
           if-no-files-found: error
