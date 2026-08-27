@@ -15,6 +15,7 @@ by the engine's own renderer and needs no extra libraries or asset files.
 | --- | --- |
 | **Project** | Lists every game folder and `.hatch` file next to the engine, plus recently opened ones. Open one with a click, or scaffold a new project (`Resources` tree and a starter `GameConfig.xml`) and open it straight away. |
 | **Scenes** | Browses the project's scene list by category, shows the resolved path of the selected scene, and loads it. Also lists scene files found under `Resources/Scenes`, and creates new ones. |
+| **Hierarchy** | What is in the loaded scene -- its layers and its live entities -- next to an inspector for whichever one is selected. See below. |
 | **Editor** | The scene editor. See below. |
 | **Collision** | The tile collision editor. See below. |
 | **3D** | The project's models, their materials, and its shaders. See below. |
@@ -60,6 +61,41 @@ painted once one is added.
 
 What comes out is an ordinary Tiled map: `Resources/Scenes/MyScene/MyScene.tmx`
 opens in Tiled and reads back into the engine unchanged.
+
+## Hierarchy and inspector
+
+The **Hierarchy** tab is one list of what the loaded scene contains and one
+panel of properties for whatever in it is selected.
+
+The idea is Unity's, and it is worth saying which part. Unity's hierarchy is a
+tree of GameObjects; a Hatch scene is not shaped like that, so this one is
+grouped the way the scene actually is -- tile layers, then entities. The part
+worth taking is not the tree. It is that there is a single selection: clicking a
+row here selects the same thing clicking an entity in the scene editor selects,
+and the inspector is looking at whichever it was, so the three panels never
+disagree about what you are working on.
+
+- **Layers** lists the scene's tile layers, hidden ones marked as such.
+- **Entities** lists everything alive in the scene with its object name and
+  position. A busy scene stops at four hundred rows and says how many it left
+  out.
+- **Filter** narrows both lists by name, case-insensitively, and the entity
+  heading counts what survived the filter against the total.
+
+Selecting an entity gives the inspector its transform, its motion, its alpha and
+priority, and its active, pauseable and interactable flags. Selecting a layer
+gives it the layer's size -- in tiles, in pixels, and the row stride the tile
+array is really allocated at, which is the next power of two and not the width
+-- along with visibility, draw group, opacity, blending and the scroll offsets.
+
+Edits go into the running object as they are typed, not when the field is left,
+so the scene view moves with the number. Half-typed text is not treated as a
+value: `-`, `1.` and an empty field are all on the way somewhere, and the field
+keeps them while the value waits.
+
+A selection is a pointer into a list the scene owns and frees, so reloading or
+switching scenes would leave it dangling. It is checked against the live scene
+once a frame and dropped if what it pointed at is gone.
 
 ## Scene editor
 

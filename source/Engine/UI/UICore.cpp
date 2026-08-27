@@ -734,6 +734,102 @@ PUBLIC STATIC void UICore::ResetRowStriping() {
     RowIndex = 0;
 }
 
+// A number, edited as text.
+//
+// The text is the truth while the field has focus and the value is the truth
+// otherwise. That split matters: reformatting from the value every frame would
+// fight the caret, and typing "1.5" would be impossible because "1." is not a
+// number yet and would be rewritten to "1" the instant it was typed.
+//
+// Only one field can have focus, so only one needs its text kept between
+// frames; the rest are formatted fresh into a local buffer as they are drawn.
+static char   NumberFocusText[64];
+static Uint32 NumberFocusOwner = 0;
+
+PRIVATE STATIC char* UICore::NumberBuffer(Uint32 id, const char* formatted, char* scratch, size_t scratchSize) {
+    // Focus leaving gives up the kept text. Without this a field that regains
+    // focus keeps whatever was typed into it last, and since a field's ID is
+    // its label inside its panel, two objects of the same kind share one: click
+    // one ring's X, type, click another ring, click its X, and the second ring
+    // takes the first one's number. It reformats from the live value instead.
+    if (NumberFocusOwner && FocusItem != NumberFocusOwner)
+        NumberFocusOwner = 0;
+
+    if (FocusItem == id) {
+        if (NumberFocusOwner != id) {
+            snprintf(NumberFocusText, sizeof(NumberFocusText), "%s", formatted);
+            NumberFocusOwner = id;
+        }
+
+        return NumberFocusText;
+    }
+
+    snprintf(scratch, scratchSize, "%s", formatted);
+
+    return scratch;
+}
+
+PUBLIC STATIC bool UICore::FloatField(const char* label, float* value) {
+    Uint32 id = UICore::ItemID(label);
+
+    char formatted[64];
+    // %g rather than %f: a position of 320 should read as 320, not 320.000000.
+    snprintf(formatted, sizeof(formatted), "%g", (double)*value);
+
+    char scratch[64];
+    char* buffer = UICore::NumberBuffer(id, formatted, scratch, sizeof(scratch));
+
+    UICore::TextField(label, buffer, 64);
+
+    // Only the field being typed in writes back, so a value that changes
+    // elsewhere is not overwritten by a stale field somewhere off screen.
+    if (FocusItem != id)
+        return false;
+
+    char* end = NULL;
+    double parsed = strtod(buffer, &end);
+
+    // Half-typed text is not an error and not a value: "-", "1." and "" are all
+    // on the way somewhere. The field keeps them and the value waits.
+    if (end == buffer || (end && *end))
+        return false;
+
+    if ((float)parsed == *value)
+        return false;
+
+    *value = (float)parsed;
+
+    return true;
+}
+
+PUBLIC STATIC bool UICore::IntField(const char* label, int* value) {
+    Uint32 id = UICore::ItemID(label);
+
+    char formatted[64];
+    snprintf(formatted, sizeof(formatted), "%d", *value);
+
+    char scratch[64];
+    char* buffer = UICore::NumberBuffer(id, formatted, scratch, sizeof(scratch));
+
+    UICore::TextField(label, buffer, 64);
+
+    if (FocusItem != id)
+        return false;
+
+    char* end = NULL;
+    long parsed = strtol(buffer, &end, 10);
+
+    if (end == buffer || (end && *end))
+        return false;
+
+    if ((int)parsed == *value)
+        return false;
+
+    *value = (int)parsed;
+
+    return true;
+}
+
 PUBLIC STATIC bool UICore::TextField(const char* label, char* buffer, size_t bufferSize) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));

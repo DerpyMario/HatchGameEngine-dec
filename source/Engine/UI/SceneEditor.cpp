@@ -2,6 +2,7 @@
 #include <Engine/Includes/Standard.h>
 #include <Engine/Includes/StandardSDL2.h>
 #include <Engine/Types/Entity.h>
+#include <Engine/UI/Selection.h>
 
 class SceneEditor {
 public:
@@ -111,7 +112,11 @@ static vector<EditorCommand> RedoStack;
 static EditorCommand         PendingCommand;
 static bool   BuildingCommand = false;
 
-static Entity* SelectedEntity = NULL;
+// The scene view keeps no idea of its own about what is selected: it reads and
+// writes the editor's shared Selection, so picking an entity here shows up in
+// the hierarchy and the inspector the same frame, and picking one there lights
+// it up in the view.
+static Entity* SelectedEntity() { return Selection::GetEntity(); }
 static bool    DraggingEntity = false;
 static float   EntityGrabX = 0.0f, EntityGrabY = 0.0f;
 
@@ -596,30 +601,30 @@ PRIVATE STATIC void SceneEditor::UpdateViewportInput(float areaX, float areaY, f
             if (UICore::MouseWasPressed) {
                 Entity* picked = SceneEditor::PickEntity(worldX, worldY);
                 if (picked) {
-                    SelectedEntity = picked;
+                    Selection::SetEntity(picked);
                     DraggingEntity = true;
                     EntityGrabX = picked->X;
                     EntityGrabY = picked->Y;
                 }
                 else
-                    SelectedEntity = NULL;
+                    Selection::SetEntity(NULL);
             }
 
-            if (DraggingEntity && SelectedEntity && UICore::MouseIsDown) {
-                SelectedEntity->X = worldX;
-                SelectedEntity->Y = worldY;
+            if (DraggingEntity && SelectedEntity() && UICore::MouseIsDown) {
+                SelectedEntity()->X = worldX;
+                SelectedEntity()->Y = worldY;
             }
 
-            if (UICore::MouseWasReleased && DraggingEntity && SelectedEntity) {
+            if (UICore::MouseWasReleased && DraggingEntity && SelectedEntity()) {
                 DraggingEntity = false;
 
-                if (SelectedEntity->X != EntityGrabX || SelectedEntity->Y != EntityGrabY) {
+                if (SelectedEntity()->X != EntityGrabX || SelectedEntity()->Y != EntityGrabY) {
                     EntityMove move;
-                    move.Target = SelectedEntity;
+                    move.Target = SelectedEntity();
                     move.BeforeX = EntityGrabX;
                     move.BeforeY = EntityGrabY;
-                    move.AfterX = SelectedEntity->X;
-                    move.AfterY = SelectedEntity->Y;
+                    move.AfterX = SelectedEntity()->X;
+                    move.AfterY = SelectedEntity()->Y;
 
                     SceneEditor::BeginCommand();
                     PendingCommand.Moves.push_back(move);
@@ -748,7 +753,7 @@ PRIVATE STATIC void SceneEditor::DrawViewportOverlay(float areaX, float areaY, f
                 continue;
 
             float size = 3.0f * UIDraw::Scale;
-            Uint32 color = entity == SelectedEntity ? UI_COL_ACCENT : UI_COL_WARNING;
+            Uint32 color = entity == SelectedEntity() ? UI_COL_ACCENT : UI_COL_WARNING;
 
             UIDraw::FillRect(screenX - size, screenY - 1.0f, size * 2.0f, 2.0f, color);
             UIDraw::FillRect(screenX - 1.0f, screenY - size, 2.0f, size * 2.0f, color);
@@ -972,24 +977,24 @@ PRIVATE STATIC void SceneEditor::DrawEntitiesPanel() {
     UICore::Heading("Entities");
     UICore::FieldFormatted("In scene", "%d", Scene::ObjectCount);
 
-    if (SelectedEntity) {
+    if (SelectedEntity()) {
         UICore::Separator();
-        UICore::Field("Selected", SelectedEntity->List ? SelectedEntity->List->ObjectName : "(unknown)");
-        UICore::FieldFormatted("Position", "%.1f, %.1f", SelectedEntity->X, SelectedEntity->Y);
-        UICore::FieldFormatted("Start", "%.1f, %.1f", SelectedEntity->InitialX, SelectedEntity->InitialY);
+        UICore::Field("Selected", SelectedEntity()->List ? SelectedEntity()->List->ObjectName : "(unknown)");
+        UICore::FieldFormatted("Position", "%.1f, %.1f", SelectedEntity()->X, SelectedEntity()->Y);
+        UICore::FieldFormatted("Start", "%.1f, %.1f", SelectedEntity()->InitialX, SelectedEntity()->InitialY);
 
         if (UICore::Button("Snap To Tile Grid")) {
             SceneEditor::BeginCommand();
 
             EntityMove move;
-            move.Target = SelectedEntity;
-            move.BeforeX = SelectedEntity->X;
-            move.BeforeY = SelectedEntity->Y;
-            move.AfterX = floorf(SelectedEntity->X / Scene::TileWidth) * Scene::TileWidth + Scene::TileWidth / 2;
-            move.AfterY = floorf(SelectedEntity->Y / Scene::TileHeight) * Scene::TileHeight + Scene::TileHeight / 2;
+            move.Target = SelectedEntity();
+            move.BeforeX = SelectedEntity()->X;
+            move.BeforeY = SelectedEntity()->Y;
+            move.AfterX = floorf(SelectedEntity()->X / Scene::TileWidth) * Scene::TileWidth + Scene::TileWidth / 2;
+            move.AfterY = floorf(SelectedEntity()->Y / Scene::TileHeight) * Scene::TileHeight + Scene::TileHeight / 2;
 
-            SelectedEntity->X = move.AfterX;
-            SelectedEntity->Y = move.AfterY;
+            SelectedEntity()->X = move.AfterX;
+            SelectedEntity()->Y = move.AfterY;
 
             PendingCommand.Moves.push_back(move);
             SceneEditor::EndCommand();
@@ -998,7 +1003,7 @@ PRIVATE STATIC void SceneEditor::DrawEntitiesPanel() {
         }
 
         if (UICore::Button("Deselect"))
-            SelectedEntity = NULL;
+            Selection::SetEntity(NULL);
     }
     else
         UICore::Text("Pick one with the Entity tool.", UI_COL_TEXT_FAINT);
@@ -1011,7 +1016,7 @@ PUBLIC STATIC void SceneEditor::Reset() {
 
     Stamps.clear();
     SelectedStamp = -1;
-    SelectedEntity = NULL;
+    Selection::SetEntity(NULL);
     DraggingEntity = false;
     DraggingSelection = false;
     HasSelection = false;
