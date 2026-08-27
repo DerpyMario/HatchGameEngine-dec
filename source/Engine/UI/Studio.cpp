@@ -29,6 +29,9 @@ public:
 #include <Engine/Exporters/Sega32XExporter.h>
 #include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/GameGearExporter.h>
+#include <Engine/UI/Hierarchy.h>
+#include <Engine/UI/Inspector.h>
+#include <Engine/UI/Selection.h>
 #include <Engine/Audio/AudioManager.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
@@ -51,6 +54,7 @@ bool Studio::PauseGameWhileOpen = true;
 enum StudioTab {
     STUDIO_TAB_PROJECT,
     STUDIO_TAB_SCENES,
+    STUDIO_TAB_HIERARCHY,
     STUDIO_TAB_EDITOR,
     STUDIO_TAB_COLLISION,
     STUDIO_TAB_3D,
@@ -63,8 +67,8 @@ enum StudioTab {
 };
 
 static const char* TabNames[STUDIO_TAB_COUNT] = {
-    "Project", "Scenes", "Editor", "Collision", "3D", "Resources", "Play",
-    "Settings", "Console", "Help"
+    "Project", "Scenes", "Hierarchy", "Editor", "Collision", "3D", "Resources",
+    "Play", "Settings", "Console", "Help"
 };
 
 // Widgets are drawn and clicked in the same call, which means a button's
@@ -965,6 +969,32 @@ PRIVATE STATIC void Studio::DrawProjectTab(float x, float y, float w, float h, b
     UICore::EndPanel();
 }
 
+PRIVATE STATIC void Studio::DrawHierarchyTab(float x, float y, float w, float h, bool split) {
+    float halfW = split ? w / 2.0f : w;
+    float halfH = split ? h : h / 2.0f;
+    float secondX = split ? x + halfW : x;
+    float secondY = split ? y : y + halfH;
+
+    UICore::BeginPanel("Hierarchy", x, y, halfW, halfH);
+        Hierarchy::Draw();
+    UICore::EndPanel();
+
+    char title[128];
+    char name[96];
+    Selection::GetName(name, sizeof(name));
+
+    // The panel says what it is looking at, so the two halves read as one
+    // thing rather than as a list beside an unrelated form.
+    if (name[0])
+        snprintf(title, sizeof(title), "Inspector - %s", name);
+    else
+        snprintf(title, sizeof(title), "Inspector");
+
+    UICore::BeginPanel(title, secondX, secondY, halfW, halfH);
+        Inspector::Draw();
+    UICore::EndPanel();
+}
+
 PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bool split) {
     float halfW = split ? w / 2.0f : w;
     float halfH = split ? h : h / 2.0f;
@@ -1556,6 +1586,10 @@ PUBLIC STATIC void Studio::Render() {
     if (!Studio::Visible || !Initialized)
         return;
 
+    // The selection holds a raw pointer into a list the scene owns and frees.
+    // Checking it here, once, means no panel below has to remember to.
+    Selection::Validate();
+
     UICore::NewFrame();
 
     // Begin declines the frame when the window has no size yet, or before the
@@ -1606,6 +1640,9 @@ PUBLIC STATIC void Studio::Render() {
     switch (contentH > 0.0f ? CurrentTab : -1) {
         case STUDIO_TAB_PROJECT:
             Studio::DrawProjectTab(0.0f, contentY, width, contentH, split);
+            break;
+        case STUDIO_TAB_HIERARCHY:
+            Studio::DrawHierarchyTab(0.0f, contentY, width, contentH, split);
             break;
         case STUDIO_TAB_SCENES:
             Studio::DrawScenesTab(0.0f, contentY, width, contentH, split);
