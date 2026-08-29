@@ -303,6 +303,7 @@ one self-contained application for every target:
 | `HatchGameEngine-32x-sample-rom` | A 32X ROM built from the same scene |
 | `HatchGameEngine-megacd-sample-iso` | A Mega CD disc image built from the same scene |
 | `HatchGameEngine-gamegear-sample-rom` | A Game Gear cartridge built from the same scene |
+| `HatchGameEngine-saturn-sample-discs` | Two Saturn discs: the same scene as a VDP2 bitmap, and a 3D scene as VDP1 polygons |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -315,12 +316,15 @@ The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
 the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
 produce is a title and a web page rather than an application. See below.
 
-The four SEGA jobs are not builds of the engine at all -- it does not run on any
+The five SEGA jobs are not builds of the engine at all -- it does not run on any
 of that hardware. They check the export the other way round: that a scene still
-converts into a project which builds into a ROM or a disc. The Mega Drive and
-Game Gear jobs go further and read their own output back, rebuilding the picture
-from the palette, patterns and nametable and comparing it against the tileset
-and map it came from.
+converts into a project which builds into a ROM or a disc. The Mega Drive, Game
+Gear and Saturn jobs go further and read their own output back, rebuilding the
+picture from the palette, patterns and nametable and comparing it against the
+tileset and map it came from. The Saturn job does the same for geometry: it
+rebuilds every exported vertex from the scene file and the model it came from,
+which is what catches a transform read with its rows and columns the wrong way
+round.
 
 ## Building
 ### Windows
@@ -629,6 +633,76 @@ The tightest limit here is VRAM: 16 KB, with the nametable at the top, leaving
 448 tiles below it. Colour is the other one. A scene drawn for a Mega Drive will
 spend some of both.
 
+### SEGA Saturn
+
+The Saturn has two video chips and this export uses both, because they do
+different jobs and neither can do the other's.
+
+VDP2 draws backgrounds -- tilemaps, or a flat bitmap. A tile scene becomes the
+bitmap: eight bits a pixel, the colours in the Saturn's colour RAM.
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --scene Scenes/Level1.tmx \
+                --export-saturn path/to/output
+```
+
+VDP1 draws sprites and polygons into a framebuffer VDP2 then composites, and a
+3D scene becomes a table of vertices and faces the SH-2 turns into VDP1 polygon
+commands every frame. That is not an approximation of how the Saturn did 3D --
+it is how the Saturn did 3D.
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --export-saturn-3d path/to/output Scenes/MyScene.scene3d
+```
+
+The 3D tab has the same thing as a button, next to the scene it is looking at.
+
+Either way:
+
+```sh
+cd path/to/output
+make
+```
+
+Needs an SH-2 cross compiler and `genisoimage`. `cd/scene.iso` is the result and
+it boots in Mednafen, Yabause or Kronos.
+
+**Nothing here needs SEGA's libraries.** [SaturnSDK](https://github.com/SaturnSDK)
+packages a `sh-elf-gcc` that builds this, and so does any other one -- the
+generated `Makefile` takes `SH_PREFIX` for a toolchain that is not on the PATH.
+SGL would have given the 3D side a matrix stack and a scene graph for free, but
+it cannot be redistributed, and an export nobody can build is not an export. So
+the runtime writes the VDP registers directly and is about four hundred lines.
+
+A few things about the machine that the code has to get right, and that cost
+time to find out:
+
+| | What it is |
+| --- | --- |
+| Byte order | Big endian. `elf32-littlesh` assembles and links and will not run. |
+| Colour | Fifteen bits, five a channel, **red in the low bits** -- BGR555, not RGB555 |
+| Index 0 | Transparent on a VDP2 background. What shows through is the back screen, which powers on pointing at whatever VRAM holds, so the runtime gives it a word of its own and sets it to black. |
+| Priority | A background whose priority is zero is not drawn. Zero is what the register powers on as. |
+| Polygons | VDP1 draws quads. A triangle is a quad with its last two corners in the same place. |
+| Polygon colour | Bit 15 of the colour has to be set or the pixel is treated as transparent. |
+| Screen Y | Runs downwards, which flips the sign of the winding test. A closed model looks solid with the test the wrong way round -- you are seeing the inside of the far side -- so counting the faces a cube keeps is what settles it. |
+
+The 3D side is fixed point throughout: 16.16, because the SH-2 has no floating
+point unit. There is no depth buffer either, so faces are sorted back to front
+and drawn in that order. Faces are flat shaded, in the model's vertex colours
+averaged over the face or its material's diffuse colour. VDP1 can do gouraud,
+but only from a table in its own VRAM, and that is a thing to add rather than a
+thing to fake.
+
+The disc is an ISO with the header in its system area, where a Saturn looks for
+it. The header carries no security code: that is a signed blob only SEGA can
+produce, so emulators boot these discs and a retail console will not.
+
+Game logic does not come across, here or anywhere else -- it is bytecode for a
+VM that does not exist on an SH-2. The art does, and now so does the geometry.
+
 ## Dependecies
 Required:
 - SDL2 (https://www.libsdl.org/)
@@ -642,6 +716,7 @@ Required:
 - [Marsdev](https://github.com/andwn/marsdev) (to build the Genesis\32X export into a ROM)
 - [Megadev](https://github.com/drojaazu/megadev) (to build the Mega CD export into a disc image)
 - SDCC and [devkitSMS](https://github.com/sverx/devkitSMS) (to build the Game Gear export into a cartridge)
+- An `sh-elf` cross compiler and `genisoimage` (to build the Saturn export into a disc)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)

@@ -27,6 +27,7 @@ public:
 #include <Engine/ResourceTypes/IModel.h>
 #include <Engine/ResourceTypes/ResourceManager.h>
 #include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
+#include <Engine/Exporters/SegaSaturnExporter.h>
 #include <Engine/Scene.h>
 #include <Engine/Utilities/StringUtils.h>
 
@@ -78,6 +79,7 @@ static float OrbitLastX = 0.0f;
 static float OrbitLastY = 0.0f;
 
 static char  NewSceneName[128] = "MyScene3D";
+static char  SaturnExportPath[512] = "SaturnExport";
 static vector<std::string> SceneFiles3D;
 static bool  Scenes3DScanned = false;
 static int   SelectedScene3D = -1;
@@ -742,6 +744,31 @@ PRIVATE STATIC void SceneEditor3D::DrawSceneEditPanel(float x, float y, float w,
 
             if (UICore::Button("Rescan 3D Scenes"))
                 Scenes3DScanned = false;
+
+            UICore::Separator();
+            UICore::Heading("Export For SEGA Saturn");
+
+            UICore::TextField("Folder", SaturnExportPath, sizeof(SaturnExportPath));
+
+            // The exporter reads the scene off disk rather than out of these
+            // panels, so what it carries is what was last saved. Exporting an
+            // edit nobody saved would quietly export the old scene instead.
+            if (UICore::ButtonEnabled("Export 3D Scene To Saturn", !ScenePath.empty())) {
+                if (SceneDirty)
+                    SceneEditor3D::SaveScene();
+
+                SegaSaturnExportResult exported =
+                    SegaSaturnExporter::ExportScene3D(SaturnExportPath, ScenePath.c_str());
+
+                SceneEditor3D::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            UICore::Text("Writes a project that builds into a Saturn disc.", UI_COL_TEXT_FAINT);
+            UICore::Text("The models come across as geometry the SH-2", UI_COL_TEXT_FAINT);
+            UICore::Text("transforms and VDP1 draws. Materials come across", UI_COL_TEXT_FAINT);
+            UICore::Text("as one flat colour a face; textures and lighting", UI_COL_TEXT_FAINT);
+            UICore::Text("do not.", UI_COL_TEXT_FAINT);
         }
 
         UICore::Separator();

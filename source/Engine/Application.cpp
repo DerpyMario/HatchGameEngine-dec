@@ -18,6 +18,7 @@ public:
     static string      Sega32XRuntimePath;
     static string      SegaSaturnExportPath;
     static string      SegaSaturnRuntimePath;
+    static string      SegaSaturnScene3DPath;
     static string      MegaCDExportPath;
     static string      GameGearExportPath;
 
@@ -78,6 +79,7 @@ public:
 #include <Engine/Exporters/Sega32XExporter.h>
 #include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/GameGearExporter.h>
+#include <Engine/Exporters/SegaSaturnExporter.h>
 #include <Engine/Utilities/StringUtils.h>
 
 #include <Engine/Media/MediaSource.h>
@@ -131,6 +133,9 @@ char        Application::SettingsFile[4096];
 string      Application::MegaDriveExportPath;
 string      Application::Sega32XExportPath;
 string      Application::Sega32XRuntimePath;
+string      Application::SegaSaturnExportPath;
+string      Application::SegaSaturnRuntimePath;
+string      Application::SegaSaturnScene3DPath;
 string      Application::MegaCDExportPath;
 string      Application::GameGearExportPath;
 
@@ -406,6 +411,37 @@ PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, siz
 
         Sega32XExportPath = outputPath;
         return i + 1;
+    }
+
+    if (arg == "--export-saturn") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        if (!outputPath.size())
+            return i;
+
+        SegaSaturnExportPath = outputPath;
+        return i + 1;
+    }
+
+    if (arg == "--saturn-runtime") {
+        std::string runtimePath = Application::GetCmdLineOption(i + 1);
+        if (!runtimePath.size())
+            return i;
+
+        SegaSaturnRuntimePath = runtimePath;
+        return i + 1;
+    }
+
+    // A 3D scene is not the scene that is loaded -- it is a file of its own --
+    // so the Saturn export is told which one to carry rather than guessing.
+    if (arg == "--export-saturn-3d") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        std::string scenePath = Application::GetCmdLineOption(i + 2);
+        if (!outputPath.size() || !scenePath.size())
+            return i;
+
+        SegaSaturnExportPath = outputPath;
+        SegaSaturnScene3DPath = scenePath;
+        return i + 2;
     }
 
     return i;
@@ -1784,6 +1820,18 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     if (Application::GameGearExportPath.size()) {
         GameGearExportResult exported =
             GameGearExporter::ExportScene(Application::GameGearExportPath.c_str());
+
+        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
+
+    if (Application::SegaSaturnExportPath.size()) {
+        SegaSaturnExportResult exported = Application::SegaSaturnScene3DPath.size()
+            ? SegaSaturnExporter::ExportScene3D(Application::SegaSaturnExportPath.c_str(),
+                  Application::SegaSaturnScene3DPath.c_str())
+            : SegaSaturnExporter::ExportScene(Application::SegaSaturnExportPath.c_str());
 
         Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
 

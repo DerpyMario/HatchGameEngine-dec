@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scene3d version="1">
+ <camera fov="70" near="1" far="32768" yaw="0.7" pitch="0.5" distance="240" targetX="0" targetY="0" targetZ="0"/>
+ <lighting>
+  <ambient r="1" g="1" b="1"/>
+  <diffuse r="1" g="1" b="1"/>
+  <specular r="1" g="1" b="1"/>
+ </lighting>
+ <model source="Models/cube.hmdl" x="0" y="0" z="0" rotationX="0" rotationY="0" rotationZ="0" scaleX="1" scaleY="1" scaleZ="1"/>
+ <model source="Models/cube.hmdl" x="160" y="40" z="-60" rotationX="0" rotationY="0.6" rotationZ="0" scaleX="0.5" scaleY="0.5" scaleZ="0.5"/>
+ <model source="Models/cube.hmdl" x="-160" y="-30" z="60" rotationX="0.4" rotationY="0" rotationZ="0" scaleX="0.5" scaleY="1.2" scaleZ="0.5"/>
+</scene3d>
