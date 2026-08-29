@@ -1,54 +1,50 @@
-/* SEGA Saturn linker script for Hatch Game Engine exports
+/* Where a Saturn program's pieces go.
  *
- * This defines the memory layout for the Saturn program.
+ * The whole thing is one blob loaded to 0x06004000 in Work RAM High and jumped
+ * to at its first byte, so there is no ROM to run from and no copying of
+ * initialised data to do -- text, rodata and data all sit where they are
+ * loaded. Only BSS is left to the startup code.
+ *
+ * elf32-sh, not elf32-littlesh: the Saturn's SH-2s are big endian.
  */
 
-OUTPUT_FORMAT("elf32-littlesh")
+OUTPUT_FORMAT("elf32-sh")
 OUTPUT_ARCH(sh)
 ENTRY(_start)
 
 MEMORY
 {
-    rom (rx) : ORIGIN = 0x00000000, LENGTH = 4M
-    ram (rwx) : ORIGIN = 0x06000000, LENGTH = 512K
+    ram (rwx) : ORIGIN = 0x06004000, LENGTH = 0x000FC000
 }
 
 SECTIONS
 {
-    .header : {
-        *(.header)
-    } > rom
-
     .text : {
-        _stext = .;
+        *(.text.start)
         *(.text)
         *(.text.*)
-        _etext = .;
-    } > rom
+    } > ram
 
-    .rodata : {
-        _srodata = .;
+    .rodata ALIGN(4) : {
         *(.rodata)
         *(.rodata.*)
-        _erodata = .;
-    } > rom
+    } > ram
 
-    .data : {
-        _sdata = .;
+    .data ALIGN(4) : {
         *(.data)
         *(.data.*)
-        _edata = .;
-    } > ram AT > rom
+    } > ram
 
-    _data_loadaddr = LOADADDR(.data);
-
-    .bss : {
-        _sbss = .;
+    .bss ALIGN(4) : {
+        __bss_start = .;
         *(.bss)
         *(.bss.*)
         *(COMMON)
-        _ebss = .;
+        . = ALIGN(4);
+        __bss_end = .;
     } > ram
 
     _end = .;
+
+    /DISCARD/ : { *(.comment) *(.debug*) }
 }

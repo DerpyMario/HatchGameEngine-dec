@@ -1,8 +1,13 @@
 #if INTERFACE
 #include <Engine/Includes/Standard.h>
 #include <Engine/Exporters/SegaSaturnTypes.h>
+#include <Engine/Rendering/Scene3DTypes.h>
 
 need_t SceneLayer;
+need_t Scene3DObject;
+need_t Scene3DSettings;
+need_t Mesh;
+need_t IModel;
 
 class SegaSaturnExporter {
 public:
@@ -16,26 +21,70 @@ public:
 #include <Engine/Application.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
+#include <Engine/Math/Matrix4x4.h>
+#include <Engine/Rendering/Material.h>
+#include <Engine/Rendering/Mesh.h>
+#include <Engine/Rendering/Scene3DTypes.h>
+#include <Engine/ResourceTypes/IModel.h>
+#include <Engine/ResourceTypes/ResourceManager.h>
+#include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
+#include <Engine/IO/ResourceStream.h>
 #include <Engine/Scene.h>
 #include <Engine/Scene/SceneLayer.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a SEGA Saturn can show.
 //
-// The Saturn has two VDPs: VDP1 for sprites and polygons, VDP2 for backgrounds.
-// For a simple export, we use a bitmap approach similar to the 32X: draw the
-// layer into an indexed image and let the runtime blit it to the framebuffer.
+// The Saturn has two video chips and this uses both. A tile scene becomes a
+// VDP2 bitmap -- eight bits a pixel out of a 256-colour CRAM -- because that is
+// what VDP2 backgrounds are. A 3D scene becomes a table of vertices and faces
+// that the SH-2 transforms and hands to VDP1 as polygon commands, because that
+// is how the Saturn drew polygons and there is no other way to do it.
 //
-// The Saturn offers 32768 colors (15-bit RGB) and up to 512 KB of frame RAM.
-// This exporter produces a palette-based bitmap that the Saturn runtime can
-// display and scroll with the controller.
+// Nothing here needs SEGA's own libraries. SGL would give you a matrix stack
+// and a scene graph, but it cannot be redistributed, and an export nobody can
+// build is not an export. What comes out is bare metal: sh-elf-gcc, a linker
+// script, and registers written directly.
 
 static vector<Uint8>  Indices;      // one byte a pixel, row major
 static vector<Uint32> Palette;      // 0xRRGGBB, already rounded to five bits
 static int            DroppedColors;
 
-// Rounded into the five bits a channel the Saturn keeps, then spread back over the
-// full range so comparisons happen in the space it will land in.
+static vector<SaturnVertex> Vertices;
+static vector<SaturnFace>   Faces;
+static int                  DroppedFaces;
+
+// How far out the geometry reaches from the origin. The generated program uses
+// it to put the camera somewhere the scene is actually visible: a fixed
+// distance either buries a large scene in the near plane or leaves a small one
+// as a dot.
+PRIVATE STATIC int SegaSaturnExporter::CameraDistance() {
+    double worst = 0.0;
+
+    for (size_t i = 0; i < Vertices.size(); i++) {
+        double x = (double)Vertices[i].X / 65536.0;
+        double y = (double)Vertices[i].Y / 65536.0;
+        double z = (double)Vertices[i].Z / 65536.0;
+
+        double distance = sqrt(x * x + y * y + z * z);
+        if (distance > worst)
+            worst = distance;
+    }
+
+    // Three radii back puts the whole of a scene inside a 352 pixel screen at
+    // the focal length the runtime uses, with room to turn.
+    int distance = (int)(worst * 3.0) + 32;
+
+    if (distance < 64)
+        distance = 64;
+    if (distance > 8192)
+        distance = 8192;
+
+    return distance;
+}
+
+// Rounded into the five bits a channel the Saturn keeps, then spread back over
+// the full range so comparisons happen in the space it will land in.
 PRIVATE STATIC Uint32 SegaSaturnExporter::QuantizeColor(Uint32 argb) {
     Uint32 r = (Uint32)((((argb >> 16) & 0xFF) >> 3) * 255 / 31);
     Uint32 g = (Uint32)((((argb >> 8) & 0xFF) >> 3) * 255 / 31);
@@ -201,8 +250,8 @@ PRIVATE STATIC bool SegaSaturnExporter::CopyFile(const char* from, const char* t
 }
 
 // The runtime lives beside the engine rather than inside it -- it is startup
-// code and linker scripts that never change with the scene, and it reads better
-// as files than as string literals.
+// code, a linker script and register pokes that never change with the scene,
+// and it reads better as files than as string literals.
 //
 // An installed engine has meta/ next to it, so that is looked for first from
 // where the engine was started and then from where the engine itself is. A
@@ -233,6 +282,256 @@ PRIVATE STATIC bool SegaSaturnExporter::FindRuntime(char* out, size_t outSize) {
 
     return false;
 }
+
+// A title as the Saturn's disc header wants it: fixed width, uppercase ASCII,
+// space padded, no terminator. Anything else is written as a space rather than
+// left to run off the end of a field the console reads by offset.
+PRIVATE STATIC void SegaSaturnExporter::HeaderField(char* out, size_t width, const char* text) {
+    size_t i = 0;
+
+    if (text) {
+        for (; i < width && text[i]; i++) {
+            char c = text[i];
+
+            if (c >= 'a' && c <= 'z')
+                c = (char)(c - 'a' + 'A');
+            else if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                       c == ' ' || c == '-' || c == '_' || c == '.'))
+                c = ' ';
+
+            out[i] = c;
+        }
+    }
+
+    for (; i < width; i++)
+        out[i] = ' ';
+
+    out[width] = '\0';
+}
+
+// ------------------------------------------------------------ 3D scenes ---
+
+PRIVATE STATIC Uint16 SegaSaturnExporter::ColorToSaturn(Uint32 argb) {
+    return SATURN_COLOR_WORD((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF);
+}
+
+// The colour a face is drawn in.
+//
+// A mesh may carry a colour per vertex; the Saturn draws a flat polygon, so the
+// corners are averaged into the one colour it can use. Failing that the model's
+// material has a diffuse colour, and failing that everything would be black,
+// which reads as a bug rather than as a model -- so it falls back to grey.
+PRIVATE STATIC Uint16 SegaSaturnExporter::FaceColor(Mesh* mesh, IModel* model, Sint32* corners, int cornerCount) {
+    if (mesh->ColorBuffer) {
+        Uint32 r = 0, g = 0, b = 0;
+
+        for (int i = 0; i < cornerCount; i++) {
+            Uint32 c = mesh->ColorBuffer[corners[i]];
+            r += (c >> 16) & 0xFF;
+            g += (c >> 8) & 0xFF;
+            b += c & 0xFF;
+        }
+
+        r /= (Uint32)cornerCount;
+        g /= (Uint32)cornerCount;
+        b /= (Uint32)cornerCount;
+
+        return SATURN_COLOR_WORD(r, g, b);
+    }
+
+    if (mesh->MaterialIndex >= 0 && model->Materials &&
+        (size_t)mesh->MaterialIndex < model->MaterialCount) {
+        Material* material = model->Materials[mesh->MaterialIndex];
+        if (material) {
+            Uint32 r = (Uint32)(material->ColorDiffuse[0] * 255.0f);
+            Uint32 g = (Uint32)(material->ColorDiffuse[1] * 255.0f);
+            Uint32 b = (Uint32)(material->ColorDiffuse[2] * 255.0f);
+
+            if (r > 255) r = 255;
+            if (g > 255) g = 255;
+            if (b > 255) b = 255;
+
+            if (r || g || b)
+                return SATURN_COLOR_WORD(r, g, b);
+        }
+    }
+
+    return SATURN_COLOR_WORD(160, 160, 160);
+}
+
+// Walks one placed model into the shared vertex and face tables, with its
+// position, rotation and scale already applied. The console gets world space
+// and never has to know a scene graph existed.
+PRIVATE STATIC void SegaSaturnExporter::CollectModel(IModel* model, Scene3DObject* object) {
+    Matrix4x4 rotation, scale, transform;
+
+    Matrix4x4::IdentityRotationXYZ(&rotation, object->RotationX, object->RotationY, object->RotationZ);
+    Matrix4x4::IdentityScale(&scale, object->ScaleX, object->ScaleY, object->ScaleZ);
+    Matrix4x4::Multiply(&transform, &rotation, &scale);
+    Matrix4x4::Translate(&transform, &transform, object->X, object->Y, object->Z);
+
+    for (size_t m = 0; m < model->MeshCount; m++) {
+        Mesh* mesh = model->Meshes[m];
+        if (!mesh || !mesh->PositionBuffer || !mesh->VertexIndexBuffer)
+            continue;
+
+        size_t base = Vertices.size();
+
+        if (base + mesh->VertexCount > SATURN_MAX_VERTICES)
+            break;
+
+        for (Uint32 v = 0; v < mesh->VertexCount; v++) {
+            // The engine keeps positions in 16.16 already, which is the same
+            // fixed point the SH-2 side works in, so this is a matrix multiply
+            // and not a conversion.
+            float x = (float)mesh->PositionBuffer[v].X / 65536.0f;
+            float y = (float)mesh->PositionBuffer[v].Y / 65536.0f;
+            float z = (float)mesh->PositionBuffer[v].Z / 65536.0f;
+
+            // Matrix4x4 is column major, the way OpenGL lays one out: element
+            // (row i, column j) is Values[j * 4 + i], and the translation is
+            // the last column at 12, 13 and 14. Reading it as row major loses
+            // the translation entirely -- every model lands on the origin --
+            // and quietly transposes the rotation, which a symmetrical model
+            // hides.
+            float* M = transform.Values;
+            float wx = M[0] * x + M[4] * y + M[8] * z + M[12];
+            float wy = M[1] * x + M[5] * y + M[9] * z + M[13];
+            float wz = M[2] * x + M[6] * y + M[10] * z + M[14];
+
+            SaturnVertex vertex;
+            vertex.X = (Sint32)(wx * 65536.0f);
+            vertex.Y = (Sint32)(wy * 65536.0f);
+            vertex.Z = (Sint32)(wz * 65536.0f);
+
+            Vertices.push_back(vertex);
+        }
+
+        int perFace = model->VertexPerFace ? model->VertexPerFace : 3;
+
+        for (Uint32 i = 0; i + perFace <= mesh->VertexIndexCount; i += perFace) {
+            if (Faces.size() >= SATURN_MAX_FACES) {
+                DroppedFaces++;
+                continue;
+            }
+
+            Sint32 corners[4];
+            bool valid = true;
+
+            for (int c = 0; c < perFace; c++) {
+                Sint32 index = mesh->VertexIndexBuffer[i + c];
+                if (index < 0 || (Uint32)index >= mesh->VertexCount) {
+                    valid = false;
+                    break;
+                }
+                corners[c] = index;
+            }
+
+            if (!valid)
+                continue;
+
+            SaturnFace face;
+            face.A = (Uint16)(base + corners[0]);
+            face.B = (Uint16)(base + corners[1]);
+            face.C = (Uint16)(base + corners[2]);
+
+            if (perFace >= 4) {
+                face.D = (Uint16)(base + corners[3]);
+                face.Flags = 0;
+            }
+            else {
+                // VDP1 draws quads. A triangle is one whose last two corners
+                // are the same point, which is how the Saturn always did them.
+                face.D = face.C;
+                face.Flags = SATURN_FACE_TRIANGLE;
+            }
+
+            face.Color = SegaSaturnExporter::FaceColor(mesh, model, corners, perFace);
+
+            Faces.push_back(face);
+        }
+    }
+}
+
+PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene3D(const char* outputPath, const char* scenePath) {
+    SegaSaturnExportResult result;
+    memset(&result, 0, sizeof(result));
+    result.Is3D = true;
+
+    Scene3DSettings settings;
+    vector<Scene3DObject> objects;
+
+    if (!Scene3DFormat::Read(scenePath, &settings, &objects)) {
+        snprintf(result.Message, sizeof(result.Message), "Could not read the 3D scene \"%s\".", scenePath);
+        return result;
+    }
+
+    if (!objects.size()) {
+        StringUtils::Copy(result.Message, "That 3D scene has no models in it.", sizeof(result.Message));
+        return result;
+    }
+
+    Vertices.clear();
+    Faces.clear();
+    DroppedFaces = 0;
+
+    int loaded = 0;
+
+    for (size_t i = 0; i < objects.size(); i++) {
+        ResourceStream* stream = ResourceStream::New(objects[i].Source);
+        if (!stream) {
+            Log::Print(Log::LOG_WARN, "Saturn export: could not open model \"%s\".", objects[i].Source);
+            continue;
+        }
+
+        IModel* model = new IModel();
+        bool ok = model->Load(stream, objects[i].Source);
+        stream->Close();
+
+        if (!ok) {
+            Log::Print(Log::LOG_WARN, "Saturn export: could not read model \"%s\".", objects[i].Source);
+            delete model;
+            continue;
+        }
+
+        SegaSaturnExporter::CollectModel(model, &objects[i]);
+        delete model;
+
+        loaded++;
+    }
+
+    result.ModelCount = loaded;
+    result.VertexCount = (int)Vertices.size();
+    result.FaceCount = (int)Faces.size();
+    result.FacesDropped = DroppedFaces;
+
+    if (!Faces.size()) {
+        StringUtils::Copy(result.Message,
+            "Nothing came out of that 3D scene. Its models either would not load or have no faces.",
+            sizeof(result.Message));
+        return result;
+    }
+
+    if (!SegaSaturnExporter::WriteProject(outputPath, &result))
+        return result;
+
+    result.Success = true;
+
+    if (result.FacesDropped) {
+        snprintf(result.Message, sizeof(result.Message),
+            "Exported %d model(s): %d vertices and %d faces. %d more face(s) went over what the SH-2 can transform in a frame and were left out.",
+            result.ModelCount, result.VertexCount, result.FaceCount, result.FacesDropped);
+    }
+    else {
+        snprintf(result.Message, sizeof(result.Message),
+            "Exported %d model(s): %d vertices and %d faces for VDP1.",
+            result.ModelCount, result.VertexCount, result.FaceCount);
+    }
+
+    return result;
+}
+
+// ------------------------------------------------------------ 2D scenes ---
 
 PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene(const char* outputPath) {
     SegaSaturnExportResult result;
@@ -284,6 +583,9 @@ PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene(const char*
     SegaSaturnExporter::BuildImage(layer, width, height);
     result.ColorsDropped = DroppedColors;
 
+    Vertices.clear();
+    Faces.clear();
+
     if (!SegaSaturnExporter::WriteProject(outputPath, &result))
         return result;
 
@@ -308,6 +610,8 @@ PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene(const char*
     return result;
 }
 
+// -------------------------------------------------------------- writing ---
+
 PRIVATE STATIC bool SegaSaturnExporter::WriteProject(const char* outputPath, SegaSaturnExportResult* result) {
     char path[1024];
     char runtime[1024];
@@ -329,10 +633,12 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteProject(const char* outputPath, Seg
     }
 
     // --- the runtime, copied in as it is ---
-    static const char* srcFiles[5] = { "saturn.h", "s_main.c", "string.c", "string.h", "saturn.ld" };
+    static const char* srcFiles[7] = {
+        "saturn.h", "vdp.c", "pad.c", "string.c", "scene3d.c", "crt0.s", "ip.s"
+    };
 
     char from[1024];
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 7; i++) {
         snprintf(from, sizeof(from), "%s/%s", runtime, srcFiles[i]);
         snprintf(path, sizeof(path), "%s/src/%s", outputPath, srcFiles[i]);
         if (!SegaSaturnExporter::CopyFile(from, path)) {
@@ -341,135 +647,309 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteProject(const char* outputPath, Seg
         }
     }
 
-    // Copy assembly startup file
-    snprintf(from, sizeof(from), "%s/saturn_start.s", runtime);
-    snprintf(path, sizeof(path), "%s/src/saturn_start.s", outputPath);
+    snprintf(from, sizeof(from), "%s/saturn.ld", runtime);
+    snprintf(path, sizeof(path), "%s/src/saturn.ld", outputPath);
     if (!SegaSaturnExporter::CopyFile(from, path)) {
         snprintf(result->Message, sizeof(result->Message), "Could not copy \"%s\".", from);
         return false;
     }
 
-    // Copy header include file
-    snprintf(from, sizeof(from), "%s/sat_header.inc", runtime);
-    snprintf(path, sizeof(path), "%s/src/sat_header.inc", outputPath);
-    if (!SegaSaturnExporter::CopyFile(from, path)) {
-        snprintf(result->Message, sizeof(result->Message), "Could not copy \"%s\".", from);
-        return false;
-    }
+    if (result->Is3D) {
+        // --- the mesh, big endian, which is the SH-2's own byte order ---
+        vector<Uint8> blob;
 
-    // --- the palette, as the Saturn's own colour words, big endian ---
-    vector<Uint8> bytes;
+        blob.push_back('H'); blob.push_back('S'); blob.push_back('M'); blob.push_back('1');
 
-    // Entry zero is left at black: nothing indexes it, since it is transparency.
-    bytes.push_back(0);
-    bytes.push_back(0);
-
-    for (size_t i = 0; i < SATURN_PALETTE_USABLE; i++) {
-        Uint16 word = 0;
-        if (i < Palette.size()) {
-            Uint32 color = Palette[i];
-            word = SATURN_COLOR_WORD((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+        Uint32 counts[2] = { (Uint32)Vertices.size(), (Uint32)Faces.size() };
+        for (int c = 0; c < 2; c++) {
+            blob.push_back((Uint8)(counts[c] >> 24));
+            blob.push_back((Uint8)(counts[c] >> 16));
+            blob.push_back((Uint8)(counts[c] >> 8));
+            blob.push_back((Uint8)counts[c]);
         }
 
-        bytes.push_back((Uint8)(word >> 8));
-        bytes.push_back((Uint8)(word & 0xFF));
-    }
+        for (size_t i = 0; i < Vertices.size(); i++) {
+            Sint32 axis[3] = { Vertices[i].X, Vertices[i].Y, Vertices[i].Z };
+            for (int a = 0; a < 3; a++) {
+                Uint32 v = (Uint32)axis[a];
+                blob.push_back((Uint8)(v >> 24));
+                blob.push_back((Uint8)(v >> 16));
+                blob.push_back((Uint8)(v >> 8));
+                blob.push_back((Uint8)v);
+            }
+        }
 
-    snprintf(path, sizeof(path), "%s/res/palette.bin", outputPath);
-    if (!SegaSaturnExporter::WriteBinary(path, bytes.data(), bytes.size())) {
-        snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
-        return false;
-    }
+        for (size_t i = 0; i < Faces.size(); i++) {
+            Uint16 fields[6] = {
+                Faces[i].A, Faces[i].B, Faces[i].C, Faces[i].D,
+                Faces[i].Color, Faces[i].Flags
+            };
 
-    // --- the picture, one byte a pixel ---
-    snprintf(path, sizeof(path), "%s/res/image.bin", outputPath);
-    if (!SegaSaturnExporter::WriteBinary(path, Indices.data(), Indices.size())) {
-        snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
-        return false;
+            for (int f = 0; f < 6; f++) {
+                blob.push_back((Uint8)(fields[f] >> 8));
+                blob.push_back((Uint8)fields[f]);
+            }
+        }
+
+        snprintf(path, sizeof(path), "%s/res/mesh.bin", outputPath);
+        if (!SegaSaturnExporter::WriteBinary(path, blob.data(), blob.size())) {
+            snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
+            return false;
+        }
+    }
+    else {
+        // --- the palette, as the Saturn's own colour words, big endian ---
+        vector<Uint8> bytes;
+
+        // Entry zero is left at black: nothing indexes it, since it is the
+        // index a VDP2 background treats as transparent.
+        bytes.push_back(0);
+        bytes.push_back(0);
+
+        for (size_t i = 0; i < SATURN_PALETTE_USABLE; i++) {
+            Uint16 word = 0;
+            if (i < Palette.size()) {
+                Uint32 color = Palette[i];
+                word = SATURN_COLOR_WORD((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+            }
+
+            bytes.push_back((Uint8)(word >> 8));
+            bytes.push_back((Uint8)(word & 0xFF));
+        }
+
+        snprintf(path, sizeof(path), "%s/res/palette.bin", outputPath);
+        if (!SegaSaturnExporter::WriteBinary(path, bytes.data(), bytes.size())) {
+            snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
+            return false;
+        }
+
+        // --- the picture, one byte a pixel ---
+        snprintf(path, sizeof(path), "%s/res/image.bin", outputPath);
+        if (!SegaSaturnExporter::WriteBinary(path, Indices.data(), Indices.size())) {
+            snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
+            return false;
+        }
     }
 
     return SegaSaturnExporter::WriteSources(outputPath, result);
+}
+
+PRIVATE STATIC bool SegaSaturnExporter::WriteIPHeader(const char* outputPath, SegaSaturnExportResult* result) {
+    char path[1024];
+    char text[4096];
+    char title[113];
+    char product[11];
+
+    const char* sceneName = Scene::CurrentScene[0] ? Scene::CurrentScene : "HATCH SCENE";
+
+    SegaSaturnExporter::HeaderField(title, 112, sceneName);
+    SegaSaturnExporter::HeaderField(product, 10, "T-000");
+
+    // The console reads this by byte offset, so every field is a fixed width
+    // and the assembler is told so rather than trusted to count.
+    snprintf(text, sizeof(text),
+        "! The Saturn disc header for this export, byte for byte as the console\n"
+        "! reads it. Written by the Hatch Game Engine; edit the title if you like,\n"
+        "! but keep every field exactly the width it is.\n"
+        "\n"
+        "    .ascii  \"SEGA SEGASATURN \"\n"
+        "    .ascii  \"SEGA TP T-000   \"\n"
+        "    .ascii  \"%s\"\n"
+        "    .ascii  \"V1.000\"\n"
+        "    .ascii  \"20260101\"\n"
+        "    .ascii  \"CD-1/1  \"\n"
+        "    .ascii  \"JTUBKAEL  \"\n"
+        "    .ascii  \"      \"\n"
+        "    .ascii  \"J       \"\n"
+        "    .ascii  \"        \"\n"
+        "    .ascii  \"%s\"\n"
+        "    .space  16, 0\n"
+        "    .long   0x00001000        ! how much of IP.BIN to load\n"
+        "    .long   0x00000000\n"
+        "    .long   0x06002000        ! master SH-2 stack\n"
+        "    .long   0x06001E00        ! slave SH-2 stack\n"
+        "    .long   0x06004000        ! where the program goes\n"
+        "    .long   0x00000000        ! and how big it is -- 0 means all of it\n"
+        "    .long   0x00000000\n"
+        "    .long   0x00000000\n",
+        product, title);
+
+    snprintf(path, sizeof(path), "%s/src/ip_header.inc", outputPath);
+    if (!SegaSaturnExporter::WriteText(path, text)) {
+        snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
+        return false;
+    }
+
+    return true;
 }
 
 PRIVATE STATIC bool SegaSaturnExporter::WriteSources(const char* outputPath, SegaSaturnExportResult* result) {
     char path[1024];
     char text[8192];
 
-    // The SH-2 program. It initializes the Saturn VDPs, loads the palette,
-    // and blits the part of the picture the camera is over into the framebuffer.
-    snprintf(text, sizeof(text),
-        "// Generated by the Hatch Game Engine's SEGA Saturn exporter.\n"
-        "//\n"
-        "// The scene is in res/ as a palette and a bitmap. This puts it on the\n"
-        "// screen and lets the pad move over it; the game goes here.\n"
-        "\n"
-        "#include \"saturn.h\"\n"
-        "\n"
-        "#define IMAGE_W %d\n"
-        "#define IMAGE_H %d\n"
-        "\n"
-        "extern const unsigned char scene_image[];\n"
-        "extern const unsigned short scene_palette[];\n"
-        "\n"
-        "static int cameraX = 0;\n"
-        "static int cameraY = 0;\n"
-        "\n"
-        "int main(void) {\n"
-        "    /* Initialize Saturn hardware */\n"
-        "    /* TODO: Add proper initialization with SEGA Saturn SDK */\n"
-        "\n"
-        "    /* Load palette */\n"
-        "    /* TODO: Use Saturn SDK to load scene_palette into CRAM */\n"
-        "\n"
-        "    while (1) {\n"
-        "        /* Read controller input */\n"
-        "        /* u16 pad = SATURN_ReadPad(); */\n"
-        "\n"
-        "        /* Update camera position */\n"
-        "        /* if (pad & PAD_RIGHT) cameraX += 4; */\n"
-        "        /* if (pad & PAD_LEFT)  cameraX -= 4; */\n"
-        "        /* if (pad & PAD_DOWN)  cameraY += 4; */\n"
-        "        /* if (pad & PAD_UP)    cameraY -= 4; */\n"
-        "\n"
-        "        /* Clamp camera to image bounds */\n"
-        "        if (cameraX < 0) cameraX = 0;\n"
-        "        if (cameraY < 0) cameraY = 0;\n"
-        "        if (cameraX + SATURN_SCREEN_WIDTH > IMAGE_W)\n"
-        "            cameraX = IMAGE_W - SATURN_SCREEN_WIDTH;\n"
-        "        if (cameraY + SATURN_SCREEN_HEIGHT > IMAGE_H)\n"
-        "            cameraY = IMAGE_H - SATURN_SCREEN_HEIGHT;\n"
-        "\n"
-        "        /* Blit visible portion to framebuffer */\n"
-        "        /* TODO: Use Saturn SDK blitting functions */\n"
-        "\n"
-        "        /* Wait for VBLANK */\n"
-        "        /* SATURN_WaitVBlank(); */\n"
-        "    }\n"
-        "\n"
-        "    return 0;\n"
-        "}\n",
-        result->ImageWidth, result->ImageHeight);
+    if (!SegaSaturnExporter::WriteIPHeader(outputPath, result))
+        return false;
 
-    snprintf(path, sizeof(path), "%s/src/s_main.c", outputPath);
+    // --- main.c ---
+    if (result->Is3D) {
+        snprintf(text, sizeof(text),
+            "/* Generated by the Hatch Game Engine's SEGA Saturn exporter.\n"
+            " *\n"
+            " * The scene's geometry is in res/mesh.bin, already in world space and\n"
+            " * already in the 16.16 fixed point the SH-2 works in. Every frame it is\n"
+            " * rotated, projected, culled, sorted back to front and handed to VDP1 as\n"
+            " * polygon commands. The pad turns it; the game goes here.\n"
+            " */\n"
+            "\n"
+            "#include \"saturn.h\"\n"
+            "\n"
+            "extern const unsigned char scene_mesh[];\n"
+            "\n"
+            "int main(void) {\n"
+            "    Mesh3D mesh;\n"
+            "    int yaw = 0, pitch = 16;\n"
+            "    s32 distance = FIX(%d);\n"
+            "\n"
+            "    vdp_init_bitmap();\n"
+            "    vdp1_init();\n"
+            "    pad_init();\n"
+            "\n"
+            "    if (!mesh3d_open(&mesh, scene_mesh)) {\n"
+            "        /* The blob is not what this build expects. Sitting here is more\n"
+            "         * use than drawing whatever the bytes happen to mean. */\n"
+            "        while (1)\n"
+            "            vdp_wait_vblank();\n"
+            "    }\n"
+            "\n"
+            "    while (1) {\n"
+            "        u16 pad = pad_read();\n"
+            "\n"
+            "        if (pad & PAD_LEFT)  yaw -= 2;\n"
+            "        if (pad & PAD_RIGHT) yaw += 2;\n"
+            "        if (pad & PAD_UP)    pitch -= 2;\n"
+            "        if (pad & PAD_DOWN)  pitch += 2;\n"
+            "        if (pad & PAD_A)     distance -= FIX(4);\n"
+            "        if (pad & PAD_B)     distance += FIX(4);\n"
+            "\n"
+            "        if (distance < FIX(32))\n"
+            "            distance = FIX(32);\n"
+            "\n"
+            "        /* Nothing on the pad turns it, so it turns by itself. */\n"
+            "        if (!(pad & (PAD_LEFT | PAD_RIGHT)))\n"
+            "            yaw += 1;\n"
+            "\n"
+            "        mesh3d_draw(&mesh, yaw & 255, pitch & 255, distance);\n"
+            "        vdp_wait_vblank();\n"
+            "    }\n"
+            "\n"
+            "    return 0;\n"
+            "}\n",
+            SegaSaturnExporter::CameraDistance());
+    }
+    else {
+        snprintf(text, sizeof(text),
+            "/* Generated by the Hatch Game Engine's SEGA Saturn exporter.\n"
+            " *\n"
+            " * The scene is in res/ as a palette and an eight-bit picture. VDP2 shows\n"
+            " * a window of it as a bitmap background and the pad moves the window; the\n"
+            " * game goes here.\n"
+            " */\n"
+            "\n"
+            "#include \"saturn.h\"\n"
+            "\n"
+            "#define IMAGE_W %d\n"
+            "#define IMAGE_H %d\n"
+            "\n"
+            "extern const unsigned char  scene_image[];\n"
+            "extern const unsigned short scene_palette[];\n"
+            "\n"
+            "int main(void) {\n"
+            "    int cameraX = 0, cameraY = 0;\n"
+            "    int lastX = -1, lastY = -1;\n"
+            "\n"
+            "    vdp_init_bitmap();\n"
+            "    vdp_load_palette(scene_palette, 256);\n"
+            "    pad_init();\n"
+            "\n"
+            "    while (1) {\n"
+            "        u16 pad = pad_read();\n"
+            "\n"
+            "        if (pad & PAD_RIGHT) cameraX += 4;\n"
+            "        if (pad & PAD_LEFT)  cameraX -= 4;\n"
+            "        if (pad & PAD_DOWN)  cameraY += 4;\n"
+            "        if (pad & PAD_UP)    cameraY -= 4;\n"
+            "\n"
+            "        if (cameraX < 0) cameraX = 0;\n"
+            "        if (cameraY < 0) cameraY = 0;\n"
+            "        if (cameraX > IMAGE_W - SCREEN_W) cameraX = IMAGE_W - SCREEN_W;\n"
+            "        if (cameraY > IMAGE_H - SCREEN_H) cameraY = IMAGE_H - SCREEN_H;\n"
+            "        if (cameraX < 0) cameraX = 0;\n"
+            "        if (cameraY < 0) cameraY = 0;\n"
+            "\n"
+            "        /* Copying a screenful costs enough that it is only worth doing\n"
+            "         * when the camera has actually moved. */\n"
+            "        if (cameraX != lastX || cameraY != lastY) {\n"
+            "            vdp_blit(scene_image, IMAGE_W, IMAGE_H, cameraX, cameraY);\n"
+            "            lastX = cameraX;\n"
+            "            lastY = cameraY;\n"
+            "        }\n"
+            "\n"
+            "        vdp_wait_vblank();\n"
+            "    }\n"
+            "\n"
+            "    return 0;\n"
+            "}\n",
+            result->ImageWidth, result->ImageHeight);
+    }
+
+    snprintf(path, sizeof(path), "%s/src/main.c", outputPath);
     if (!SegaSaturnExporter::WriteText(path, text)) {
         snprintf(result->Message, sizeof(result->Message), "Could not write \"%s\".", path);
         return false;
     }
 
-    // Generate scene_data.s with embedded palette and image
-    snprintf(text, sizeof(text),
-        "/* Embedded scene data for SEGA Saturn */\n"
-        "\n"
-        ".section .rodata\n"
-        ".global _scene_palette\n"
-        ".global _scene_image\n"
-        "\n"
-        "_scene_palette:\n"
-        ".incbin \"res/palette.bin\"\n"
-        "\n"
-        "_scene_image:\n"
-        ".incbin \"res/image.bin\"\n"
-        "\n");
+    // --- the art, pulled in by the assembler ---
+    //
+    // Every symbol is defined twice, once with a leading underscore and once
+    // without. Whether a C symbol gets that underscore is a property of the
+    // toolchain, not of the target -- sh-elf builds prefix, sh-linux ones do
+    // not -- and an export that only guesses right on the compiler it was
+    // tested against is an export that fails to link on somebody else's.
+    if (result->Is3D) {
+        StringUtils::Copy(text,
+            "/* The scene's geometry, as the exporter wrote it. */\n"
+            "\n"
+            "    .section .rodata\n"
+            "    .align 4\n"
+            "    .global scene_mesh\n"
+            "    .global _scene_mesh\n"
+            "\n"
+            "scene_mesh:\n"
+            "_scene_mesh:\n"
+            "    .incbin \"res/mesh.bin\"\n",
+            sizeof(text));
+    }
+    else {
+        StringUtils::Copy(text,
+            "/* The scene's art, as the exporter wrote it. */\n"
+            "\n"
+            "    .section .rodata\n"
+            "    .align 4\n"
+            "    .global scene_palette\n"
+            "    .global _scene_palette\n"
+            "    .global scene_image\n"
+            "    .global _scene_image\n"
+            "\n"
+            "scene_palette:\n"
+            "_scene_palette:\n"
+            "    .incbin \"res/palette.bin\"\n"
+            "\n"
+            "    .align 4\n"
+            "scene_image:\n"
+            "_scene_image:\n"
+            "    .incbin \"res/image.bin\"\n",
+            sizeof(text));
+    }
 
     snprintf(path, sizeof(path), "%s/src/scene_data.s", outputPath);
     if (!SegaSaturnExporter::WriteText(path, text)) {
@@ -477,61 +957,72 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteSources(const char* outputPath, Seg
         return false;
     }
 
-    // Makefile for building with SEGA Saturn SDK
+    // --- the Makefile ---
+    //
+    // Two binaries come out of this and they are not the same kind of thing.
+    // 0.BIN is the program, linked to run from 0x06004000. IP.BIN is the disc
+    // header, which lives outside the filesystem in the first sixteen sectors
+    // and is put there by mkisofs -G. The program has to be the first file in
+    // the root directory, which is why it is named with a digit.
     snprintf(text, sizeof(text),
-        "# Makefile for SEGA Saturn export from Hatch Game Engine\n"
+        "# %s, for the SEGA Saturn.\n"
         "#\n"
-        "# Build with the SEGA Saturn SDK:\n"
-        "#   https://github.com/SaturnSDK\n"
+        "# Needs an SH-2 cross compiler. The one from\n"
+        "# https://github.com/SaturnSDK works, and so does any sh-elf-gcc:\n"
+        "# nothing here uses SEGA's libraries.\n"
         "#\n"
-        "# Set SATURN_SDK to your SDK installation:\n"
-        "#   export SATURN_SDK=/path/to/saturn-sdk\n"
-        "#   make\n"
-        "#\n"
-        "# The output will be out/rom.bin\n"
+        "#   make                 build cd/%s.iso\n"
+        "#   make SH_PREFIX=...   if your toolchain is not on the PATH\n"
         "\n"
-        "SATURN_SDK ?= /opt/saturn-sdk\n"
+        "SH_PREFIX ?= sh-elf-\n"
         "\n"
-        "SHCC = $(SATURN_SDK)/bin/sh-elf-gcc\n"
-        "SHAS = $(SATURN_SDK)/bin/sh-elf-as\n"
-        "SHLD = $(SATURN_SDK)/bin/sh-elf-ld\n"
-        "SHOBJC = $(SATURN_SDK)/bin/sh-elf-objcopy\n"
+        "CC      = $(SH_PREFIX)gcc\n"
+        "OBJCOPY = $(SH_PREFIX)objcopy\n"
         "\n"
-        "SHCFLAGS = -O2 -Wall -Isrc\n"
-        "SHASFLAGS = \n"
-        "SHLDFLAGS = -T src/saturn.ld -nostdlib\n"
+        "# -m2 is the SH-2, and big endian is its default -- the Saturn is not a\n"
+        "# little endian machine and elf32-littlesh will not run on one.\n"
+        "CFLAGS  = -m2 -O2 -Wall -fomit-frame-pointer -ffreestanding -nostdlib -Isrc\n"
+        "LDFLAGS = -T src/saturn.ld -nostdlib\n"
         "\n"
-        "OBJS = src/saturn_start.o src/scene_data.o src/m_main.o src/s_main.o src/string.o\n"
+        "OBJS = src/crt0.o src/main.o src/vdp.o src/pad.o src/string.o \\\n"
+        "       src/scene3d.o src/scene_data.o\n"
         "\n"
-        "all: out\n"
-        "\tout/rom.bin\n"
+        "ISO = cd/%s.iso\n"
         "\n"
-        "out:\n"
-        "\tmkdir -p out\n"
+        "all: $(ISO)\n"
         "\n"
-        "src/saturn_start.o: src/saturn_start.s src/sat_header.inc\n"
-        "\t$(SHAS) $(SHASFLAGS) $< -o $@\n"
+        "%%.o: %%.c\n"
+        "\t$(CC) $(CFLAGS) -c $< -o $@\n"
         "\n"
-        "src/scene_data.o: src/scene_data.s res/palette.bin res/image.bin\n"
-        "\t$(SHAS) $(SHASFLAGS) $< -o $@\n"
+        "%%.o: %%.s\n"
+        "\t$(CC) $(CFLAGS) -c $< -o $@\n"
         "\n"
-        "src/m_main.o: src/m_main.c\n"
-        "\t$(SHCC) $(SHCFLAGS) -c $< -o $@\n"
+        "# The data is pulled in with .incbin against paths relative to here, so\n"
+        "# the assembler is run from here and told where to look.\n"
+        "src/scene_data.o: src/scene_data.s $(wildcard res/*.bin)\n"
+        "\t$(CC) $(CFLAGS) -Wa,-I,. -c $< -o $@\n"
         "\n"
-        "src/s_main.o: src/s_main.c\n"
-        "\t$(SHCC) $(SHCFLAGS) -c $< -o $@\n"
+        "src/ip.o: src/ip.s src/ip_header.inc\n"
+        "\t$(CC) $(CFLAGS) -Wa,-I,src -c $< -o $@\n"
         "\n"
-        "src/string.o: src/string.c\n"
-        "\t$(SHCC) $(SHCFLAGS) -c $< -o $@\n"
+        "cd/0.BIN: $(OBJS)\n"
+        "\tmkdir -p cd\n"
+        "\t$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o out.elf -lgcc\n"
+        "\t$(OBJCOPY) -O binary out.elf $@\n"
         "\n"
-        "out/rom.bin: $(OBJS)\n"
-        "\t$(SHCC) $(SHLDFLAGS) $(OBJS) -o out/rom.elf -lgcc\n"
-        "\t$(SHOBJC) -O binary out/rom.elf $@\n"
+        "IP.BIN: src/ip.o\n"
+        "\t$(OBJCOPY) -O binary --only-section=.ip $< $@\n"
+        "\n"
+        "$(ISO): cd/0.BIN IP.BIN\n"
+        "\tgenisoimage -quiet -sysid \"SEGA SEGASATURN\" -volid \"%s\" \\\n"
+        "\t  -G IP.BIN -full-iso9660-filenames -o $@ cd/0.BIN\n"
         "\n"
         "clean:\n"
-        "\trm -rf out src/*.o\n"
+        "\trm -rf cd out.elf IP.BIN src/*.o\n"
         "\n"
-        ".PHONY: all clean out\n");
+        ".PHONY: all clean\n",
+        Scene::CurrentScene[0] ? Scene::CurrentScene : "Scene",
+        "scene", "scene", "HATCHSCENE");
 
     snprintf(path, sizeof(path), "%s/Makefile", outputPath);
     if (!SegaSaturnExporter::WriteText(path, text)) {
@@ -539,45 +1030,116 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteSources(const char* outputPath, Seg
         return false;
     }
 
-    // README
-    snprintf(text, sizeof(text),
-        "# %s, for the SEGA Saturn\n"
-        "\n"
-        "Exported from the Hatch Game Engine. The Saturn has dual VDPs and supports\n"
-        "bitmap graphics with up to 32768 colors. This export uses a palette-based\n"
-        "approach:\n"
-        "\n"
-        "| File | What it holds |\n"
-        "| --- | --- |\n"
-        "| `res/palette.bin` | 256 colour words, fifteen bits each, five per channel |\n"
-        "| `res/image.bin` | a %dx%d picture, one byte a pixel, %d bytes |\n"
-        "| `src/s_main.c` | the SH-2 program that shows it |\n"
-        "| `src/saturn_*` | the startup every Saturn program needs |\n"
-        "\n"
-        "%d of the %d colour(s) the scene uses are in the palette. Index 0 is not\n"
-        "one of them: it is reserved for transparency.\n"
-        "\n"
-        "## Building\n"
-        "\n"
-        "```sh\n"
-        "export SATURN_SDK=/path/to/saturn-sdk\n"
-        "make\n"
-        "```\n"
-        "\n"
-        "`out/rom.bin` is the result. Run it on hardware or in an emulator like\n"
-        "Mednafen, Yabause, or Kronos.\n"
-        "\n"
-        "## What this is and is not\n"
-        "\n"
-        "The pad scrolls around the picture. That is all it does: Hatch's game\n"
-        "logic is bytecode for a VM that does not exist on an SH-2, so none of it\n"
-        "came across. The art did, at fifteen bits of colour.\n"
-        "\n"
-        "The picture sits in ROM and the SH-2 blits the part the camera is over.\n"
-        "This is a starting point for a real game.\n",
-        Scene::CurrentScene[0] ? Scene::CurrentScene : "Scene",
-        result->ImageWidth, result->ImageHeight, (int)result->ImageBytes,
-        result->PaletteCount, result->ColorsFound);
+    return SegaSaturnExporter::WriteReadme(outputPath, result);
+}
+
+PRIVATE STATIC bool SegaSaturnExporter::WriteReadme(const char* outputPath, SegaSaturnExportResult* result) {
+    char path[1024];
+    char text[8192];
+
+    if (result->Is3D) {
+        snprintf(text, sizeof(text),
+            "# %s, for the SEGA Saturn\n"
+            "\n"
+            "Exported from the Hatch Game Engine. This is the 3D scene, drawn on the\n"
+            "Saturn's VDP1 the way the Saturn's own games drew polygons.\n"
+            "\n"
+            "| File | What it holds |\n"
+            "| --- | --- |\n"
+            "| `res/mesh.bin` | %d vertices and %d faces, in world space, 16.16 fixed point |\n"
+            "| `src/main.c` | the program that turns and draws it |\n"
+            "| `src/scene3d.c` | the transform, the sort and the VDP1 command list |\n"
+            "| `src/vdp.c` | VDP1 and VDP2 setup |\n"
+            "| `src/ip.s` | the disc header the console boots from |\n"
+            "\n"
+            "%d model(s) came across.\n"
+            "\n"
+            "## Building\n"
+            "\n"
+            "```sh\n"
+            "make                    # needs sh-elf-gcc and genisoimage\n"
+            "make SH_PREFIX=/path/to/sh-elf-\n"
+            "```\n"
+            "\n"
+            "`cd/scene.iso` is the result. It boots in Mednafen, Yabause or Kronos.\n"
+            "\n"
+            "## How it draws\n"
+            "\n"
+            "The SH-2 has no floating point unit and the Saturn has no depth buffer, so\n"
+            "neither does this. Every vertex is transformed in 16.16 fixed point, every\n"
+            "face is thrown away if it is turned away from the camera, and what is left\n"
+            "is sorted back to front and drawn in that order.\n"
+            "\n"
+            "VDP1 draws quads, not triangles. A triangle is sent as a quad whose last\n"
+            "two corners are the same point, which is what the Saturn always did.\n"
+            "\n"
+            "Faces are flat shaded. The colour is the model's vertex colours averaged\n"
+            "over the face, or its material's diffuse colour when it has no vertex\n"
+            "colours -- VDP1 can do gouraud, but only from a table in its own VRAM, and\n"
+            "that is a thing to add rather than a thing to fake.\n"
+            "\n"
+            "## What this is and is not\n"
+            "\n"
+            "The pad turns the scene: left and right yaw it, up and down pitch it, A\n"
+            "and B move the camera in and out. That is all it does. Hatch's game logic\n"
+            "is bytecode for a VM that does not exist on an SH-2, so none of it came\n"
+            "across. The geometry did.\n"
+            "\n"
+            "Nothing here is SEGA's. There is no SGL and no SBL: the VDP registers are\n"
+            "written directly, which is why this builds with a stock sh-elf-gcc.\n"
+            "\n"
+            "The disc header has no security code -- that is a signed blob only SEGA\n"
+            "can produce. Emulators boot this; a retail console will not.\n",
+            Scene::CurrentScene[0] ? Scene::CurrentScene : "Scene",
+            result->VertexCount, result->FaceCount, result->ModelCount);
+    }
+    else {
+        snprintf(text, sizeof(text),
+            "# %s, for the SEGA Saturn\n"
+            "\n"
+            "Exported from the Hatch Game Engine. The scene layer is a VDP2 bitmap\n"
+            "background: eight bits a pixel, its colours in the Saturn's colour RAM.\n"
+            "\n"
+            "| File | What it holds |\n"
+            "| --- | --- |\n"
+            "| `res/palette.bin` | 256 colour words, five bits a channel, red in the low bits |\n"
+            "| `res/image.bin` | a %dx%d picture, one byte a pixel, %d bytes |\n"
+            "| `src/main.c` | the program that shows it |\n"
+            "| `src/vdp.c` | VDP1 and VDP2 setup |\n"
+            "| `src/ip.s` | the disc header the console boots from |\n"
+            "\n"
+            "%d of the %d colour(s) the scene uses are in the palette. Index 0 is not\n"
+            "one of them: a VDP2 background treats it as transparent, and what shows\n"
+            "through it is the back screen, which the runtime sets to black.\n"
+            "\n"
+            "## Building\n"
+            "\n"
+            "```sh\n"
+            "make                    # needs sh-elf-gcc and genisoimage\n"
+            "make SH_PREFIX=/path/to/sh-elf-\n"
+            "```\n"
+            "\n"
+            "`cd/scene.iso` is the result. It boots in Mednafen, Yabause or Kronos.\n"
+            "\n"
+            "## What this is and is not\n"
+            "\n"
+            "The pad scrolls around the picture. That is all it does: Hatch's game\n"
+            "logic is bytecode for a VM that does not exist on an SH-2, so none of it\n"
+            "came across. The art did, at fifteen bits of colour.\n"
+            "\n"
+            "The picture is bigger than the bitmap VDP2 holds, so the SH-2 copies the\n"
+            "window the camera is over rather than scrolling to it -- and only when the\n"
+            "camera has moved.\n"
+            "\n"
+            "Nothing here is SEGA's. There is no SGL and no SBL: the VDP registers are\n"
+            "written directly, which is why this builds with a stock sh-elf-gcc.\n"
+            "\n"
+            "The disc header has no security code -- that is a signed blob only SEGA\n"
+            "can produce. Emulators boot this; a retail console will not.\n",
+            Scene::CurrentScene[0] ? Scene::CurrentScene : "Scene",
+            result->ImageWidth, result->ImageHeight, (int)result->ImageBytes,
+            result->PaletteCount, result->ColorsFound);
+    }
 
     snprintf(path, sizeof(path), "%s/README.md", outputPath);
     if (!SegaSaturnExporter::WriteText(path, text)) {

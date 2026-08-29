@@ -875,3 +875,168 @@ jobs:
           name: HatchGameEngine-gamegear-sample-rom
           path: ggexport/out/rom.gg
           if-no-files-found: error
+
+  saturn:
+    # Not a build of the engine: two SH-2s and no operating system. This checks
+    # the export -- that a scene turns into a project which builds into a disc
+    # image a Saturn would boot, through both of the machine's video chips.
+    name: Saturn (export)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake xvfb texinfo genisoimage \
+            libglew-dev libgl1-mesa-dev libsdl2-dev
+
+      # The same bare-metal SH-2 compiler the 32X job builds, under the same
+      # cache key, so whichever job runs first pays for it and the other does
+      # not. Nothing packages one: the distribution's SH toolchain is configured
+      # for a little-endian SH-4 and the Saturn is a big-endian SH-2.
+      - name: Cache the SH-2 toolchain
+        id: sh2cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sh2
+          key: sh2-elf-binutils-2.42-gcc-13.2.0-${{ runner.os }}
+
+      - name: Build the SH-2 toolchain
+        if: steps.sh2cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          prefix="${HOME}/sh2"
+          work="${RUNNER_TEMP}/sh2src"
+          mkdir -p "${work}" && cd "${work}"
+
+          curl -fsSLO https://ftp.gnu.org/gnu/binutils/binutils-2.42.tar.xz
+          curl -fsSLO https://ftp.gnu.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz
+          tar xf binutils-2.42.tar.xz
+          tar xf gcc-13.2.0.tar.xz
+
+          mkdir build-binutils && cd build-binutils
+          ../binutils-2.42/configure --target=sh-elf --prefix="${prefix}" \
+            --disable-nls --disable-werror --with-sysroot MAKEINFO=true
+          make -j"$(nproc)" MAKEINFO=true
+          make install MAKEINFO=true
+          cd ..
+
+          export PATH="${prefix}/bin:${PATH}"
+
+          cd gcc-13.2.0 && ./contrib/download_prerequisites && cd ..
+
+          mkdir build-gcc && cd build-gcc
+          ../gcc-13.2.0/configure --target=sh-elf --prefix="${prefix}" \
+            --without-headers --with-newlib --disable-nls --disable-shared \
+            --disable-threads --disable-libssp --disable-libgomp \
+            --disable-libmudflap --disable-libquadmath --disable-libatomic \
+            --enable-languages=c --with-multilib-list=m2 MAKEINFO=true
+          make -j"$(nproc)" all-gcc all-target-libgcc MAKEINFO=true
+          make install-gcc install-target-libgcc MAKEINFO=true
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel
+
+      # ---- the tile scene, through VDP2 ----
+
+      - name: Export the sample scene
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/wide.tmx \
+              --export-saturn "${GITHUB_WORKSPACE}/satexport" \
+              --saturn-runtime "${GITHUB_WORKSPACE}/meta/saturn/runtime"
+
+      # Reads the export back and rebuilds the picture from it -- the palette
+      # words, the eight-bit indices -- then compares that against the tileset
+      # and map it came from. wide.tmx is forty columns across, which is not a
+      # power of two: a layer's rows are stored further apart than its width,
+      # and walking it by the width is the bug this scene exists to catch.
+      - name: Check the export against the art it was made from
+        run: |
+          python3 tools/verify-sega-export.py saturn \
+            "${GITHUB_WORKSPACE}/satexport" \
+            meta/megadrive/sample/Resources/Scenes \
+            wide.tmx
+
+      - name: Build the disc
+        run: |
+          export PATH="${HOME}/sh2/bin:${PATH}"
+          cd "${GITHUB_WORKSPACE}/satexport"
+          make
+
+          iso=cd/scene.iso
+          if [ ! -s "${iso}" ]; then
+            echo "no disc image was produced"
+            exit 1
+          fi
+
+          # A Saturn reads the first sector and will not go on unless it says
+          # so. If this is not there, mkisofs did not put IP.BIN in the system
+          # area and nothing would ever boot.
+          magic=$(dd if="${iso}" bs=1 count=15 2>/dev/null)
+          if [ "${magic}" != "SEGA SEGASATURN" ]; then
+            echo "the disc does not begin with the Saturn header -- got '${magic}'"
+            exit 1
+          fi
+
+          # The console jumps to offset 0xE00 of the header once it has loaded
+          # the program, so there has to be code there rather than padding.
+          entry=$(dd if=IP.BIN bs=1 skip=3584 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+          if [ "${entry}" = "00000000" ]; then
+            echo "IP.BIN has no entry point at 0xE00"
+            exit 1
+          fi
+
+          echo "disc: $(stat -c%s "${iso}") bytes, entry ${entry}"
+
+      # ---- the 3D scene, through VDP1 ----
+
+      - name: Export the sample 3D scene
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/saturn/sample \
+              --export-saturn-3d "${GITHUB_WORKSPACE}/sat3d" Scenes/cube.scene3d \
+              --saturn-runtime "${GITHUB_WORKSPACE}/meta/saturn/runtime"
+
+      # Three cubes of eight corners and twelve triangles each, with the
+      # placements baked in. A transform read with its rows and columns swapped
+      # puts them all on the origin, so the bounds are what is checked.
+      - name: Check the geometry that came out
+        run: |
+          python3 tools/verify-sega-export.py saturn-3d \
+            "${GITHUB_WORKSPACE}/sat3d" \
+            meta/saturn/sample/Resources/Scenes \
+            cube.scene3d
+
+      - name: Build the 3D disc
+        run: |
+          export PATH="${HOME}/sh2/bin:${PATH}"
+          cd "${GITHUB_WORKSPACE}/sat3d"
+          make
+
+          iso=cd/scene.iso
+          if [ ! -s "${iso}" ]; then
+            echo "no disc image was produced"
+            exit 1
+          fi
+
+          echo "3D disc: $(stat -c%s "${iso}") bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-saturn-sample-discs
+          path: |
+            satexport/cd/scene.iso
+            sat3d/cd/scene.iso
+          if-no-files-found: error
