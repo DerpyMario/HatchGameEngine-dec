@@ -16,6 +16,8 @@ public:
     static string      MegaDriveExportPath;
     static string      Sega32XExportPath;
     static string      Sega32XRuntimePath;
+    static string      SegaSaturnExportPath;
+    static string      SegaSaturnRuntimePath;
     static string      MegaCDExportPath;
     static string      GameGearExportPath;
 
