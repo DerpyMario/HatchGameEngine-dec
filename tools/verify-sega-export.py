@@ -24,7 +24,7 @@ sample it was tested on was 32 columns across, where the two are the same
 number. Run it on a layer whose width is not a power of two and it would have
 been caught the first time.
 
-Usage:  verify-sega-export.py <megadrive|gamegear|saturn> <export dir> <scenes dir> <map.tmx>
+Usage:  verify-sega-export.py <megadrive|gamegear|saturn|dreamcast> <export dir> <scenes dir> <map.tmx>
         verify-sega-export.py saturn-3d <export dir> <scenes dir> <scene.scene3d>
 """
 
@@ -178,6 +178,96 @@ def engine_transform(rx, ry, rz, sx, sy, sz, px, py, pz):
     return out
 
 
+def check_dreamcast_3d(export, scenes, scenename):
+    """The Dreamcast 3D export is the same geometry as the Saturn's, in floats
+    rather than fixed point and little endian rather than big, so the same
+    rebuild-it-from-the-scene-file check applies."""
+    models = read_scene3d("%s/%s" % (scenes, scenename))
+
+    if not models:
+        print("%s places no models" % scenename)
+        return 1
+
+    blob = open("%s/romdisk/mesh.bin" % export, "rb").read()
+
+    magic = blob[0:4]
+    if magic != b"HDC3":
+        print("mesh.bin does not start with HDC3 -- got %r" % magic)
+        return 1
+
+    vertex_count, face_count = struct.unpack("<2I", blob[4:12])
+
+    expected = 12 + vertex_count * 12 + face_count * 16
+    if len(blob) != expected:
+        print("mesh.bin is %d bytes; %d vertices and %d faces is %d"
+              % (len(blob), vertex_count, face_count, expected))
+        return 1
+
+    at = 12
+    vertices = []
+    for _ in range(vertex_count):
+        vertices.append(struct.unpack_from("<3f", blob, at))
+        at += 12
+
+    faces = []
+    for _ in range(face_count):
+        faces.append(struct.unpack_from("<4HIHH", blob, at))
+        at += 16
+
+    corners = [(-30.0, -30.0, -30.0), ( 30.0, -30.0, -30.0),
+               ( 30.0,  30.0, -30.0), (-30.0,  30.0, -30.0),
+               (-30.0, -30.0,  30.0), ( 30.0, -30.0,  30.0),
+               ( 30.0,  30.0,  30.0), (-30.0,  30.0,  30.0)]
+
+    if vertex_count != len(models) * len(corners):
+        print("%d vertices for %d model(s) of %d corners"
+              % (vertex_count, len(models), len(corners)))
+        return 1
+
+    worst = 0.0
+    compared = 0
+
+    for index, model in enumerate(models):
+        _, px, py, pz, rx, ry, rz, sx, sy, sz = model
+        M = engine_transform(rx, ry, rz, sx, sy, sz, px, py, pz)
+
+        for corner in range(len(corners)):
+            x, y, z = corners[corner]
+            wanted = (M[0] * x + M[4] * y + M[8] * z + M[12],
+                      M[1] * x + M[5] * y + M[9] * z + M[13],
+                      M[2] * x + M[6] * y + M[10] * z + M[14])
+            got = vertices[index * len(corners) + corner]
+
+            for a, b in zip(wanted, got):
+                worst = max(worst, abs(a - b))
+                compared += 1
+
+    bad_faces = 0
+    for a, b, c, d, colour, flags, pad in faces:
+        if max(a, b, c, d) >= vertex_count:
+            bad_faces += 1
+        elif (flags & 1) and d != c:
+            bad_faces += 1
+        elif (colour >> 24) != 0xFF:
+            # The PowerVR reads the top byte as alpha, and an opaque face that
+            # says it is transparent would not be drawn.
+            bad_faces += 1
+
+    print("%s: %d vertices and %d faces, %d coordinates compared, worst off by %.6f"
+          % (scenename, vertex_count, face_count, compared, worst))
+
+    # Single precision floats, so this is rounding and nothing else.
+    if worst > 0.01:
+        print("the geometry does not match the placements it was made from")
+        return 1
+
+    if bad_faces:
+        print("%d face(s) point outside the vertex table, are malformed, or are not opaque" % bad_faces)
+        return 1
+
+    return 0
+
+
 def check_saturn_3d(export, scenes, scenename):
     """The Saturn 3D export is a table of world-space vertices and the faces
     over them. This rebuilds every vertex from the scene file and the model it
@@ -262,6 +352,93 @@ def check_saturn_3d(export, scenes, scenename):
 
     if bad_faces:
         print("%d face(s) point outside the vertex table or are malformed" % bad_faces)
+        return 1
+
+    return 0
+
+
+def to_rgb565_parts(r, g, b):
+    """What a channel becomes in the sixteen bits the PowerVR reads. Green keeps
+    six bits and the others five, so they do not round the same way."""
+    return (r >> 3) * 255 // 31, (g >> 2) * 255 // 63, (b >> 3) * 255 // 31
+
+
+def check_dreamcast(export, scenes, mapname):
+    """The Dreamcast export is the scene layer as a grid of RGB565 textures.
+
+    Nothing is reduced on the way -- no palette, no tile deduplication -- so
+    this walks every pixel of every texture and asks whether it is the tileset
+    pixel the map put there, in the only colour the texture format can hold."""
+    _, _, tiles_png = read_png("%s/tileset.png" % scenes)
+    map_w, map_h, gids = read_map("%s/%s" % (scenes, mapname))
+
+    data = open("%s/romdisk/scene.bin" % export, "rb").read()
+
+    magic = data[0:4]
+    if magic != b"HDC2":
+        print("scene.bin does not start with HDC2 -- got %r" % magic)
+        return 1
+
+    # Little endian: the Dreamcast is the one SEGA machine here that is.
+    width, height, size, columns, rows = struct.unpack("<5I", data[4:24])
+
+    expected = 24 + columns * rows * size * size * 2
+    if len(data) != expected:
+        print("scene.bin is %d bytes; %dx%d textures of %d is %d"
+              % (len(data), columns, rows, size, expected))
+        return 1
+
+    texels = struct.unpack("<%dH" % (columns * rows * size * size), data[24:])
+
+    tile_w = tile_h = 16
+    compared = differing = 0
+    first = None
+
+    for row in range(rows):
+        for column in range(columns):
+            base = (column + row * columns) * size * size
+
+            for y in range(size):
+                for x in range(size):
+                    sx = column * size + x
+                    sy = row * size + y
+
+                    got = texels[base + x + y * size]
+
+                    # Past the edge of the layer, and past the edge of the
+                    # picture the exporter wrote, is black.
+                    if sx >= width or sy >= height:
+                        wanted = 0
+                    else:
+                        tile_x, tile_y = sx // tile_w, sy // tile_h
+
+                        if tile_x >= map_w or tile_y >= map_h:
+                            wanted = 0
+                        else:
+                            gid = gids[tile_x + tile_y * map_w]
+                            if gid == 0:
+                                wanted = 0
+                            else:
+                                source = gid - 1
+                                r, g, b, a = tiles_png[sy % tile_h][source * tile_w + (sx % tile_w)]
+                                if a < 128:
+                                    wanted = 0
+                                else:
+                                    wanted = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+
+                    compared += 1
+
+                    if wanted != got:
+                        differing += 1
+                        if first is None:
+                            first = (sx, sy, wanted, got)
+
+    print("%s: %dx%d in %dx%d textures of %d, %d pixels compared, %d differing"
+          % (mapname, width, height, columns, rows, size, compared, differing))
+
+    if first:
+        sx, sy, wanted, got = first
+        print("  first at (%d, %d): wanted %04X, got %04X" % (sx, sy, wanted, got))
         return 1
 
     return 0
@@ -425,6 +602,18 @@ def main():
             print("the export does not match the art it was made from")
         return result
 
+    if machine == "dreamcast":
+        result = check_dreamcast(export, scenes, mapname)
+        if result:
+            print("the export does not match the art it was made from")
+        return result
+
+    if machine == "dreamcast-3d":
+        result = check_dreamcast_3d(export, scenes, mapname)
+        if result:
+            print("the export does not match the scene it was made from")
+        return result
+
     if machine == "saturn-3d":
         result = check_saturn_3d(export, scenes, mapname)
         if result:
@@ -438,7 +627,7 @@ def main():
         return result
 
     if machine != "megadrive":
-        print("unknown machine %r -- expected megadrive, gamegear, saturn or saturn-3d" % machine)
+        print("unknown machine %r -- expected megadrive, gamegear, saturn, saturn-3d, dreamcast or dreamcast-3d" % machine)
         return 2
 
     _, _, tiles_png = read_png("%s/tileset.png" % scenes)

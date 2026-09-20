@@ -30,6 +30,7 @@ public:
 #include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
+#include <Engine/Exporters/DreamcastExporter.h>
 #include <Engine/UI/Hierarchy.h>
 #include <Engine/UI/Inspector.h>
 #include <Engine/UI/Selection.h>
@@ -1130,12 +1131,21 @@ PRIVATE STATIC void Studio::DrawScenesTab(float x, float y, float w, float h, bo
                 Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
             }
 
+            if (UICore::Button("Dreamcast")) {
+                DreamcastExportResult exported = DreamcastExporter::ExportScene(SegaExportPath);
+
+                Studio::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
             UICore::Text("Writes a project that builds into a cartridge or a", UI_COL_TEXT_FAINT);
             UICore::Text("disc. The Mega Drive and Mega CD get the scene as", UI_COL_TEXT_FAINT);
             UICore::Text("tiles for their VDP; the 32X and the Saturn have", UI_COL_TEXT_FAINT);
             UICore::Text("framebuffers, so they get it drawn, with far more", UI_COL_TEXT_FAINT);
-            UICore::Text("colour. Game logic does not come across to any of", UI_COL_TEXT_FAINT);
-            UICore::Text("them. The 3D tab exports a 3D scene to the Saturn.", UI_COL_TEXT_FAINT);
+            UICore::Text("colour. The Dreamcast takes it whole, in sixteen-bit", UI_COL_TEXT_FAINT);
+            UICore::Text("colour, as textures. Game logic does not come across", UI_COL_TEXT_FAINT);
+            UICore::Text("to any of them. The 3D tab exports a 3D scene to the", UI_COL_TEXT_FAINT);
+            UICore::Text("Saturn and the Dreamcast.", UI_COL_TEXT_FAINT);
         }
 
         UICore::Separator();

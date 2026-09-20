@@ -28,6 +28,7 @@ public:
 #include <Engine/ResourceTypes/ResourceManager.h>
 #include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
+#include <Engine/Exporters/DreamcastExporter.h>
 #include <Engine/Scene.h>
 #include <Engine/Utilities/StringUtils.h>
 
@@ -764,11 +765,23 @@ PRIVATE STATIC void SceneEditor3D::DrawSceneEditPanel(float x, float y, float w,
                 Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
             }
 
-            UICore::Text("Writes a project that builds into a Saturn disc.", UI_COL_TEXT_FAINT);
-            UICore::Text("The models come across as geometry the SH-2", UI_COL_TEXT_FAINT);
-            UICore::Text("transforms and VDP1 draws. Materials come across", UI_COL_TEXT_FAINT);
-            UICore::Text("as one flat colour a face; textures and lighting", UI_COL_TEXT_FAINT);
-            UICore::Text("do not.", UI_COL_TEXT_FAINT);
+            if (UICore::ButtonEnabled("Export 3D Scene To Dreamcast", !ScenePath.empty())) {
+                if (SceneDirty)
+                    SceneEditor3D::SaveScene();
+
+                DreamcastExportResult exported =
+                    DreamcastExporter::ExportScene3D(SaturnExportPath, ScenePath.c_str());
+
+                SceneEditor3D::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            UICore::Text("Writes a project that builds into a disc. The", UI_COL_TEXT_FAINT);
+            UICore::Text("models come across as geometry: the Saturn's SH-2", UI_COL_TEXT_FAINT);
+            UICore::Text("transforms it in fixed point for VDP1, the", UI_COL_TEXT_FAINT);
+            UICore::Text("Dreamcast's SH-4 in floats for the PowerVR.", UI_COL_TEXT_FAINT);
+            UICore::Text("Materials come across as one flat colour a face;", UI_COL_TEXT_FAINT);
+            UICore::Text("textures and lighting do not.", UI_COL_TEXT_FAINT);
         }
 
         UICore::Separator();
