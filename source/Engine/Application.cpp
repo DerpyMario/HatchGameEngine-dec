@@ -19,6 +19,9 @@ public:
     static string      SegaSaturnExportPath;
     static string      SegaSaturnRuntimePath;
     static string      SegaSaturnScene3DPath;
+    static string      DreamcastExportPath;
+    static string      DreamcastRuntimePath;
+    static string      DreamcastScene3DPath;
     static string      ConvertModelFrom;
     static string      ConvertModelTo;
     static string      MegaCDExportPath;
@@ -82,6 +85,7 @@ public:
 #include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
+#include <Engine/Exporters/DreamcastExporter.h>
 #include <Engine/ResourceTypes/IModel.h>
 #include <Engine/ResourceTypes/ModelFormats/HatchModel.h>
 #include <Engine/Utilities/StringUtils.h>
@@ -140,6 +144,9 @@ string      Application::Sega32XRuntimePath;
 string      Application::SegaSaturnExportPath;
 string      Application::SegaSaturnRuntimePath;
 string      Application::SegaSaturnScene3DPath;
+string      Application::DreamcastExportPath;
+string      Application::DreamcastRuntimePath;
+string      Application::DreamcastScene3DPath;
 string      Application::ConvertModelFrom;
 string      Application::ConvertModelTo;
 string      Application::MegaCDExportPath;
@@ -442,6 +449,35 @@ PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, siz
     // The engine reads MD3, RSDK and whatever the importer handles, and has
     // always been able to write its own model format -- with nothing that
     // called it. This is that: anything it can load, saved as a .hmdl.
+    if (arg == "--export-dreamcast") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        if (!outputPath.size())
+            return i;
+
+        DreamcastExportPath = outputPath;
+        return i + 1;
+    }
+
+    if (arg == "--export-dreamcast-3d") {
+        std::string outputPath = Application::GetCmdLineOption(i + 1);
+        std::string scenePath = Application::GetCmdLineOption(i + 2);
+        if (!outputPath.size() || !scenePath.size())
+            return i;
+
+        DreamcastExportPath = outputPath;
+        DreamcastScene3DPath = scenePath;
+        return i + 2;
+    }
+
+    if (arg == "--dreamcast-runtime") {
+        std::string runtimePath = Application::GetCmdLineOption(i + 1);
+        if (!runtimePath.size())
+            return i;
+
+        DreamcastRuntimePath = runtimePath;
+        return i + 1;
+    }
+
     if (arg == "--convert-model") {
         std::string from = Application::GetCmdLineOption(i + 1);
         std::string to = Application::GetCmdLineOption(i + 2);
@@ -1880,6 +1916,18 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     if (Application::GameGearExportPath.size()) {
         GameGearExportResult exported =
             GameGearExporter::ExportScene(Application::GameGearExportPath.c_str());
+
+        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
+
+    if (Application::DreamcastExportPath.size()) {
+        DreamcastExportResult exported = Application::DreamcastScene3DPath.size()
+            ? DreamcastExporter::ExportScene3D(Application::DreamcastExportPath.c_str(),
+                  Application::DreamcastScene3DPath.c_str())
+            : DreamcastExporter::ExportScene(Application::DreamcastExportPath.c_str());
 
         Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
 

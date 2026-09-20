@@ -1040,3 +1040,156 @@ jobs:
             satexport/cd/scene.iso
             sat3d/cd/scene.iso
           if-no-files-found: error
+
+  dreamcast:
+    # Not a build of the engine either, but for a different reason to the rest:
+    # the Dreamcast could very nearly run it, and falls down on 16 MB of RAM
+    # against 22 MB of memory pools. So this checks the export -- that a scene
+    # turns into a project KallistiOS builds into something a Dreamcast boots.
+    name: Dreamcast (export)
+    runs-on: ubuntu-24.04
+
+    env:
+      # Pinned so the cache key means something and a KOS change cannot quietly
+      # alter what this job built.
+      KOS_COMMIT: 804b3195ebd1a06a27cc2b3a5eacf7a2429040a3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake xvfb texinfo bison flex gawk \
+            libgmp-dev libmpfr-dev libmpc-dev libjpeg-dev libpng-dev \
+            libglew-dev libgl1-mesa-dev libsdl2-dev
+
+      - name: Check out KallistiOS
+        run: |
+          sudo mkdir -p /opt/toolchains/dc
+          sudo chown -R "$(id -u):$(id -g)" /opt/toolchains/dc
+          git clone https://github.com/KallistiOS/KallistiOS.git /opt/toolchains/dc/kos
+          git -C /opt/toolchains/dc/kos checkout --quiet "${KOS_COMMIT}"
+
+      # The SH-4 compiler takes half an hour to build and depends on nothing but
+      # its own versions, so it is cached rather than built every run.
+      - name: Cache the SH-4 toolchain
+        id: sh4cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/toolchains/dc/sh-elf
+          key: kos-sh-elf-legacy-gcc13-${{ env.KOS_COMMIT }}-${{ runner.os }}
+
+      - name: Build the SH-4 toolchain
+        if: steps.sh4cache.outputs.cache-hit != 'true'
+        run: |
+          cd /opt/toolchains/dc/kos/utils/kos-chain
+          cp Makefile.dreamcast.cfg.sample Makefile.cfg
+
+          # legacy is GCC 13, which is what this was developed against.
+          sed -i 's/^toolchain_profile=.*/toolchain_profile=legacy/' Makefile.cfg
+          sed -i 's/^makejobs=.*/makejobs='"$(nproc)"'/' Makefile.cfg
+
+          make
+
+      - name: Build KallistiOS
+        run: |
+          cd /opt/toolchains/dc/kos
+          cp doc/environ.sh.sample environ.sh
+          source ./environ.sh
+          make -j"$(nproc)"
+
+          if [ ! -s lib/dreamcast/libkallisti.a ]; then
+            echo "KallistiOS did not produce a library"
+            exit 1
+          fi
+
+      - name: Build makeheaders
+        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel
+
+      # ---- the tile scene, as PowerVR textures ----
+
+      - name: Export the sample scene
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/megadrive/sample \
+              --scene Scenes/wide.tmx \
+              --export-dreamcast "${GITHUB_WORKSPACE}/dcexport" \
+              --dreamcast-runtime "${GITHUB_WORKSPACE}/meta/dreamcast/runtime"
+
+      # Rebuilds every pixel of every texture from the tileset and the map. The
+      # Dreamcast keeps all of the colour, so unlike the older targets this is a
+      # straight comparison with no palette in the way. wide.tmx is forty
+      # columns across, which is not a power of two -- the stride case.
+      - name: Check the export against the art it was made from
+        run: |
+          python3 tools/verify-sega-export.py dreamcast \
+            "${GITHUB_WORKSPACE}/dcexport" \
+            meta/megadrive/sample/Resources/Scenes \
+            wide.tmx
+
+      - name: Build it
+        run: |
+          source /opt/toolchains/dc/kos/environ.sh
+          cd "${GITHUB_WORKSPACE}/dcexport"
+          make
+
+          if [ ! -s hatch.elf ]; then
+            echo "no binary was produced"
+            exit 1
+          fi
+
+          # A Dreamcast binary runs from 0x8c010000. If it is linked anywhere
+          # else, nothing will boot it.
+          start=$(sh-elf-objdump -f hatch.elf | sed -n 's/.*start address 0x//p')
+          if [ "${start}" != "8c010000" ]; then
+            echo "binary starts at 0x${start}, not 0x8c010000"
+            exit 1
+          fi
+
+          echo "binary: $(stat -c%s hatch.elf) bytes"
+
+      # ---- the 3D scene, as PowerVR polygons ----
+
+      - name: Export the sample 3D scene
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/saturn/sample \
+              --export-dreamcast-3d "${GITHUB_WORKSPACE}/dc3d" Scenes/cube.scene3d \
+              --dreamcast-runtime "${GITHUB_WORKSPACE}/meta/dreamcast/runtime"
+
+      - name: Check the geometry that came out
+        run: |
+          python3 tools/verify-sega-export.py dreamcast-3d \
+            "${GITHUB_WORKSPACE}/dc3d" \
+            meta/saturn/sample/Resources/Scenes \
+            cube.scene3d
+
+      - name: Build the 3D one
+        run: |
+          source /opt/toolchains/dc/kos/environ.sh
+          cd "${GITHUB_WORKSPACE}/dc3d"
+          make
+
+          if [ ! -s hatch.elf ]; then
+            echo "no binary was produced"
+            exit 1
+          fi
+
+          echo "3D binary: $(stat -c%s hatch.elf) bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-dreamcast-sample-binaries
+          path: |
+            dcexport/hatch.elf
+            dc3d/hatch.elf
+          if-no-files-found: error

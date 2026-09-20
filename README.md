@@ -304,6 +304,7 @@ one self-contained application for every target:
 | `HatchGameEngine-megacd-sample-iso` | A Mega CD disc image built from the same scene |
 | `HatchGameEngine-gamegear-sample-rom` | A Game Gear cartridge built from the same scene |
 | `HatchGameEngine-saturn-sample-discs` | Two Saturn discs: the same scene as a VDP2 bitmap, and a 3D scene as VDP1 polygons |
+| `HatchGameEngine-dreamcast-sample-binaries` | Two Dreamcast binaries: the same scene as PowerVR textures, and a 3D scene as PowerVR polygons |
 
 Each job builds SDL2 from source as a static library and links it, along with
 GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
@@ -316,7 +317,7 @@ The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
 the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
 produce is a title and a web page rather than an application. See below.
 
-The five SEGA jobs are not builds of the engine at all -- it does not run on any
+The six SEGA jobs are not builds of the engine at all -- it does not run on any
 of that hardware. They check the export the other way round: that a scene still
 converts into a project which builds into a ROM or a disc. The Mega Drive, Game
 Gear and Saturn jobs go further and read their own output back, rebuilding the
@@ -324,7 +325,8 @@ picture from the palette, patterns and nametable and comparing it against the
 tileset and map it came from. The Saturn job does the same for geometry: it
 rebuilds every exported vertex from the scene file and the model it came from,
 which is what catches a transform read with its rows and columns the wrong way
-round.
+round. The Dreamcast job does both of those over again in that machine's own
+formats -- sixteen-bit textures and little-endian floats.
 
 ## Building
 ### Windows
@@ -703,6 +705,75 @@ produce, so emulators boot these discs and a retail console will not.
 Game logic does not come across, here or anywhere else -- it is bytecode for a
 VM that does not exist on an SH-2. The art does, and now so does the geometry.
 
+### SEGA Dreamcast
+
+This is the one SEGA target where the machine is not the constraint.
+
+Everything above it needed the art cut down to fit -- sixteen colours, three
+bits a channel, tiles deduplicated against a VRAM measured in kilobytes. The
+Dreamcast has eight megabytes of video memory and a PowerVR2 that draws
+textured, perspective-correct polygons, so a scene layer goes over whole, in
+sixteen-bit colour, with nothing thrown away.
+
+```sh
+HatchGameEngine --project-dir path/to/MyGame \
+                --scene Scenes/Level1.tmx \
+                --export-dreamcast path/to/output
+
+HatchGameEngine --project-dir path/to/MyGame \
+                --export-dreamcast-3d path/to/output Scenes/MyScene.scene3d
+```
+
+Both are buttons too: the Scenes tab for a tile scene, the 3D tab for a 3D one.
+
+```sh
+cd path/to/output
+source /opt/toolchains/dc/kos/environ.sh
+make
+```
+
+`hatch.elf` is what comes out, and an emulator boots it directly. `make dist`
+also writes `1ST_READ.BIN`, which is what goes on a disc.
+
+**This one uses a library.** The Saturn and 32X exports write hardware registers
+directly because on those machines there is nothing else to use.
+[KallistiOS](https://github.com/KallistiOS/KallistiOS) is the Dreamcast's
+homebrew operating system -- drivers, a C library, a filesystem -- and
+reimplementing it to avoid the dependency would make a worse export, not a purer
+one. What the runtime carries is only the part above it: scene to polygons.
+
+Put next to the Saturn export, the same scene shows what twenty months of
+hardware bought:
+
+| | Saturn | Dreamcast |
+| --- | --- | --- |
+| Tile scene | 8-bit indices into a 256-colour CRAM | RGB565 textures, no palette at all |
+| Maths | 16.16 fixed point; the SH-2 has no FPU | floats; the SH-4 has one |
+| Depth | no depth buffer, so every face sorted back to front each frame | tile-based deferred, resolved per pixel in hardware -- no sort at all |
+| Polygons | quads, with a triangle as a quad with two corners in the same place | triangle strips |
+| Byte order | big endian | little endian |
+
+That last row is worth saying out loud, because every other SEGA machine this
+engine exports to is big endian and the Dreamcast is not. The exported data is
+written little endian for this target alone.
+
+A few things the code has to get right:
+
+| | What it is |
+| --- | --- |
+| Texture size | a power of two, at most 1024 a side, so a layer is cut into squares of 256 |
+| Texture edges | a square hanging off the edge of the layer is still a whole texture; the part past the edge is written black rather than left uninitialised |
+| Z | the PVR wants 1/w, not a distance, and larger means nearer |
+| Face colour | alpha in the top byte, and an opaque face that says it is transparent is not drawn |
+| Backfaces | dropped in software -- the PVR culls on the winding its tile accelerator sees, and the winding here is the engine's |
+
+Faces are flat shaded, in the model's vertex colours averaged over the face or
+its material's diffuse colour. The PVR does gouraud and textures as a matter of
+course, so on this machine that is a thing to add rather than a limit.
+
+Game logic does not come across, here or anywhere else -- it is bytecode for a
+VM that does not exist on an SH-4.
+
 ## Dependecies
 Required:
 - SDL2 (https://www.libsdl.org/)
@@ -717,6 +788,7 @@ Required:
 - [Megadev](https://github.com/drojaazu/megadev) (to build the Mega CD export into a disc image)
 - SDCC and [devkitSMS](https://github.com/sverx/devkitSMS) (to build the Game Gear export into a cartridge)
 - An `sh-elf` cross compiler and `genisoimage` (to build the Saturn export into a disc)
+- [KallistiOS](https://github.com/KallistiOS/KallistiOS) (to build the Dreamcast export)
 
 Optional:
 - [Open Asset Import Library](https://github.com/assimp/assimp)
