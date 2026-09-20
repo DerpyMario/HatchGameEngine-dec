@@ -70,7 +70,10 @@ PUBLIC STATIC void ColorUtils::SeparateRGB(float* color, Uint8* dest) {
     dest[2] = color[2] * 0xFF;
 }
 PUBLIC STATIC void ColorUtils::Separate(float* color, Uint8* dest) {
-    dest[2] = color[3] * 0xFF;
+    // Alpha belongs in dest[3]. It used to go into dest[2], which SeparateRGB
+    // then overwrote with blue, so the alpha was dropped and dest[3] was left
+    // holding whatever the caller's buffer happened to have in it.
+    dest[3] = color[3] * 0xFF;
     SeparateRGB(color, dest);
 }
 PUBLIC STATIC Uint32 ColorUtils::Tint(Uint32 color, Uint32 colorMult) {

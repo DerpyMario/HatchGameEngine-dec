@@ -66,10 +66,8 @@ def build():
     patch("material")
     out += u8(0)
 
-    # The reader takes this count as a UInt16 while the writer emits a single
-    # byte. This file follows the reader, because the reader is what loads it.
     patch("anim")
-    out += u16(0)
+    out += u8(0)
 
     patch("vertex")
     out += u32(len(CORNERS))

@@ -48,14 +48,17 @@ PUBLIC STATIC bool HatchModel::IsMagic(Stream* stream) {
     return magic == HATCH_MODEL_MAGIC;
 }
 
-PUBLIC STATIC void HatchModel::ReadMaterialInfo(Stream* stream, Uint8 *destColors, char **texName) {
+// One of a material's four colours, and the texture that goes with it.
+//
+// The colour is handed back whole rather than already separated: the material
+// keeps its colours as floats, and going through bytes on the way there only
+// loses precision and invites the mistake that used to be here.
+PUBLIC STATIC void HatchModel::ReadMaterialInfo(Stream* stream, Uint32 *destColor, char **texName) {
     *texName = stream->ReadString();
 
     Uint32 colorIndex = stream->ReadUInt32();
 
-    Uint32 color = GetStoredColor(colorIndex);
-
-    ColorUtils::Separate(color, destColors);
+    *destColor = GetStoredColor(colorIndex);
 }
 
 PRIVATE STATIC Material* HatchModel::ReadMaterial(Stream* stream, const char *parentDirectory) {
@@ -68,11 +71,11 @@ PRIVATE STATIC Material* HatchModel::ReadMaterial(Stream* stream, const char *pa
     // Read diffuse
     if (flags & 1) {
         char *diffuseTexture;
-        Uint8 diffuseColor[4];
+        Uint32 diffuseColor;
 
-        ReadMaterialInfo(stream, diffuseColor, &diffuseTexture);
+        ReadMaterialInfo(stream, &diffuseColor, &diffuseTexture);
 
-        ColorUtils::Separate(material->ColorDiffuse, diffuseColor);
+        ColorUtils::Separate(diffuseColor, material->ColorDiffuse);
 
         material->TextureDiffuse = IModel::LoadMaterialImage(diffuseTexture, parentDirectory);
         if (material->TextureDiffuse)
@@ -82,11 +85,11 @@ PRIVATE STATIC Material* HatchModel::ReadMaterial(Stream* stream, const char *pa
     // Read specular
     if (flags & 2) {
         char *specularTexture;
-        Uint8 specularColor[4];
+        Uint32 specularColor;
 
-        ReadMaterialInfo(stream, specularColor, &specularTexture);
+        ReadMaterialInfo(stream, &specularColor, &specularTexture);
 
-        ColorUtils::Separate(material->ColorSpecular, specularColor);
+        ColorUtils::Separate(specularColor, material->ColorSpecular);
 
         material->TextureSpecular = IModel::LoadMaterialImage(specularTexture, parentDirectory);
         if (material->TextureSpecular)
@@ -96,11 +99,11 @@ PRIVATE STATIC Material* HatchModel::ReadMaterial(Stream* stream, const char *pa
     // Read ambient
     if (flags & 4) {
         char *ambientTexture;
-        Uint8 ambientColor[4];
+        Uint32 ambientColor;
 
-        ReadMaterialInfo(stream, ambientColor, &ambientTexture);
+        ReadMaterialInfo(stream, &ambientColor, &ambientTexture);
 
-        ColorUtils::Separate(material->ColorAmbient, ambientColor);
+        ColorUtils::Separate(ambientColor, material->ColorAmbient);
 
         material->TextureAmbient = IModel::LoadMaterialImage(ambientTexture, parentDirectory);
         if (material->TextureAmbient)
@@ -110,11 +113,11 @@ PRIVATE STATIC Material* HatchModel::ReadMaterial(Stream* stream, const char *pa
     // Read emissive
     if (flags & 8) {
         char *emissiveTexture;
-        Uint8 emissiveColor[4];
+        Uint32 emissiveColor;
 
-        ReadMaterialInfo(stream, emissiveColor, &emissiveTexture);
+        ReadMaterialInfo(stream, &emissiveColor, &emissiveTexture);
 
-        ColorUtils::Separate(material->ColorEmissive, emissiveColor);
+        ColorUtils::Separate(emissiveColor, material->ColorEmissive);
 
         material->TextureEmissive = IModel::LoadMaterialImage(emissiveTexture, parentDirectory);
         if (material->TextureEmissive)
@@ -350,7 +353,7 @@ PUBLIC STATIC bool HatchModel::Convert(IModel* model, Stream* stream, const char
     }
 
     Uint8 materialCount;
-    Uint16 animCount;
+    Uint8 animCount;
 
     Uint32 vertexDataOffset = stream->ReadUInt32();
     Uint32 normalDataOffset = stream->ReadUInt32();
@@ -413,13 +416,17 @@ PUBLIC STATIC bool HatchModel::Convert(IModel* model, Stream* stream, const char
     // Read animations
     stream->Seek(animDataOffset);
 
-    animCount = stream->ReadUInt16();
+    // A byte, because that is what Save writes. These two disagreed, so the
+    // reader took the count plus whatever byte followed it -- which for a model
+    // with no animations at all was the low byte of the vertex count, and sent
+    // it off to read hundreds of animations out of vertex data.
+    animCount = stream->ReadByte();
 
     if (animCount) {
         model->AnimationCount = animCount;
         model->Animations = new ModelAnim*[animCount];
 
-        for (Uint16 i = 0; i < animCount; i++) {
+        for (Uint8 i = 0; i < animCount; i++) {
             ModelAnim* anim = new ModelAnim;
             anim->Name = stream->ReadString();
             anim->StartFrame = stream->ReadUInt32();
@@ -593,31 +600,34 @@ PRIVATE STATIC void HatchModel::WriteMaterial(Material* material, Stream* stream
 
     Uint8 flags = 0;
 
+    // A colour is worth writing when *any* channel has moved off white. These
+    // asked for every channel at once, so a pure red -- whose red and alpha are
+    // both still 1.0 -- counted as the default and was dropped on the way out.
     if ((material->ColorDiffuse[0] != 1.0
-    && material->ColorDiffuse[1] != 1.0
-    && material->ColorDiffuse[2] != 1.0
-    && material->ColorDiffuse[3] != 1.0)
+    || material->ColorDiffuse[1] != 1.0
+    || material->ColorDiffuse[2] != 1.0
+    || material->ColorDiffuse[3] != 1.0)
     || material->TextureDiffuseName)
         flags |= 1;
 
     if ((material->ColorSpecular[0] != 1.0
-    && material->ColorSpecular[1] != 1.0
-    && material->ColorSpecular[2] != 1.0
-    && material->ColorSpecular[3] != 1.0)
+    || material->ColorSpecular[1] != 1.0
+    || material->ColorSpecular[2] != 1.0
+    || material->ColorSpecular[3] != 1.0)
     || material->TextureSpecularName)
         flags |= 2;
 
     if ((material->ColorAmbient[0] != 1.0
-    && material->ColorAmbient[1] != 1.0
-    && material->ColorAmbient[2] != 1.0
-    && material->ColorAmbient[3] != 1.0)
+    || material->ColorAmbient[1] != 1.0
+    || material->ColorAmbient[2] != 1.0
+    || material->ColorAmbient[3] != 1.0)
     || material->TextureAmbientName)
         flags |= 4;
 
     if ((material->ColorEmissive[0] != 1.0
-    && material->ColorEmissive[1] != 1.0
-    && material->ColorEmissive[2] != 1.0
-    && material->ColorEmissive[3] != 1.0)
+    || material->ColorEmissive[1] != 1.0
+    || material->ColorEmissive[2] != 1.0
+    || material->ColorEmissive[3] != 1.0)
     || material->TextureEmissiveName)
         flags |= 8;
 
@@ -797,13 +807,29 @@ PUBLIC STATIC bool HatchModel::Save(IModel* model, const char* filename) {
     stream->WriteUInt32(lastPos);
     stream->Seek(lastPos);
 
+    // Both counts go out as a byte, so a model with more than 255 of either
+    // used to be written with the count wrapped around and every entry still
+    // following it -- a file that reads back as garbage rather than as an
+    // error. It is written short now, and said so.
     size_t numMaterials = model->MaterialCount;
 
-    stream->WriteByte(numMaterials);
+    if (numMaterials > 0xFF) {
+        Log::Print(Log::LOG_WARN, "Model has %d materials; only the first 255 fit the format.", (int)numMaterials);
+        numMaterials = 0xFF;
+    }
+
+    stream->WriteByte((Uint8)numMaterials);
 
     Log::Print(Log::LOG_VERBOSE, "Material count: %d (%08X)", numMaterials, lastPos);
 
-    const char *parentDirectory = StringUtils::GetPath(filename);
+    // GetPath hands back nothing at all for a filename with no directory in
+    // it, which every caller here then walked straight into strlen. Saving to
+    // "model.hmdl" rather than "somewhere/model.hmdl" crashed the moment a
+    // material came up. An empty directory is the honest answer, and it is what
+    // the texture names below want anyway.
+    char* parentDirectoryOwned = StringUtils::GetPath(filename);
+    const char *parentDirectory = parentDirectoryOwned ? parentDirectoryOwned : "";
+
     if (StringUtils::StartsWith(parentDirectory, "./"))
         parentDirectory += 2;
     if (StringUtils::StartsWith(parentDirectory, "Resources/"))
@@ -813,17 +839,26 @@ PUBLIC STATIC bool HatchModel::Save(IModel* model, const char* filename) {
         WriteMaterial(model->Materials[i], stream, parentDirectory);
     }
 
+    Memory::Free(parentDirectoryOwned);
+
     // Write animations
     lastPos = stream->Position();
     stream->Seek(animDataOffsetPos);
     stream->WriteUInt32(lastPos);
     stream->Seek(lastPos);
 
-    stream->WriteByte(model->AnimationCount);
+    size_t numAnimations = model->AnimationCount;
 
-    Log::Print(Log::LOG_VERBOSE, "Animation count: %d (%08X)", model->AnimationCount, lastPos);
+    if (numAnimations > 0xFF) {
+        Log::Print(Log::LOG_WARN, "Model has %d animations; only the first 255 fit the format.", (int)numAnimations);
+        numAnimations = 0xFF;
+    }
 
-    for (size_t i = 0; i < model->AnimationCount; i++) {
+    stream->WriteByte((Uint8)numAnimations);
+
+    Log::Print(Log::LOG_VERBOSE, "Animation count: %d (%08X)", numAnimations, lastPos);
+
+    for (size_t i = 0; i < numAnimations; i++) {
         ModelAnim* anim = model->Animations[i];
         stream->WriteString(anim->Name);
         stream->WriteUInt32(anim->StartFrame);

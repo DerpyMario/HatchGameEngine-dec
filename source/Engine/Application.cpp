@@ -19,6 +19,8 @@ public:
     static string      SegaSaturnExportPath;
     static string      SegaSaturnRuntimePath;
     static string      SegaSaturnScene3DPath;
+    static string      ConvertModelFrom;
+    static string      ConvertModelTo;
     static string      MegaCDExportPath;
     static string      GameGearExportPath;
 
@@ -80,6 +82,8 @@ public:
 #include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
+#include <Engine/ResourceTypes/IModel.h>
+#include <Engine/ResourceTypes/ModelFormats/HatchModel.h>
 #include <Engine/Utilities/StringUtils.h>
 
 #include <Engine/Media/MediaSource.h>
@@ -136,6 +140,8 @@ string      Application::Sega32XRuntimePath;
 string      Application::SegaSaturnExportPath;
 string      Application::SegaSaturnRuntimePath;
 string      Application::SegaSaturnScene3DPath;
+string      Application::ConvertModelFrom;
+string      Application::ConvertModelTo;
 string      Application::MegaCDExportPath;
 string      Application::GameGearExportPath;
 
@@ -433,6 +439,20 @@ PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, siz
 
     // A 3D scene is not the scene that is loaded -- it is a file of its own --
     // so the Saturn export is told which one to carry rather than guessing.
+    // The engine reads MD3, RSDK and whatever the importer handles, and has
+    // always been able to write its own model format -- with nothing that
+    // called it. This is that: anything it can load, saved as a .hmdl.
+    if (arg == "--convert-model") {
+        std::string from = Application::GetCmdLineOption(i + 1);
+        std::string to = Application::GetCmdLineOption(i + 2);
+        if (!from.size() || !to.size())
+            return i;
+
+        ConvertModelFrom = from;
+        ConvertModelTo = to;
+        return i + 2;
+    }
+
     if (arg == "--export-saturn-3d") {
         std::string outputPath = Application::GetCmdLineOption(i + 1);
         std::string scenePath = Application::GetCmdLineOption(i + 2);
@@ -1768,6 +1788,46 @@ PRIVATE STATIC void Application::RunWebFrame() {
 }
 #endif
 
+// Loads a model through whichever reader knows the format and writes it back
+// out as a Hatch model.
+//
+// It also happens to be the only way to run the Hatch model writer, which had
+// no caller at all -- which is how it and the reader came to disagree about
+// how the animation count is stored without anyone noticing.
+PUBLIC STATIC bool Application::ConvertModel(const char* from, const char* to) {
+    ResourceStream* stream = ResourceStream::New(from);
+    if (!stream) {
+        Log::Print(Log::LOG_ERROR, "Could not open model \"%s\".", from);
+        return false;
+    }
+
+    IModel* model = new IModel();
+    bool loaded = model->Load(stream, from);
+    stream->Close();
+
+    if (!loaded) {
+        delete model;
+        return false;
+    }
+
+    Log::Print(Log::LOG_INFO, "Read \"%s\": %d mesh(es), %d vertices, %d material(s), %d animation(s).",
+        from, (int)model->MeshCount, (int)model->VertexCount,
+        (int)model->MaterialCount, (int)model->AnimationCount);
+
+    bool saved = HatchModel::Save(model, to);
+
+    delete model;
+
+    if (!saved) {
+        Log::Print(Log::LOG_ERROR, "Could not write \"%s\".", to);
+        return false;
+    }
+
+    Log::Print(Log::LOG_INFO, "Wrote \"%s\".", to);
+
+    return true;
+}
+
 PUBLIC STATIC void Application::Run(int argc, char* args[]) {
     Application::Init(argc, args);
     if (!Running)
@@ -1822,6 +1882,14 @@ PUBLIC STATIC void Application::Run(int argc, char* args[]) {
             GameGearExporter::ExportScene(Application::GameGearExportPath.c_str());
 
         Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+
+        Application::Shutdown();
+        return;
+    }
+
+    if (Application::ConvertModelFrom.size()) {
+        Application::ConvertModel(Application::ConvertModelFrom.c_str(),
+            Application::ConvertModelTo.c_str());
 
         Application::Shutdown();
         return;
