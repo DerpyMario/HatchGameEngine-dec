@@ -1,100 +1,170 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/ResourceTypes/ISprite.h>
-#include <Engine/Scene/TileAnimation.h>
-
-class Tileset {
-public:
-    ISprite*                    Sprite = nullptr;
-    char*                       Filename = nullptr;
-    int                         NumCols = 0;
-    int                         NumRows = 0;
-    int                         TileWidth = 0;
-    int                         TileHeight = 0;
-    size_t                      StartTile = 0;
-    size_t                      FirstGlobalTileID = 0;
-    size_t                      TileCount = 0;
-    unsigned                    PaletteID = 0;
-    std::map<int, TileAnimator> AnimatorMap;
-};
-#endif
-
+#include <Engine/Scene.h>
 #include <Engine/Types/Tileset.h>
 #include <Engine/Utilities/StringUtils.h>
 
-PUBLIC Tileset::Tileset(ISprite* sprite, int tileWidth, int tileHeight, size_t firstgid, size_t startTile, size_t tileCount, char* filename) {
-    Sprite = sprite;
-    NumCols = Sprite->Spritesheets[0]->Width / tileWidth;
-    NumRows = Sprite->Spritesheets[0]->Height / tileHeight;
-    TileWidth = tileWidth;
-    TileHeight = tileHeight;
-    TileCount = tileCount;
-    StartTile = startTile;
-    FirstGlobalTileID = firstgid;
-    Filename = StringUtils::Duplicate(filename);
+Tileset::Tileset(ISprite* sprite,
+	int tileWidth,
+	int tileHeight,
+	size_t firstgid,
+	size_t startTile,
+	size_t tileCount,
+	char* filename) {
+	if (sprite->Spritesheets.size() < 1) {
+		return;
+	}
+
+	Sprite = sprite;
+	NumCols = Sprite->Spritesheets[0]->Width / tileWidth;
+	NumRows = Sprite->Spritesheets[0]->Height / tileHeight;
+	TileWidth = tileWidth;
+	TileHeight = tileHeight;
+	TileCount = tileCount;
+	StartTile = startTile;
+	FirstGlobalTileID = firstgid;
+	Filename = StringUtils::Duplicate(filename);
+	PropertiesPerTile.resize(TileCount);
 }
 
-PUBLIC void Tileset::RunAnimations() {
-    for (map<int, TileAnimator>::iterator it = AnimatorMap.begin(); it != AnimatorMap.end(); it++) {
-        TileAnimator& animator = it->second;
-        if (!animator.Paused)
-            animator.Animate();
-    }
+void Tileset::RunAnimations() {
+	for (map<int, TileAnimator>::iterator it = AnimatorMap.begin(); it != AnimatorMap.end();
+		it++) {
+		TileAnimator& animator = it->second;
+		if (!animator.Paused) {
+			animator.Animate();
+		}
+	}
 }
 
-PUBLIC void Tileset::RestartAnimations() {
-    for (map<int, TileAnimator>::iterator it = AnimatorMap.begin(); it != AnimatorMap.end(); it++) {
-        TileAnimator& animator = it->second;
-        animator.RestartAnimation();
-        animator.Paused = false;
-    }
+void Tileset::RestartAnimations() {
+	for (map<int, TileAnimator>::iterator it = AnimatorMap.begin(); it != AnimatorMap.end();
+		it++) {
+		TileAnimator& animator = it->second;
+		animator.RestartAnimation();
+		animator.Paused = false;
+	}
 }
 
-PUBLIC void Tileset::AddTileAnimSequence(int tileID, TileSpriteInfo* tileSpriteInfo, vector<int>& tileIDs, vector<int>& durations) {
-    ISprite* tileSprite = Sprite;
+void Tileset::AddTileAnimSequence(int tileID,
+	TileSpriteInfo* tileSpriteInfo,
+	vector<int>& tileIDs,
+	vector<int>& durations) {
+	ISprite* tileSprite = Sprite;
+	if (!tileSprite) {
+		return;
+	}
 
-    if (tileSprite->Animations.size() == 1)
-        tileSprite->AddAnimation("TileAnimation", 1, 0);
+	size_t animID = 0;
 
-    size_t animID = tileSprite->Animations.size() - 1;
+	// Find the animation that corresponds to the tile ID that's
+	// being animated
+	char nameBuf[16];
+	snprintf(nameBuf, sizeof(nameBuf), "%d", tileID);
+	int foundAnimID = tileSprite->FindAnimation(nameBuf);
+	if (foundAnimID != -1) {
+		animID = (int)foundAnimID;
+	}
+	else {
+		tileSprite->AddAnimation(nameBuf, 1, 0);
+		animID = tileSprite->Animations.size() - 1;
+	}
 
-    tileSprite->RemoveFrames(animID);
+	tileSprite->RemoveFrames(animID);
 
-    if (!tileIDs.size()) {
-        AnimatorMap.erase(tileID);
-        return;
-    }
+	if (!tileIDs.size()) {
+		AnimatorMap.erase(tileID);
+		Scene::RefreshTileAnimations = true;
+		return;
+	}
 
-    for (size_t i = 0; i < tileIDs.size(); i++) {
-        int otherTileID = tileIDs[i];
-        tileSprite->AddFrame(animID, durations[i],
-            (otherTileID % NumCols) * TileWidth,
-            (otherTileID / NumCols) * TileHeight,
-            TileWidth, TileHeight, -TileWidth / 2, -TileHeight / 2, 0);
-    }
+	if (!NumCols) {
+		return;
+	}
 
-    TileAnimator animator(tileSpriteInfo, tileSprite, animID);
-    animator.RestartAnimation();
+	for (size_t i = 0; i < tileIDs.size(); i++) {
+		Tileset* tileset = this;
+		int otherTileID = tileIDs[i];
+		size_t sheetID = 0;
 
-    AnimatorMap.insert( { tileID, animator } );
+		if (otherTileID >= StartTile + TileCount) {
+			Tileset* otherTileset = Scene::GetTileset(otherTileID);
+			ISprite* otherTileSprite = otherTileset->Sprite;
+			if (otherTileSprite && otherTileSprite->Spritesheets.size() > 0) {
+				tileset = otherTileset;
+				otherTileID -= otherTileset->StartTile;
+				sheetID = tileSprite->FindOrAddSpriteSheet(
+					otherTileSprite->SpritesheetFilenames[0].c_str());
+			}
+		}
+
+		tileSprite->AddFrame(animID,
+			durations[i],
+			(otherTileID % tileset->NumCols) * tileset->TileWidth,
+			(otherTileID / tileset->NumCols) * tileset->TileHeight,
+			tileset->TileWidth,
+			tileset->TileHeight,
+			-tileset->TileWidth / 2,
+			-tileset->TileHeight / 2,
+			0,
+			(int)sheetID);
+	}
+
+	tileSprite->RefreshGraphicsID();
+
+	TileAnimator animator(tileSpriteInfo, tileSprite, animID);
+	animator.RestartAnimation();
+
+	tileSpriteInfo->IsAnimated = true;
+
+	AnimatorMap.insert({tileID, animator});
+
+	Scene::RefreshTileAnimations = true;
 }
 
-PUBLIC void Tileset::AddTileAnimSequence(int tileID, TileSpriteInfo* tileSpriteInfo, ISprite* animSprite, int animID) {
-    if (animSprite == nullptr) {
-        AnimatorMap.erase(tileID);
-        return;
-    }
+void Tileset::AddTileAnimSequence(int tileID,
+	TileSpriteInfo* tileSpriteInfo,
+	ISprite* animSprite,
+	int animID) {
+	if (animSprite == nullptr) {
+		AnimatorMap.erase(tileID);
+		Scene::RefreshTileAnimations = true;
+		return;
+	}
 
-    TileAnimator animator(tileSpriteInfo, animSprite, animID);
-    animator.RestartAnimation();
+	TileAnimator animator(tileSpriteInfo, animSprite, animID);
+	animator.RestartAnimation();
 
-    AnimatorMap.insert( { tileID, animator } );
+	tileSpriteInfo->IsAnimated = true;
+
+	AnimatorMap.insert({tileID, animator});
+
+	Scene::RefreshTileAnimations = true;
 }
 
-PUBLIC TileAnimator* Tileset::GetTileAnimSequence(int tileID) {
-    std::map<int, TileAnimator>::iterator it = AnimatorMap.find(tileID);
-    if (it == AnimatorMap.end())
-        return nullptr;
+TileAnimator* Tileset::GetTileAnimSequence(int tileID) {
+	std::map<int, TileAnimator>::iterator it = AnimatorMap.find(tileID);
+	if (it == AnimatorMap.end()) {
+		return nullptr;
+	}
 
-    return &it->second;
+	return &it->second;
+}
+
+void Tileset::Dispose() {
+	if (Sprite) {
+		delete Sprite;
+	}
+
+	if (Filename) {
+		Memory::Free(Filename);
+	}
+
+	for (size_t i = 0; i < TileCount; i++) {
+		HashMap<Property>* properties = PropertiesPerTile[i];
+		if (properties) {
+			properties->ForAll([](Uint32, Property property) -> void {
+				Property::Delete(property);
+			});
+			delete properties;
+		}
+	}
 }

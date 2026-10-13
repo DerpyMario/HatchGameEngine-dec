@@ -1,304 +1,403 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Scene/SceneConfig.h>
-#include <Engine/TextFormats/XML/XMLParser.h>
-#include <Engine/TextFormats/XML/XMLNode.h>
-
-class SceneInfo {
-public:
-    static vector<SceneListEntry>    Entries;
-    static vector<SceneListCategory> Categories;
-};
-#endif
-
 #include <Engine/Scene/SceneInfo.h>
 #include <Engine/Utilities/StringUtils.h>
 
-vector<SceneListEntry>    SceneInfo::Entries;
 vector<SceneListCategory> SceneInfo::Categories;
+int SceneInfo::NumTotalScenes;
 
-PUBLIC STATIC void SceneInfo::Dispose() {
-    for (size_t i = 0; i < Categories.size(); i++) {
-        Categories[i].Properties->WithAll([](Uint32 hash, char* string) -> void {
-            Memory::Free(string);
-        });
-        delete Categories[i].Properties;
-    }
+void SceneInfo::Dispose() {
+	for (size_t i = 0; i < Categories.size(); i++) {
+		Categories[i].Dispose();
+	}
+	Categories.clear();
 
-    for (size_t i = 0; i < Entries.size(); i++) {
-        Entries[i].Properties->WithAll([](Uint32 hash, char* string) -> void {
-            Memory::Free(string);
-        });
-        delete Entries[i].Properties;
-    }
-
-    Categories.clear();
-    Categories.shrink_to_fit();
-
-    Entries.clear();
-    Entries.shrink_to_fit();
+	NumTotalScenes = 0;
 }
 
-PUBLIC STATIC bool SceneInfo::IsCategoryValid(int categoryID) {
-    return categoryID >= 0 && categoryID < (int)Categories.size();
+int SceneInfo::InitGlobalCategory() {
+	size_t gid;
+
+	NewCategory(std::string(SCENEINFO_GLOBAL_CATEGORY_NAME));
+
+	gid = Categories.size() - 1;
+
+	return (int)gid;
 }
 
-PUBLIC STATIC bool SceneInfo::IsEntryValid(int entryID) {
-    return entryID >= 0 && entryID < (int)Entries.size();
+SceneListCategory* SceneInfo::NewCategory(std::string name) {
+	SceneListCategory newCategory;
+	Categories.push_back(std::move(newCategory));
+
+	SceneListCategory* category = &Categories[Categories.size() - 1];
+	category->Name = StringUtils::Create(name);
+
+	category->Properties = new HashMap<char*>(NULL, 8);
+	category->Properties->Put("name", category->Name);
+
+	return category;
 }
 
-PUBLIC STATIC bool SceneInfo::IsEntryValidInCategory(size_t categoryID, size_t entryID) {
-    if (!IsCategoryValid((int)categoryID))
-        return false;
-
-    return entryID >= Categories[categoryID].OffsetStart && entryID < Categories[categoryID].OffsetEnd;
+bool SceneInfo::IsCategoryValid(int categoryID) {
+	return categoryID >= 0 && categoryID < (int)Categories.size();
 }
 
-PUBLIC STATIC int SceneInfo::GetCategoryID(const char* categoryName) {
-    for (size_t i = 0; i < Categories.size(); i++) {
-        if (!strcmp(Categories[i].Name, categoryName))
-            return i;
-    }
+bool SceneInfo::CategoryHasEntries(int categoryID) {
+	if (!IsCategoryValid(categoryID)) {
+		return false;
+	}
 
-    return -1;
+	return Categories[categoryID].Entries.size() > 0;
 }
 
-PUBLIC STATIC int SceneInfo::GetEntryID(const char* categoryName, const char* entryName) {
-    int categoryID = GetCategoryID(categoryName);
-    if (categoryID < 0)
-        return -1;
+bool SceneInfo::IsEntryValid(int categoryID, int entryID) {
+	if (!CategoryHasEntries(categoryID)) {
+		return false;
+	}
 
-    SceneListCategory& category = Categories[categoryID];
-    return GetEntryIDWithinRange(category.OffsetStart, category.OffsetEnd, entryName);
+	return entryID >= 0 && (size_t)entryID < Categories[categoryID].Entries.size();
 }
 
-PUBLIC STATIC int SceneInfo::GetEntryID(const char* categoryName, size_t entryID) {
-    int categoryID = GetCategoryID(categoryName);
-    if (categoryID < 0)
-        return -1;
+int SceneInfo::GetCategoryID(const char* categoryName) {
+	if (categoryName != nullptr) {
+		for (size_t i = 0; i < Categories.size(); i++) {
+			if (!strcmp(Categories[i].Name, categoryName)) {
+				return i;
+			}
+		}
+	}
 
-    return GetEntryID((size_t)categoryID, (size_t)entryID);
+	return -1;
 }
 
-PUBLIC STATIC int SceneInfo::GetEntryID(size_t categoryID, size_t entryID) {
-    if (!SceneInfo::IsCategoryValid((int)categoryID))
-        return -1;
+int SceneInfo::GetEntryID(const char* categoryName, const char* entryName) {
+	int categoryID = GetCategoryID(categoryName);
+	if (categoryID < 0) {
+		return -1;
+	}
 
-    SceneListCategory& category = Categories[categoryID];
-    size_t actualEntryID = category.OffsetStart + entryID;
-    if (!SceneInfo::IsEntryValidInCategory(categoryID, actualEntryID))
-        return -1;
-
-    return (int)actualEntryID;
+	return GetEntryID(categoryID, entryName);
 }
 
-PUBLIC STATIC int SceneInfo::GetEntryPosInCategory(const char *categoryName, const char* entryName) {
-    int categoryID = GetCategoryID(categoryName);
-    if (categoryID < 0)
-        return -1;
+int SceneInfo::GetEntryID(int categoryID, const char* entryName) {
+	if (!entryName || !IsCategoryValid(categoryID)) {
+		return -1;
+	}
 
-    return GetEntryPosInCategory((size_t)categoryID, entryName);
+	SceneListCategory& category = Categories[categoryID];
+	for (size_t i = 0; i < category.Entries.size(); i++) {
+		if (!strcmp(category.Entries[i].Name, entryName)) {
+			return (int)i;
+		}
+	}
+
+	return -1;
 }
 
-PUBLIC STATIC int SceneInfo::GetEntryPosInCategory(size_t categoryID, const char* entryName) {
-    if (!SceneInfo::IsCategoryValid((int)categoryID))
-        return -1;
+std::string SceneInfo::GetParentPath(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return "";
+	}
 
-    SceneListCategory& category = Categories[categoryID];
-    int actualEntryID = GetEntryIDWithinRange(category.OffsetStart, category.OffsetEnd, entryName);
-    if (actualEntryID < 0)
-        return -1;
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
 
-    return actualEntryID - (int)category.OffsetStart;
+	std::string filePath;
+
+	if (entry.Filetype != nullptr && strcmp(entry.Filetype, "bin") == 0) {
+		filePath += "Stages/";
+	}
+	else {
+		filePath += "Scenes/";
+	}
+
+	if (entry.Folder != nullptr) {
+		filePath += std::string(entry.Folder) + "/";
+	}
+
+	return filePath;
 }
 
-PUBLIC STATIC int SceneInfo::GetEntryIDWithinRange(size_t start, size_t end, const char* entryName) {
-    for (size_t i = start; i < end; i++) {
-        if (!strcmp(Entries[i].Name, entryName))
-            return (int)i;
-    }
+std::string SceneInfo::GetFilename(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return "";
+	}
 
-    return -1;
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
+
+	if (entry.Path != nullptr) {
+		return std::string(entry.Path);
+	}
+
+	std::string parentPath = GetParentPath(categoryID, entryID);
+
+	std::string id = entry.ID != nullptr ? std::string(entry.ID) : std::string(entry.Name);
+
+	std::string filePath = "";
+
+	// RSDK compatibility.
+	if (entry.Filetype != nullptr && strcmp(entry.Filetype, "bin") == 0) {
+		filePath = "Scene";
+	}
+
+	filePath += id;
+
+	if (entry.Filetype != nullptr) {
+		filePath += "." + std::string(entry.Filetype);
+	}
+
+	parentPath += std::string(filePath);
+
+	return parentPath;
 }
 
-PUBLIC STATIC string SceneInfo::GetParentPath(int entryID) {
-    SceneListEntry& entry = Entries[entryID];
+std::string SceneInfo::GetName(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return "";
+	}
 
-    char filePath[4096];
-    if (!strcmp(entry.Filetype, "bin")) {
-        snprintf(filePath, sizeof(filePath), "Stages/%s/", entry.Folder);
-    }
-    else {
-        if (entry.Folder == nullptr)
-            snprintf(filePath, sizeof(filePath), "Scenes/");
-        else
-            snprintf(filePath, sizeof(filePath), "Scenes/%s/", entry.Folder);
-    }
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
 
-    return std::string(filePath);
+	if (entry.Name == nullptr) {
+		return "";
+	}
+
+	return std::string(entry.Name);
 }
 
-PUBLIC STATIC string SceneInfo::GetFilename(int entryID) {
-    SceneListEntry scene = Entries[entryID];
+std::string SceneInfo::GetFolder(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return "";
+	}
 
-    std::string parentPath = GetParentPath(entryID);
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
 
-    const char* id = scene.ID != nullptr ? scene.ID : scene.Name;
+	if (entry.Folder == nullptr) {
+		return "";
+	}
 
-    char filePath[4096];
-    if (!strcmp(scene.Filetype, "bin")) {
-        if (scene.Folder == nullptr) {
-            if (scene.Filetype == nullptr)
-                snprintf(filePath, sizeof(filePath), "Scene%s", id);
-            else
-                snprintf(filePath, sizeof(filePath), "Scene%s.%s", id, scene.Filetype);
-        }
-        else if (scene.Filetype == nullptr)
-            snprintf(filePath, sizeof(filePath), "%s/Scene%s", scene.Folder, id);
-        else
-            snprintf(filePath, sizeof(filePath), "%s/Scene%s.%s", scene.Folder, id, scene.Filetype);
-    }
-    else {
-        if (scene.Folder == nullptr) {
-            if (scene.Filetype == nullptr)
-                snprintf(filePath, sizeof(filePath), "%s", id);
-            else
-                snprintf(filePath, sizeof(filePath), "%s.%s", id, scene.Filetype);
-        }
-        else if (scene.Filetype == nullptr)
-            snprintf(filePath, sizeof(filePath), "%s/%s", scene.Folder, id);
-        else
-            snprintf(filePath, sizeof(filePath), "%s/%s.%s", scene.Folder, id, scene.Filetype);
-    }
-
-    parentPath += std::string(filePath);
-
-    return parentPath;
+	return std::string(entry.Folder);
 }
 
-PUBLIC STATIC string SceneInfo::GetTileConfigFilename(int entryID) {
-    return GetParentPath(entryID) + "TileConfig.bin";
+std::string SceneInfo::GetID(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return "";
+	}
+
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
+
+	if (entry.ID == nullptr) {
+		return "";
+	}
+
+	return std::string(entry.ID);
 }
 
-PUBLIC STATIC char* SceneInfo::GetEntryProperty(int entryID, char* property) {
-    if (IsEntryValid(entryID)) {
-        SceneListEntry& entry = Entries[entryID];
-        if (entry.Properties->Exists(property))
-            return entry.Properties->Get(property);
-    }
-    return nullptr;
-}
-PUBLIC STATIC char* SceneInfo::GetCategoryProperty(int categoryID, char* property) {
-    if (IsCategoryValid(categoryID)) {
-        SceneListCategory& category = Categories[categoryID];
-        if (category.Properties->Exists(property))
-            return category.Properties->Get(property);
-    }
-    return nullptr;
+std::string SceneInfo::GetResourceFolder(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return "";
+	}
+
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
+	if (entry.ResourceFolder == nullptr) {
+		return "";
+	}
+
+	return entry.ResourceFolder;
 }
 
-PUBLIC STATIC bool SceneInfo::HasEntryProperty(int entryID, char* property) {
-    if (IsEntryValid(entryID))
-        return Entries[entryID].Properties->Exists(property);
-    return false;
-}
-PUBLIC STATIC bool SceneInfo::HasCategoryProperty(int categoryID, char* property) {
-    if (IsCategoryValid(categoryID))
-        return Categories[categoryID].Properties->Exists(property);
-    return false;
-}
+int SceneInfo::GetFilter(int categoryID, int entryID) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return 0xFF;
+	}
 
-PRIVATE STATIC void SceneInfo::FillAttributesHashMap(XMLAttributes* attr, HashMap<char*>* map) {
-    for (size_t i = 0; i < attr->KeyVector.size(); i++) {
-        char *key = attr->KeyVector[i];
-        char *value = XMLParser::TokenToString(attr->ValueMap.Get(key));
-        if (!map->Exists(key))
-            map->Put(key, value);
-    }
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
+
+	return entry.Filter;
 }
 
-PUBLIC STATIC bool SceneInfo::Load(XMLNode* node) {
-    for (size_t i = 0; i < node->children.size(); ++i) {
-        XMLNode* listElement = node->children[i];
-        if (XMLParser::MatchToken(listElement->name, "category")) {
-            SceneListCategory category;
+std::string SceneInfo::GetTileConfigFilename(int categoryID, int entryID) {
+	return GetParentPath(categoryID, entryID) + "TileConfig.bin";
+}
 
-            category.OffsetStart = Entries.size();
-            category.Count = 0;
+char* SceneInfo::GetEntryProperty(int categoryID, int entryID, char* property) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return nullptr;
+	}
 
-            if (listElement->attributes.Exists("name"))
-                category.Name = XMLParser::TokenToString(listElement->attributes.Get("name"));
-            else {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "Unknown category #%d", ((int)i) + 1);
-                category.Name = StringUtils::Duplicate(buf);
-            }
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
+	if (entry.Properties->Exists(property)) {
+		return entry.Properties->Get(property);
+	}
 
-            // Fill properties
-            category.Properties = new HashMap<char*>(NULL, 8);
-            category.Properties->Put("name", category.Name);
+	return nullptr;
+}
+char* SceneInfo::GetCategoryProperty(int categoryID, char* property) {
+	if (IsCategoryValid(categoryID)) {
+		SceneListCategory& category = Categories[categoryID];
+		if (category.Properties->Exists(property)) {
+			return category.Properties->Get(property);
+		}
+	}
+	return nullptr;
+}
 
-            FillAttributesHashMap(&listElement->attributes, category.Properties);
+bool SceneInfo::HasEntryProperty(int categoryID, int entryID, char* property) {
+	if (!SceneInfo::IsEntryValid(categoryID, entryID)) {
+		return false;
+	}
 
-            for (size_t s = 0; s < listElement->children.size(); ++s) {
-                XMLNode* stgElement = listElement->children[s];
-                if (XMLParser::MatchToken(stgElement->name, "stage")) {
-                    SceneListEntry entry;
+	SceneListEntry& entry = Categories[categoryID].Entries[entryID];
+	return entry.Properties->Exists(property);
+}
+bool SceneInfo::HasCategoryProperty(int categoryID, char* property) {
+	if (IsCategoryValid(categoryID)) {
+		return Categories[categoryID].Properties->Exists(property);
+	}
+	return false;
+}
 
-                    // Name
-                    if (stgElement->attributes.Exists("name"))
-                        entry.Name = XMLParser::TokenToString(stgElement->attributes.Get("name"));
-                    else
-                        entry.Name = StringUtils::Duplicate("Unknown");
+void SceneInfo::FillAttributesHashMap(XMLAttributes* attr, HashMap<char*>* map) {
+	for (size_t i = 0; i < attr->KeyVector.size(); i++) {
+		char* key = attr->KeyVector[i];
+		char* value = XMLParser::TokenToString(attr->ValueMap.Get(key));
+		if (!map->Exists(key)) {
+			map->Put(key, value);
+		}
+	}
+}
 
-                    // Folder
-                    if (stgElement->attributes.Exists("folder"))
-                        entry.Folder = XMLParser::TokenToString(stgElement->attributes.Get("folder"));
+SceneListEntry SceneInfo::ParseEntry(XMLNode* node, size_t id) {
+	SceneListEntry entry;
 
-                    // ID
-                    if (stgElement->attributes.Exists("id"))
-                        entry.ID = XMLParser::TokenToString(stgElement->attributes.Get("id"));
-                    else {
-                        char buf[16];
-                        snprintf(buf, sizeof(buf), "%d", ((int)s) + 1);
-                        entry.ID = StringUtils::Duplicate(buf);
-                    }
+	// Name
+	if (node->attributes.Exists("name")) {
+		entry.Name = XMLParser::TokenToString(node->attributes.Get("name"));
+	}
+	else {
+		entry.Name = StringUtils::Duplicate("Unknown");
+	}
 
-                    // Sprite folder
-                    if (stgElement->attributes.Exists("spriteFolder"))
-                        entry.SpriteFolder = XMLParser::TokenToString(stgElement->attributes.Get("spriteFolder"));
+	// Folder
+	if (node->attributes.Exists("folder")) {
+		entry.Folder = XMLParser::TokenToString(node->attributes.Get("folder"));
+	}
 
-                    // Filetype
-                    if (stgElement->attributes.Exists("fileExtension"))
-                        entry.Filetype = XMLParser::TokenToString(stgElement->attributes.Get("fileExtension"));
-                    else if (stgElement->attributes.Exists("type"))
-                        entry.Filetype = XMLParser::TokenToString(stgElement->attributes.Get("type"));
+	// Path
+	if (node->attributes.Exists("path")) {
+		entry.Path = XMLParser::TokenToString(node->attributes.Get("path"));
+	}
 
-                    entry.ParentCategoryID = Categories.size();
-                    entry.CategoryPos = category.Count;
+	// Resource folder
+	if (node->attributes.Exists("resourceFolder")) {
+		entry.ResourceFolder =
+			XMLParser::TokenToString(node->attributes.Get("resourceFolder"));
+	}
+	else if (entry.Folder) {
+		entry.ResourceFolder = StringUtils::Duplicate(entry.Folder);
+	}
 
-                    // Fill properties
-                    entry.Properties = new HashMap<char*>(NULL, 8);
-                    entry.Properties->Put("name", entry.Name);
-                    entry.Properties->Put("folder", entry.Folder);
-                    entry.Properties->Put("id", entry.ID);
-                    entry.Properties->Put("spriteFolder", entry.SpriteFolder);
-                    entry.Properties->Put("fileExtension", entry.Filetype);
+	// Filter
+	if (node->attributes.Exists("filter")) {
+		entry.Filter = XMLParser::TokenToNumber(node->attributes.Get("filter"));
+		if (entry.Filter == 0x00) {
+			entry.Filter = 0xFF;
+		}
+	}
 
-                    FillAttributesHashMap(&stgElement->attributes, entry.Properties);
+	// Filetype
+	if (node->attributes.Exists("fileExtension")) {
+		entry.Filetype = XMLParser::TokenToString(node->attributes.Get("fileExtension"));
+	}
+	else if (node->attributes.Exists("type")) {
+		entry.Filetype = XMLParser::TokenToString(node->attributes.Get("type"));
+	}
 
-                    Entries.push_back(entry);
-                    category.Count++;
-                }
-            }
+	// ID
+	if (node->attributes.Exists("id")) {
+		entry.ID = XMLParser::TokenToString(node->attributes.Get("id"));
+	}
+	else if (strcmp(entry.Filetype, "bin") == 0) {
+		// RSDK compatibility.
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%d", ((int)id) + 1);
+		entry.ID = StringUtils::Duplicate(buf);
+	}
+	else {
+		entry.ID = StringUtils::Duplicate(entry.Name);
+	}
 
-            // Outside the loop, so a category holding no stages ends up empty
-            // rather than keeping whatever OffsetEnd happened to start as.
-            category.OffsetEnd = category.OffsetStart + category.Count;
+	// Fill properties
+	entry.Properties = new HashMap<char*>(NULL, 8);
+	entry.Properties->Put("name", entry.Name);
+	entry.Properties->Put("folder", entry.Folder);
+	entry.Properties->Put("id", entry.ID);
+	entry.Properties->Put("resourceFolder", entry.ResourceFolder);
+	entry.Properties->Put("fileExtension", entry.Filetype);
 
-            Categories.push_back(category);
-        }
-    }
+	FillAttributesHashMap(&node->attributes, entry.Properties);
 
-    return Categories.size() > 0;
+	return entry;
+}
+
+bool SceneInfo::Load(XMLNode* node) {
+	size_t numGlobalScenes = 0;
+
+	for (size_t i = 0; i < node->children.size(); i++) {
+		XMLNode* listElement = node->children[i];
+
+		if (XMLParser::MatchToken(listElement->name, "category")) {
+			SceneListCategory* category = nullptr;
+
+			std::string categoryName = "";
+			if (listElement->attributes.Exists("name")) {
+				categoryName = XMLParser::TokenToStdString(
+					listElement->attributes.Get("name"));
+			}
+
+			int categoryID = SceneInfo::GetCategoryID(categoryName.c_str());
+			if (categoryID == -1) {
+				if (categoryName == "") {
+					char buf[32];
+					snprintf(buf, sizeof(buf), "Category #%d", ((int)i) + 1);
+					categoryName = std::string(buf);
+				}
+
+				category = SceneInfo::NewCategory(categoryName);
+			}
+			else {
+				category = &Categories[categoryID];
+			}
+
+			// Fill properties
+			FillAttributesHashMap(&listElement->attributes, category->Properties);
+
+			for (size_t s = 0; s < listElement->children.size(); ++s) {
+				XMLNode* node = listElement->children[s];
+				if (XMLParser::MatchToken(node->name, "scene") ||
+					XMLParser::MatchToken(node->name,
+						"stage")) { // backwards
+					// compat
+					SceneListEntry entry = ParseEntry(node, s);
+
+					category->Entries.push_back(entry);
+
+					NumTotalScenes++;
+				}
+			}
+		}
+		else if (XMLParser::MatchToken(listElement->name, "scene")) {
+			SceneListEntry entry = ParseEntry(listElement, numGlobalScenes);
+
+			int globalID = GetCategoryID(SCENEINFO_GLOBAL_CATEGORY_NAME);
+			if (globalID == -1) {
+				globalID = InitGlobalCategory();
+			}
+
+			Categories[globalID].Entries.push_back(entry);
+
+			NumTotalScenes++;
+
+			numGlobalScenes++;
+		}
+	}
+
+	return Categories.size() > 0;
 }

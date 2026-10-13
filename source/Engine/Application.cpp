@@ -1,2321 +1,4470 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/Version.h>
-#include <Engine/InputManager.h>
-#include <Engine/Audio/AudioManager.h>
-#include <Engine/Scene.h>
-#include <Engine/Math/Math.h>
-#include <Engine/TextFormats/INI/INI.h>
-#include <Engine/TextFormats/XML/XMLParser.h>
-#include <Engine/TextFormats/XML/XMLNode.h>
-
-class Application {
-public:
-    static INI*        Settings;
-    static char        SettingsFile[4096];
-    static string      MegaDriveExportPath;
-    static string      Sega32XExportPath;
-    static string      Sega32XRuntimePath;
-    static string      SegaSaturnExportPath;
-    static string      SegaSaturnRuntimePath;
-    static string      SegaSaturnScene3DPath;
-    static string      DreamcastExportPath;
-    static string      DreamcastRuntimePath;
-    static string      DreamcastScene3DPath;
-    static string      ConvertModelFrom;
-    static string      ConvertModelTo;
-    static string      MegaCDExportPath;
-    static string      GameGearExportPath;
-
-    static XMLNode*    GameConfig;
-
-    static float       FPS;
-    static bool        Running;
-    static bool        GameStart;
-
-    static SDL_Window* Window;
-    static char        WindowTitle[256];
-    static int         WindowWidth;
-    static int         WindowHeight;
-    static int         DefaultMonitor;
-    static Platforms   Platform;
-
-    static char        EngineVersion[256];
-
-    static char        GameTitle[256];
-    static char        GameTitleShort[256];
-    static char        GameVersion[256];
-    static char        GameDescription[256];
-
-    static int         UpdatesPerFrame;
-    static bool        Stepper;
-    static bool        Step;
-
-    static int         MasterVolume;
-    static int         MusicVolume;
-    static int         SoundVolume;
-
-    static int         StartSceneNum;
-
-    static bool        DevMenuActivated;
-
-    static vector<std::string> CmdLineArgs;
-};
-#endif
-
 #include <Engine/Application.h>
 #include <Engine/Graphics.h>
 
-#include <Engine/Bytecode/ScriptManager.h>
-#include <Engine/Bytecode/ScriptEntity.h>
 #include <Engine/Bytecode/GarbageCollector.h>
+#include <Engine/Bytecode/ScriptEntity.h>
+#include <Engine/Bytecode/ScriptManager.h>
 #include <Engine/Bytecode/SourceFileMap.h>
+#include <Engine/Bytecode/VMThreadDebugger.h>
+#include <Engine/Data/DefaultFonts.h>
 #include <Engine/Diagnostics/Clock.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Diagnostics/Memory.h>
 #include <Engine/Diagnostics/MemoryPools.h>
-#include <Engine/Filesystem/Directory.h>
-#include <Engine/ResourceTypes/ResourceManager.h>
-#include <Engine/Scene/SceneInfo.h>
-#include <Engine/TextFormats/XML/XMLParser.h>
-#include <Engine/TextFormats/XML/XMLNode.h>
-#include <Engine/UI/Studio.h>
+#include <Engine/Diagnostics/PerformanceViewer.h>
+#include <Engine/Exporters/DreamcastExporter.h>
+#include <Engine/Exporters/GameGearExporter.h>
+#include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/MegaDriveExporter.h>
 #include <Engine/Exporters/Sega32XExporter.h>
-#include <Engine/Exporters/MegaCDExporter.h>
-#include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
-#include <Engine/Exporters/DreamcastExporter.h>
+#include <Engine/Extensions/Discord.h>
+#include <Engine/Filesystem/Directory.h>
+#include <Engine/Filesystem/File.h>
+#include <Engine/Filesystem/VFS/MemoryCache.h>
+#include <Engine/IO/ResourceStream.h>
 #include <Engine/ResourceTypes/IModel.h>
+#include <Engine/ResourceTypes/ImageFormats/PNG.h>
 #include <Engine/ResourceTypes/ModelFormats/HatchModel.h>
+#include <Engine/ResourceTypes/ResourceManager.h>
+#include <Engine/Scene/SceneInfo.h>
+#include <Engine/TextFormats/XML/XMLNode.h>
+#include <Engine/TextFormats/XML/XMLParser.h>
+#include <Engine/UI/Studio.h>
+#include <Engine/Utilities/Screenshot.h>
 #include <Engine/Utilities/StringUtils.h>
 
-#include <Engine/Media/MediaSource.h>
 #include <Engine/Media/MediaPlayer.h>
+#include <Engine/Media/MediaSource.h>
 
 #ifdef IOS
 extern "C" {
-    #include <Engine/Platforms/iOS/MediaPlayer.h>
+#include <Engine/Platforms/iOS/MediaPlayer.h>
 }
+#endif
+
+#ifdef MACOSX
+#include <Engine/Platforms/MacOS/Filesystem.h>
+#include <unistd.h>
 #endif
 
 #ifdef EMSCRIPTEN
-    #include <emscripten.h>
+#include <emscripten.h>
 #endif
 
 #ifdef MSYS
-    #if !defined(_CRT_SECURE_NO_WARNINGS)
-        #define _CRT_SECURE_NO_WARNINGS
-    #endif
-
-    #include <windows.h>
+#if !defined(_CRT_SECURE_NO_WARNINGS)
+#define _CRT_SECURE_NO_WARNINGS
 #endif
+
+#include <windows.h>
+#endif
+
+#define DEFAULT_MAX_FRAMESKIP 15
 
 // The Xbox is asked about before Windows: nxdk gives the Xbox a subset of the
-// Windows API and defines WIN32 along with it, so a chain that asked about
-// Windows first would call an Xbox a PC.
-#if   XBOX
-    Platforms Application::Platform = Platforms::Xbox;
+// Windows API, so a chain that asked about Windows first could call an Xbox a
+// PC.
+#if XBOX
+Platforms Application::Platform = Platforms::Xbox;
 #elif EMSCRIPTEN
-    Platforms Application::Platform = Platforms::Web;
+Platforms Application::Platform = Platforms::Web;
 #elif WIN32
-    Platforms Application::Platform = Platforms::Windows;
+Platforms Application::Platform = Platforms::Windows;
 #elif MACOSX
-    Platforms Application::Platform = Platforms::MacOS;
+Platforms Application::Platform = Platforms::MacOS;
 #elif LINUX
-    Platforms Application::Platform = Platforms::Linux;
+Platforms Application::Platform = Platforms::Linux;
 #elif SWITCH
-    Platforms Application::Platform = Platforms::Switch;
+Platforms Application::Platform = Platforms::Switch;
 #elif PLAYSTATION
-    Platforms Application::Platform = Platforms::PlayStation;
+Platforms Application::Platform = Platforms::PlayStation;
 #elif ANDROID
-    Platforms Application::Platform = Platforms::Android;
+Platforms Application::Platform = Platforms::Android;
 #elif IOS
-    Platforms Application::Platform = Platforms::iOS;
+Platforms Application::Platform = Platforms::iOS;
 #else
-    Platforms Application::Platform = Platforms::Unknown;
+Platforms Application::Platform = Platforms::Unknown;
 #endif
-
-INI*        Application::Settings = NULL;
-char        Application::SettingsFile[4096];
-string      Application::MegaDriveExportPath;
-string      Application::Sega32XExportPath;
-string      Application::Sega32XRuntimePath;
-string      Application::SegaSaturnExportPath;
-string      Application::SegaSaturnRuntimePath;
-string      Application::SegaSaturnScene3DPath;
-string      Application::DreamcastExportPath;
-string      Application::DreamcastRuntimePath;
-string      Application::DreamcastScene3DPath;
-string      Application::ConvertModelFrom;
-string      Application::ConvertModelTo;
-string      Application::MegaCDExportPath;
-string      Application::GameGearExportPath;
-
-XMLNode*    Application::GameConfig = NULL;
-
-float       Application::FPS = 60.f;
-int         TargetFPS = 60;
-bool        Application::Running = false;
-bool        Application::GameStart = false;
-
-SDL_Window* Application::Window = NULL;
-char        Application::WindowTitle[256];
-int         Application::WindowWidth = 848;
-int         Application::WindowHeight = 480;
-int         Application::DefaultMonitor = 0;
-
-char        Application::EngineVersion[256];
-
-char        Application::GameTitle[256];
-char        Application::GameTitleShort[256];
-char        Application::GameVersion[256];
-char        Application::GameDescription[256];
-
-int         Application::UpdatesPerFrame = 1;
-bool        Application::Stepper = false;
-bool        Application::Step = false;
-
-int         Application::MasterVolume = 100;
-int         Application::MusicVolume = 100;
-int         Application::SoundVolume = 100;
-
-int         Application::StartSceneNum = 0;
-
-bool        Application::DevMenuActivated = false;
 
 vector<std::string> Application::CmdLineArgs;
 
-char    StartingScene[256];
+INI* Application::Settings = NULL;
+char Application::SettingsFile[MAX_PATH_LENGTH];
 
-// Filled in from the command line, before anything is loaded.
+XMLNode* Application::GameConfig = NULL;
+Font* Application::DefaultFont = NULL;
+
+int Application::TargetFPS = DEFAULT_TARGET_FRAMERATE;
+float Application::CurrentFPS = 0.0f;
+bool Application::Running = false;
+bool Application::FirstFrame = true;
+bool Application::ShowFPS = false;
+
+SDL_Window* Application::Window = NULL;
+char Application::WindowTitle[256];
+int Application::WindowWidth = 424;
+int Application::WindowHeight = 240;
+int Application::WindowScale = 2;
+bool Application::WindowFullscreen = false;
+bool Application::WindowBorderless = false;
+
+int Application::DefaultMonitor = 0;
+
+char Application::EngineVersion[256];
+
+char Application::GameTitle[256];
+char Application::GameTitleShort[256];
+char Application::GameVersion[256];
+char Application::GameDescription[256];
+char Application::GameDeveloper[256];
+
+char Application::GameIdentifier[256];
+char Application::DeveloperIdentifier[256];
+char Application::SavesDir[256];
+char Application::ScreenshotsPath[256];
+char Application::PreferencesDir[256];
+
+std::unordered_map<std::string, Capability> Application::CapabilityMap;
+std::vector<std::string> Application::DefaultFontList;
+
+bool Application::UseFixedTimestep = true;
+bool Application::ShouldUseFixedTimestep = true;
+double Application::DeltaTime = 0.0f;
+float Application::ActualDeltaTime = 0.0f;
+double Application::FixedUpdateCounter = 0.0f;
+int Application::UpdatesPerFrame = 1;
+int Application::FrameSkip = DEFAULT_MAX_FRAMESKIP;
+bool Application::Stepper = false;
+bool Application::Step = false;
+
+int Application::MasterVolume = 100;
+int Application::MusicVolume = 100;
+int Application::SoundVolume = 100;
+
+bool HitScreenshotKey = false;
+
+bool Application::DisableDefaultActions = false;
+bool Application::DevMenuActivated = false;
+DeveloperMenu Application::DevMenu;
+
+size_t ResourcesBrowserNumEntries = 0;
+std::vector<std::string> ResourcesBrowserEntries;
+std::vector<std::string> ResourcesBrowserPaths;
+
+bool Application::DevMode = false;
+bool Application::DevConvertModels = false;
+
+bool Application::AllowCmdLineSceneLoad = false;
+
+std::string Application::MegaDriveExportPath;
+std::string Application::Sega32XExportPath;
+std::string Application::Sega32XRuntimePath;
+std::string Application::MegaCDExportPath;
+std::string Application::GameGearExportPath;
+std::string Application::SegaSaturnExportPath;
+std::string Application::SegaSaturnRuntimePath;
+std::string Application::SegaSaturnScene3DPath;
+std::string Application::DreamcastExportPath;
+std::string Application::DreamcastRuntimePath;
+std::string Application::DreamcastScene3DPath;
+std::string Application::ConvertModelFrom;
+std::string Application::ConvertModelTo;
+
+ApplicationMetrics Application::Metrics;
+std::vector<PerformanceMeasure*> Application::AllMetrics;
+
 std::string ResourceFilename;
-bool        UseResourceFilename = false;
+bool UseResourceFilename = false;
 std::string SceneToLoad;
 
-bool    DevMenu = false;
-bool    ShowFPS = false;
-bool    TakeSnapshot = false;
-bool    DoNothing = false;
-int     UpdatesPerFastForward = 4;
-
-int     BenchmarkFrameCount = 0;
-double  BenchmarkTickStart = 0.0;
-
-double  Overdelay = 0.0;
-double  FrameTimeStart = 0.0;
-double  FrameTimeDesired = 1000.0 / TargetFPS;
-
-int     KeyBinds[(int)KeyBind::Max];
-
-ISprite*    DEBUG_fontSprite = NULL;
-bool        DEBUG_fontMissing = false;
-
-// The overlay is drawn with a font the game supplies. A project that ships
-// neither of the two it looks for used to be read straight through the sheet
-// that was never loaded, which took the whole application down with it. There
-// is nothing to draw the overlay with in that case, so this says so once and
-// gives up on it; the editor's Play tab shows the same timings in the font it
-// carries itself.
-bool        DEBUG_EnsureFont() {
-    if (DEBUG_fontSprite)
-        return true;
-    if (DEBUG_fontMissing)
-        return false;
-
-    bool original = Graphics::TextureInterpolate;
-    Graphics::SetTextureInterpolation(true);
-
-    ISprite* font = new ISprite();
-    font->SpritesheetCount = 1;
-    font->Spritesheets[0] = font->AddSpriteSheet("Debug/Font.png");
-    if (!font->Spritesheets[0])
-        font->Spritesheets[0] = font->AddSpriteSheet("Sprites/Fonts/Font.png");
-
-    if (!font->Spritesheets[0]) {
-        Log::Print(Log::LOG_WARN,
-            "The performance overlay needs Debug/Font.png or Sprites/Fonts/Font.png, and neither is in this game's resources.");
-
-        delete font;
-        DEBUG_fontMissing = true;
-        Graphics::SetTextureInterpolation(original);
-        return false;
-    }
-
-    int cols = font->Spritesheets[0]->Width / 32;
-    int rows = font->Spritesheets[0]->Height / 32;
-
-    font->ReserveAnimationCount(1);
-    font->AddAnimation("Font?", 0, 0, cols * rows);
-    for (int i = 0; i < cols * rows; i++) {
-        font->AddFrame(0,
-            (i % cols) * 32,
-            (i / cols) * 32,
-            32, 32, 0, 0,
-            14);
-    }
-
-    Graphics::SetTextureInterpolation(original);
-
-    DEBUG_fontSprite = font;
-    return true;
-}
-// Scene::Render leaves no view current once it has finished with all of them,
-// and the ortho the overlay sets up for itself is written into whichever view
-// is, so with none it was written through a null matrix and took the whole
-// application down. The overlay borrows the first view it can instead. A view's
-// matrices are rebuilt from the view every frame, so borrowing one costs it
-// nothing.
-int         DEBUG_backupView = -1;
-bool        DEBUG_BorrowView() {
-    DEBUG_backupView = Scene::ViewCurrent;
-
-    if (Scene::ViewCurrent >= 0 && Scene::ViewCurrent < MAX_SCENE_VIEWS &&
-        Scene::Views[Scene::ViewCurrent].ProjectionMatrix)
-        return true;
-
-    for (int i = 0; i < MAX_SCENE_VIEWS; i++) {
-        if (Scene::Views[i].ProjectionMatrix) {
-            Scene::ViewCurrent = i;
-            return true;
-        }
-    }
-
-    return false;
-}
-void        DEBUG_ReturnView() {
-    Scene::ViewCurrent = DEBUG_backupView;
-}
-void        DEBUG_DrawText(char* text, float x, float y) {
-    for (char* i = text; *i; i++) {
-        Graphics::DrawSprite(DEBUG_fontSprite, 0, (int)*i, x, y, false, false, 1.0f, 1.0f, 0.0f);
-        x += 14; // DEBUG_fontSprite->Animations[0].Frames[(int)*i].ID;
-    }
-}
-
-// Command line handling, following the options upstream Hatch accepts so that
-// scripts and shortcuts written for either one work here.
-
-PUBLIC STATIC bool Application::CmdLineArgExists(const char* match) {
-    for (size_t i = 0; i < Application::CmdLineArgs.size(); i++) {
-        if (Application::CmdLineArgs[i] == match)
-            return true;
-    }
-
-    return false;
-}
-
-// The value that follows an option, or an empty string if it was left off.
-PRIVATE STATIC string Application::GetCmdLineOption(size_t index) {
-    if (index >= Application::CmdLineArgs.size())
-        return "";
-
-    std::string option = Application::CmdLineArgs[index];
-    if (StringUtils::StartsWith(option.c_str(), "--"))
-        return "";
-
-    return option;
-}
-
-PRIVATE STATIC void Application::PrintCommandLineUsage() {
-    printf("Hatch Game Engine %s\n\n", Application::EngineVersion);
-    printf("Usage: " TARGET_NAME " [options] [scene file]\n\n");
-    printf("  --project-dir <path>    Run the game in <path>, which holds its\n");
-    printf("                          Resources and Scripts folders.\n");
-    printf("  --resource-file <path>  Read resources from a packed .hatch file.\n");
-    printf("  --scripts-dir <path>    Read scripts from <path> instead of Scripts.\n");
-    printf("  --scene <path>          Load this scene at startup, relative to\n");
-    printf("                          the Resources folder.\n");
-    printf("  --studio                Open the editor on startup.\n");
-    printf("  --export-megadrive <p>  Convert the loaded scene into a Mega Drive\n");
-    printf("                          project under <p> and exit. Needs --scene.\n");
-    printf("                          --export-genesis is the same machine.\n");
-    printf("  --export-32x <p>        The same, for the SEGA 32X.\n");
-    printf("  --export-megacd <p>     The same, for the SEGA Mega CD.\n");
-    printf("  --export-gamegear <p>   The same, for the SEGA Game Gear.\n");
-    printf("  --32x-runtime <p>       Where meta/32x/runtime is, when it is not\n");
-    printf("                          beside the engine or the working directory.\n");
-    printf("  --help                  Show this text.\n\n");
-    printf("With no arguments the editor opens if there is no game to run.\n");
-}
-
-PRIVATE STATIC size_t Application::ProcessCommandLineOption(std::string arg, size_t i) {
-    // Run out of a project folder: everything is resolved relative to it, the
-    // same as launching the engine from inside it.
-    if (arg == "--project-dir") {
-        std::string projectDir = Application::GetCmdLineOption(i + 1);
-        if (!projectDir.size())
-            return i;
-
-        if (!Directory::SetCurrentWorkingDirectory(projectDir.c_str()))
-            Log::Print(Log::LOG_ERROR, "Could not enter project folder \"%s\"!", projectDir.c_str());
-
-        return i + 1;
-    }
-
-    if (arg == "--resource-file") {
-        std::string resourceFile = Application::GetCmdLineOption(i + 1);
-        if (!resourceFile.size())
-            return i;
-
-        ResourceFilename = resourceFile;
-        UseResourceFilename = true;
-        return i + 1;
-    }
-
-    if (arg == "--scripts-dir") {
-        std::string scriptsDir = Application::GetCmdLineOption(i + 1);
-        if (!scriptsDir.size())
-            return i;
-
-        StringUtils::Copy(SourceFileMap::Path, scriptsDir.c_str(), sizeof(SourceFileMap::Path));
-        return i + 1;
-    }
-
-    if (arg == "--scene") {
-        std::string scenePath = Application::GetCmdLineOption(i + 1);
-        if (!scenePath.size())
-            return i;
-
-        SceneToLoad = scenePath;
-        return i + 1;
-    }
-
-    if (arg == "--export-megadrive" || arg == "--export-genesis") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        if (!outputPath.size())
-            return i;
-
-        MegaDriveExportPath = outputPath;
-        return i + 1;
-    }
-
-    if (arg == "--32x-runtime") {
-        std::string runtimePath = Application::GetCmdLineOption(i + 1);
-        if (!runtimePath.size())
-            return i;
-
-        Sega32XRuntimePath = runtimePath;
-        return i + 1;
-    }
-
-    if (arg == "--export-megacd" || arg == "--export-segacd") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        if (!outputPath.size())
-            return i;
-
-        MegaCDExportPath = outputPath;
-        return i + 1;
-    }
-
-    if (arg == "--export-gamegear") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        if (!outputPath.size())
-            return i;
-
-        GameGearExportPath = outputPath;
-        return i + 1;
-    }
-
-    if (arg == "--export-32x") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        if (!outputPath.size())
-            return i;
-
-        Sega32XExportPath = outputPath;
-        return i + 1;
-    }
-
-    if (arg == "--export-saturn") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        if (!outputPath.size())
-            return i;
-
-        SegaSaturnExportPath = outputPath;
-        return i + 1;
-    }
-
-    if (arg == "--saturn-runtime") {
-        std::string runtimePath = Application::GetCmdLineOption(i + 1);
-        if (!runtimePath.size())
-            return i;
-
-        SegaSaturnRuntimePath = runtimePath;
-        return i + 1;
-    }
-
-    // A 3D scene is not the scene that is loaded -- it is a file of its own --
-    // so the Saturn export is told which one to carry rather than guessing.
-    // The engine reads MD3, RSDK and whatever the importer handles, and has
-    // always been able to write its own model format -- with nothing that
-    // called it. This is that: anything it can load, saved as a .hmdl.
-    if (arg == "--export-dreamcast") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        if (!outputPath.size())
-            return i;
-
-        DreamcastExportPath = outputPath;
-        return i + 1;
-    }
-
-    if (arg == "--export-dreamcast-3d") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        std::string scenePath = Application::GetCmdLineOption(i + 2);
-        if (!outputPath.size() || !scenePath.size())
-            return i;
-
-        DreamcastExportPath = outputPath;
-        DreamcastScene3DPath = scenePath;
-        return i + 2;
-    }
-
-    if (arg == "--dreamcast-runtime") {
-        std::string runtimePath = Application::GetCmdLineOption(i + 1);
-        if (!runtimePath.size())
-            return i;
-
-        DreamcastRuntimePath = runtimePath;
-        return i + 1;
-    }
-
-    if (arg == "--convert-model") {
-        std::string from = Application::GetCmdLineOption(i + 1);
-        std::string to = Application::GetCmdLineOption(i + 2);
-        if (!from.size() || !to.size())
-            return i;
-
-        ConvertModelFrom = from;
-        ConvertModelTo = to;
-        return i + 2;
-    }
-
-    if (arg == "--export-saturn-3d") {
-        std::string outputPath = Application::GetCmdLineOption(i + 1);
-        std::string scenePath = Application::GetCmdLineOption(i + 2);
-        if (!outputPath.size() || !scenePath.size())
-            return i;
-
-        SegaSaturnExportPath = outputPath;
-        SegaSaturnScene3DPath = scenePath;
-        return i + 2;
-    }
-
-    return i;
-}
-
-PRIVATE STATIC void Application::ParseCommandLineArgs() {
-    size_t count = Application::CmdLineArgs.size();
-    if (count == 0)
-        return;
-
-    // A lone argument that is not an option is a scene file or a data file, the
-    // way the engine has always been started from a file manager.
-    const char* firstArg = Application::CmdLineArgs[0].c_str();
-    if (count == 1 && !StringUtils::StartsWith(firstArg, "--")) {
-        if (StringUtils::StrCaseStr(firstArg, ".hatch")) {
-            ResourceFilename = Application::CmdLineArgs[0];
-            UseResourceFilename = true;
-            return;
-        }
-
-        char* pathStart = StringUtils::StrCaseStr(firstArg, "/Resources/");
-        if (pathStart == NULL)
-            pathStart = StringUtils::StrCaseStr(firstArg, "\\Resources\\");
-
-        if (pathStart) {
-            char scenePath[1024];
-            StringUtils::Copy(scenePath, pathStart + strlen("/Resources/"), sizeof(scenePath));
-            for (char* i = scenePath; *i; i++) {
-                if (*i == '\\')
-                    *i = '/';
-            }
-
-            SceneToLoad = std::string(scenePath);
-        }
-        else
-            Log::Print(Log::LOG_WARN, "Map file \"%s\" not inside Resources folder!", firstArg);
-
-        return;
-    }
-
-    for (size_t i = 0; i < count; i++) {
-        std::string arg = Application::CmdLineArgs[i];
-        if (!StringUtils::StartsWith(arg.c_str(), "--"))
-            continue;
-
-        i = Application::ProcessCommandLineOption(arg, i);
-    }
-}
-
-PUBLIC STATIC void Application::Init(int argc, char* args[]) {
+char StartingScene[MAX_RESOURCE_PATH_LENGTH];
+char NextGame[MAX_PATH_LENGTH];
+char NextGameStartingScene[MAX_RESOURCE_PATH_LENGTH];
+std::vector<std::string>* NextGameCmdLineArgs;
+
+// Where the engine was started from, so that closing a project in the editor
+// has somewhere to go back to whatever --project-dir moved into.
+std::string LaunchDirectory;
+char LogFilename[MAX_PATH_LENGTH];
+
+bool UseMemoryFileCache = false;
+
+bool ToggleDebugger = false;
+bool ViewPerformance = false;
+bool TakePerfSnapshot = false;
+bool DoNothing = false;
+int UpdatesPerFastForward = 4;
+
+bool AutomaticPerformanceSnapshots;
+double AutomaticPerformanceSnapshotFrameTimeThreshold;
+double AutomaticPerformanceSnapshotLastTime;
+double AutomaticPerformanceSnapshotMinInterval;
+
+int BenchmarkFrame = 0;
+float BenchmarkCounter = 0;
+
+double Overdelay = 0.0;
+double FrameTimeStart = 0.0;
+double FrameTimeDesired = 1000.0 / Application::TargetFPS;
+double FixedFrameTimeDesired;
+double LastTick;
+
+int KeyBinds[(int)KeyBind::Max];
+
+void Application::Init(int argc, char* args[]) {
 #ifdef MSYS
-    AllocConsole();
-    freopen_s((FILE **)stdin, "CONIN$", "w", stdin);
-    freopen_s((FILE **)stdout, "CONOUT$", "w", stdout);
-    freopen_s((FILE **)stderr, "CONOUT$", "w", stderr);
+	AllocConsole();
+	freopen_s((FILE**)stdin, "CONIN$", "w", stdin);
+	freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+	freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
 #endif
 
-    Application::MakeEngineVersion();
+	Application::MakeEngineVersion();
 
-    for (int i = 1; i < argc; i++)
-        Application::CmdLineArgs.push_back(std::string(args[i]));
+	for (int i = 1; i < argc; i++) {
+		Application::CmdLineArgs.push_back(std::string(args[i]));
+	}
 
-    // Answered before any subsystem starts, so --help does not flash a window.
-    if (Application::CmdLineArgExists("--help") || Application::CmdLineArgExists("-h")) {
-        Application::PrintCommandLineUsage();
-        return;
-    }
+	// Answered before any subsystem starts, so --help does not flash a window.
+	if (Application::HasCmdLineArg("--help") || Application::HasCmdLineArg("-h")) {
+		Application::PrintCommandLineUsage();
+		Application::CmdLineArgs.clear();
+		return;
+	}
 
-    Log::Init();
+	Log::Init();
 
-#ifdef GIT_COMMIT_HASH
-    Log::Print(Log::LOG_INFO, "Hatch Game Engine %s (commit " GIT_COMMIT_HASH ")", Application::EngineVersion);
-#else
-    Log::Print(Log::LOG_INFO, "Hatch Game Engine %s", Application::EngineVersion);
+	MemoryPools::Init();
+
+	Application::InitPerformanceMetrics();
+
+	SDL_SetHint(SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING, "1");
+	SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
+	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
+
+#ifdef IOS
+	// SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft
+	// LandscapeRight Portrait PortraitUpsideDown"); // iOS only
+	// SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback"); //
+	// Background Playback
+	SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "1");
+	iOS_InitMediaPlayer();
 #endif
 
-    MemoryPools::Init();
+#ifdef ANDROID
+	SDL_SetHint(SDL_HINT_ANDROID_SEPARATE_MOUSE_AND_TOUCH, "1");
+#endif
 
-    SDL_SetHint(SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING, "1");
-    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
-    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK |
+		    SDL_INIT_GAMECONTROLLER) < 0) {
+		Log::Print(Log::LOG_INFO, "SDL_Init failed with error: %s", SDL_GetError());
+	}
 
-    #ifdef IOS
-    // SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown"); // iOS only
-    // SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback"); // Background Playback
-    SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "1");
-    iOS_InitMediaPlayer();
-    #endif
+	SDL_SetEventFilter(Application::HandleAppEvents, NULL);
 
-    #ifdef ANDROID
-    SDL_SetHint(SDL_HINT_ANDROID_SEPARATE_MOUSE_AND_TOUCH, "1");
-    #endif
+	Application::ResetTimestepVariables();
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
-        Log::Print(Log::LOG_INFO, "SDL_Init failed with error: %s", SDL_GetError());
-    }
+	LaunchDirectory = Path::GetCurrentWorkingDirectory();
 
-    Log::Print(Log::LOG_VERBOSE, "CPU Core Count: %d", SDL_GetCPUCount());
-    Log::Print(Log::LOG_INFO, "System Memory: %d MB", SDL_GetSystemRAM());
+	// Initialize a few needed subsystems
+	InputManager::Init();
+	Clock::Init();
+	SourceFileMap::Init();
 
-    SDL_SetEventFilter(Application::HandleAppEvents, NULL);
+	// Parse command line arguments
+	Application::ParseCommandLineArgs();
 
-    Application::ParseCommandLineArgs();
+	// The editor opens on an engine with no game, which is how a project gets
+	// made in the first place; and converting a file needs no game at all.
+	ResourceManager::AllowMissingData = Application::IsPC() ||
+		Application::Platform == Platforms::Web || Application::IsExportRequested();
 
-    // In a browser the working directory is a filesystem that goes away with
-    // the tab. /save is the one mounted from IndexedDB, so settings written
-    // there are still around on the next visit -- see meta/web/shell.html.
-    #ifdef EMSCRIPTEN
-        Application::InitSettings("/save/config.ini");
-    #else
-        Application::InitSettings("config.ini");
-    #endif
+	// Load game stuff.
+	if (UseResourceFilename) {
+		Log::Print(Log::LOG_VERBOSE, "Resource file: %s", ResourceFilename.c_str());
 
-    Graphics::ChooseBackend();
+		ResourceManager::Init(ResourceFilename.c_str(), true);
+	}
+	else {
+		ResourceManager::Init(nullptr, true);
+	}
 
-    Application::Settings->GetBool("dev", "writeToFile", &Log::WriteToFile);
+	Application::LoadGameConfig();
+	Application::InitGameInfo();
+	Application::LoadGameInfo();
+	Application::ReloadSettings();
 
-    bool allowRetina = false;
-    Application::Settings->GetBool("display", "retina", &allowRetina);
+	// Open the log file immediately after
+	Log::OpenFile(LogFilename);
 
-    int defaultMonitor = Application::DefaultMonitor;
+	Application::LogEngineVersion();
+	Application::LogSystemInfo();
 
-    Uint32 window_flags = 0;
-    window_flags |= SDL_WINDOW_SHOWN;
-    window_flags |= Graphics::GetWindowFlags();
-    if (allowRetina)
-        window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+	// Keep loading game stuff.
+	Application::LoadSceneInfo(0, 0, false);
+	Application::InitPlayerControls();
+	Application::DisposeGameConfig();
 
-    Application::Window = SDL_CreateWindow(NULL,
-        SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor), SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor),
-        Application::WindowWidth, Application::WindowHeight, window_flags);
+	// Needs to be done after the settings are read and before Graphics::Init()
+	Graphics::ChooseBackend();
 
-    if (Application::Platform == Platforms::iOS) {
-        SDL_SetWindowFullscreen(Application::Window, SDL_WINDOW_FULLSCREEN);
-    }
-    else if (Application::Platform == Platforms::Switch) {
-        SDL_SetWindowFullscreen(Application::Window, SDL_WINDOW_FULLSCREEN);
-        AudioManager::MasterVolume = 0.25;
+	// Note: The window is created hidden.
+	Application::CreateWindow();
 
-        #ifdef SWITCH
-        SDL_DisplayMode mode;
-        SDL_GetDisplayMode(0, 1 - appletGetOperationMode(), &mode);
-        Log::Print(Log::LOG_INFO, "Display Mode: %i x %i", mode.w, mode.h);
-        #endif
-    }
+	// Continue initializing subsystems
+	Math::Init();
+	Graphics::Init();
 
-    // Initialize subsystems
-    Math::Init();
-    Graphics::Init();
-    ResourceManager::Init(UseResourceFilename ? ResourceFilename.c_str() : NULL);
-    AudioManager::Init();
-    InputManager::Init();
-    Clock::Init();
+	if (UseMemoryFileCache) {
+		MemoryCache::Init();
+	}
 
-    Application::LoadGameConfig();
-    Application::LoadGameInfo();
-    Application::LoadSceneInfo();
-    Application::ReadSettings();
-    Application::DisposeGameConfig();
+	if (Application::Settings && !Application::Settings->IsPersisted()) {
+		Application::Settings->Save();
+	}
 
-    const char *platform;
-    switch (Application::Platform) {
-        case Platforms::Windows:
-            platform = "Windows"; break;
-        case Platforms::MacOS:
-            platform = "MacOS"; break;
-        case Platforms::Linux:
-            platform = "Linux"; break;
-        case Platforms::Switch:
-            platform = "Nintendo Switch"; break;
-        case Platforms::PlayStation:
-            platform = "PlayStation"; break;
-        case Platforms::Xbox:
-            platform = "Xbox"; break;
-        case Platforms::Android:
-            platform = "Android"; break;
-        case Platforms::iOS:
-            platform = "iOS"; break;
-        case Platforms::Web:
-            platform = "Web"; break;
-        default:
-            platform = "Unknown"; break;
-    }
-    Log::Print(Log::LOG_INFO, "Current Platform: %s", platform);
+	AudioManager::Init();
 
-    Application::SetWindowTitle(Application::GameTitleShort);
+	Studio::Init();
 
-    Studio::Init();
-
-    Running = true;
+	Running = true;
 }
 
-PRIVATE STATIC void Application::MakeEngineVersion() {
-    std::string versionText = std::to_string(VERSION_MAJOR) + "." + std::to_string(VERSION_MINOR);
+bool Application::HasCmdLineArg(std::string match) {
+	return GetCmdLineArgIndex(match) != -1;
+}
+int Application::GetCmdLineArgIndex(std::string match) {
+	for (size_t i = 0; i < CmdLineArgs.size(); i++) {
+		if (CmdLineArgs[i] == match) {
+			return (int)i;
+		}
+	}
+	return -1;
+}
+std::string Application::GetCmdLineOption(std::string match) {
+	size_t numArgs = CmdLineArgs.size();
+	for (size_t i = 0; i < numArgs; i++) {
+		if (CmdLineArgs[i] == match) {
+			return GetCmdLineOption(i + 1);
+		}
+	}
+	return "";
+}
+std::string Application::GetCmdLineOption(size_t index) {
+	if (index < CmdLineArgs.size()) {
+		std::string option = CmdLineArgs[index];
+		if (!StringUtils::StartsWith(option.c_str(), "--")) {
+			return option;
+		}
+	}
+	return "";
+}
+void Application::ParseCommandLineArgs() {
+	size_t numArgs = CmdLineArgs.size();
+	if (numArgs == 0) {
+		return;
+	}
+
+	// Interpret the first argument as a .hatch to load, or a scene file to load,
+	// for backwards compatibility.
+	const char* firstArg = CmdLineArgs[0].c_str();
+
+	if (numArgs == 1 && !StringUtils::StartsWith(firstArg, "--")) {
+		char* pathStart = StringUtils::StrCaseStr(firstArg, "/Resources/");
+		if (pathStart == NULL) {
+			pathStart = StringUtils::StrCaseStr(firstArg, "\\Resources\\");
+		}
+
+		if (pathStart) {
+			char scenePath[MAX_RESOURCE_PATH_LENGTH];
+			StringUtils::Copy(
+				scenePath, pathStart + strlen("/Resources/"), sizeof scenePath);
+			StringUtils::ReplacePathSeparatorsInPlace(scenePath);
+			SceneToLoad = std::string(scenePath);
+		}
+		else {
+			Log::Print(Log::LOG_WARN,
+				"Map file \"%s\" not inside Resources folder!",
+				firstArg);
+		}
+
+#ifdef ALLOW_COMMAND_LINE_RESOURCE_LOAD
+		if (StringUtils::StrCaseStr(CmdLineArgs[0].c_str(), ".hatch")) {
+			ResourceFilename = CmdLineArgs[0];
+			UseResourceFilename = true;
+		}
+#endif
+
+		return;
+	}
+
+	for (size_t i = 0; i < numArgs; i++) {
+		std::string arg = CmdLineArgs[i];
+		if (!StringUtils::StartsWith(arg.c_str(), "--")) {
+			continue;
+		}
+
+		i = ProcessCommandLineOption(arg, i);
+	}
+}
+// The value that follows the option at i, if there is one. What comes back is the
+// index of the last argument the option used up.
+static size_t ReadCmdLinePath(size_t i, std::string& dest) {
+	std::string value = Application::GetCmdLineOption(i + 1);
+	if (value.size() == 0) {
+		return i;
+	}
+
+	dest = value;
+	return i + 1;
+}
+static size_t ReadCmdLinePaths(size_t i, std::string& first, std::string& second) {
+	std::string firstValue = Application::GetCmdLineOption(i + 1);
+	std::string secondValue = Application::GetCmdLineOption(i + 2);
+	if (firstValue.size() == 0 || secondValue.size() == 0) {
+		return i;
+	}
+
+	first = firstValue;
+	second = secondValue;
+	return i + 2;
+}
+
+void Application::PrintCommandLineUsage() {
+	printf("Hatch Game Engine %s\n\n", Application::EngineVersion);
+	printf("Usage: " TARGET_NAME " [options] [scene file]\n\n");
+	printf("  --project-dir <path>    Run the game in <path>, which holds its\n");
+	printf("                          Resources and Scripts folders.\n");
+	printf("  --resource-file <path>  Read resources from a packed .hatch file.\n");
+	printf("  --scripts-dir <path>    Read scripts from <path> instead of Scripts.\n");
+	printf("  --scene <path>          Load this scene at startup, relative to\n");
+	printf("                          the Resources folder. A game has to allow\n");
+	printf("                          this in its GameConfig, except when the\n");
+	printf("                          scene is being exported.\n");
+	printf("  --studio                Open the editor on startup.\n");
+	printf("  --export-megadrive <p>  Convert the loaded scene into a Mega Drive\n");
+	printf("                          project under <p> and exit. Needs --scene.\n");
+	printf("                          --export-genesis is the same machine.\n");
+	printf("  --export-32x <p>        The same, for the SEGA 32X.\n");
+	printf("  --export-megacd <p>     The same, for the SEGA Mega CD.\n");
+	printf("  --export-gamegear <p>   The same, for the SEGA Game Gear.\n");
+	printf("  --export-saturn <p>     The same, for the SEGA Saturn.\n");
+	printf("  --export-dreamcast <p>  The same, for the SEGA Dreamcast.\n");
+	printf("  --export-saturn-3d <p> <scene3d>\n");
+	printf("                          Convert a 3D scene for the Saturn's VDP1.\n");
+	printf("  --export-dreamcast-3d <p> <scene3d>\n");
+	printf("                          Convert a 3D scene for the Dreamcast.\n");
+	printf("  --32x-runtime <p>       Where meta/32x/runtime is, when it is not\n");
+	printf("                          beside the engine or the working directory.\n");
+	printf("  --saturn-runtime <p>    The same, for meta/saturn/runtime.\n");
+	printf("  --dreamcast-runtime <p> The same, for meta/dreamcast/runtime.\n");
+	printf("  --convert-model <from> <to>\n");
+	printf("                          Load a model and save it as a Hatch model.\n");
+	printf("  --help                  Show this text.\n\n");
+	printf("With no arguments the editor opens if there is no game to run.\n");
+}
+
+size_t Application::ProcessCommandLineOption(std::string arg, size_t i) {
+#ifdef ALLOW_COMMAND_LINE_RESOURCE_LOAD
+	// Specify the path to both Resources and Scripts directory
+	if (arg == "--project-dir") {
+		std::string projectDirPath = GetCmdLineOption(i + 1);
+		if (projectDirPath.size() == 0) {
+			return i;
+		}
+
+		projectDirPath = Path::Normalize(Path::ToAbsolute(projectDirPath));
+
+		ResourceFilename = Path::Concat(projectDirPath, "Resources");
+		std::string scriptsDirPath = Path::Concat(projectDirPath, "Scripts");
+
+		UseResourceFilename = true;
+		StringUtils::Copy(SourceFileMap::Path, scriptsDirPath.c_str(), sizeof(SourceFileMap::Path));
+
+		// Run from inside the project, the same as launching the engine from
+		// its folder, so the editor finds the project's files where it looks
+		// for them. Everything above is already absolute, so moving does not
+		// change what it points at.
+		if (!Directory::SetCurrentWorkingDirectory(projectDirPath.c_str())) {
+			Log::Print(Log::LOG_ERROR,
+				"Could not enter project folder \"%s\"!",
+				projectDirPath.c_str());
+		}
+		return i + 1;
+	}
+	// Specify the resource file to load
+	else if (arg == "--resource-file") {
+		std::string resourceFilePath = GetCmdLineOption(i + 1);
+		if (resourceFilePath.size() == 0) {
+			return i;
+		}
+
+		ResourceFilename = Path::Normalize(Path::ToAbsolute(resourceFilePath));
+		UseResourceFilename = true;
+		return i + 1;
+	}
+	else
+#endif
+	// Specify the path to use for the Scripts directory
+	if (arg == "--scripts-dir") {
+		std::string scriptsDirPath = GetCmdLineOption(i + 1);
+		if (scriptsDirPath.size() == 0) {
+			return i;
+		}
+
+		scriptsDirPath = Path::Normalize(Path::ToAbsolute(scriptsDirPath));
+		StringUtils::Copy(SourceFileMap::Path, scriptsDirPath.c_str(), sizeof(SourceFileMap::Path));
+		return i + 1;
+	}
+	// Specify a scene file to load
+	else if (arg == "--scene") {
+		// The index of the scene itself is what goes back, so the caller's
+		// loop steps past it to the next option rather than over that too.
+		std::string scenePath = GetCmdLineOption(i + 1);
+		if (scenePath.size() == 0) {
+			return i;
+		}
+
+		SceneToLoad = scenePath;
+		return i + 1;
+	}
+	// Convert the loaded scene for a SEGA machine, and exit.
+	else if (arg == "--export-megadrive" || arg == "--export-genesis") {
+		return ReadCmdLinePath(i, MegaDriveExportPath);
+	}
+	else if (arg == "--export-32x") {
+		return ReadCmdLinePath(i, Sega32XExportPath);
+	}
+	else if (arg == "--32x-runtime") {
+		return ReadCmdLinePath(i, Sega32XRuntimePath);
+	}
+	else if (arg == "--export-megacd" || arg == "--export-segacd") {
+		return ReadCmdLinePath(i, MegaCDExportPath);
+	}
+	else if (arg == "--export-gamegear") {
+		return ReadCmdLinePath(i, GameGearExportPath);
+	}
+	else if (arg == "--export-saturn") {
+		return ReadCmdLinePath(i, SegaSaturnExportPath);
+	}
+	else if (arg == "--saturn-runtime") {
+		return ReadCmdLinePath(i, SegaSaturnRuntimePath);
+	}
+	else if (arg == "--export-dreamcast") {
+		return ReadCmdLinePath(i, DreamcastExportPath);
+	}
+	else if (arg == "--dreamcast-runtime") {
+		return ReadCmdLinePath(i, DreamcastRuntimePath);
+	}
+	// A 3D scene is not the scene that is loaded -- it is a file of its own --
+	// so these are told which one to carry rather than guessing.
+	else if (arg == "--export-saturn-3d") {
+		return ReadCmdLinePaths(i, SegaSaturnExportPath, SegaSaturnScene3DPath);
+	}
+	else if (arg == "--export-dreamcast-3d") {
+		return ReadCmdLinePaths(i, DreamcastExportPath, DreamcastScene3DPath);
+	}
+	// Anything the engine can load as a model, written back out as a .hmdl.
+	else if (arg == "--convert-model") {
+		return ReadCmdLinePaths(i, ConvertModelFrom, ConvertModelTo);
+	}
+
+	return i;
+}
+
+void Application::InitScripting() {
+	SourceFileMap::Init();
+	GarbageCollector::Init();
+
+	Compiler::Init();
+
+	ScriptManager::Init();
+	ScriptManager::ResetStack();
+	ScriptManager::LinkStandardLibrary();
+	ScriptManager::LinkExtensions();
+
+	Compiler::GetStandardConstants();
+
+#ifdef VM_DEBUG
+	VMThreadDebugger::Initialize();
+#endif
+
+	if (SourceFileMap::CheckForUpdate()) {
+		ScriptManager::ForceGarbageCollection();
+	}
+}
+void Application::LogEngineVersion() {
+#ifdef GIT_COMMIT_HASH
+	Log::Print(Log::LOG_INFO,
+		"Hatch Game Engine %s (commit " GIT_COMMIT_HASH ")",
+		Application::EngineVersion);
+#else
+	Log::Print(Log::LOG_INFO, "Hatch Game Engine %s", Application::EngineVersion);
+#endif
+}
+void Application::LogSystemInfo() {
+	const char* platform;
+	switch (Application::Platform) {
+	case Platforms::Windows:
+		platform = "Windows";
+		break;
+	case Platforms::MacOS:
+		platform = "MacOS";
+		break;
+	case Platforms::Linux:
+		platform = "Linux";
+		break;
+	case Platforms::Switch:
+		platform = "Nintendo Switch";
+		break;
+	case Platforms::PlayStation:
+		platform = "PlayStation";
+		break;
+	case Platforms::Xbox:
+		platform = "Xbox";
+		break;
+	case Platforms::Android:
+		platform = "Android";
+		break;
+	case Platforms::iOS:
+		platform = "iOS";
+		break;
+	case Platforms::Web:
+		platform = "Web";
+		break;
+	default:
+		platform = "Unknown";
+		break;
+	}
+	Log::Print(Log::LOG_INFO, "Current Platform: %s", platform);
+	Log::Print(Log::LOG_VERBOSE, "CPU Core Count: %d", SDL_GetCPUCount());
+	Log::Print(Log::LOG_INFO, "System Memory: %d MB", SDL_GetSystemRAM());
+}
+void Application::CreateWindow() {
+	bool allowRetina = false;
+	Application::Settings->GetBool("display", "retina", &allowRetina);
+
+	int defaultMonitor = Application::DefaultMonitor;
+
+	Uint32 window_flags = 0;
+	window_flags |= IsPC() ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
+	window_flags |= Graphics::GetWindowFlags();
+	if (allowRetina) {
+		window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+	}
+
+	int scale = 2;
+	Application::Settings->GetInteger("display", "scale", &scale);
+	Application::SetWindowScale(scale);
+
+	Application::Window = SDL_CreateWindow(NULL,
+		SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor),
+		SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor),
+		Application::WindowWidth * Application::WindowScale,
+		Application::WindowHeight * Application::WindowScale,
+		window_flags);
+
+	if (Application::Platform == Platforms::iOS) {
+		SDL_SetWindowFullscreen(Application::Window, SDL_WINDOW_FULLSCREEN);
+	}
+	else if (Application::Platform == Platforms::Switch) {
+		SDL_SetWindowFullscreen(Application::Window, SDL_WINDOW_FULLSCREEN);
+		AudioManager::MasterVolume = 0.25;
+
+#ifdef SWITCH
+		SDL_DisplayMode mode;
+		SDL_GetDisplayMode(0, 1 - appletGetOperationMode(), &mode);
+		Log::Print(Log::LOG_INFO, "Display Mode: %i x %i", mode.w, mode.h);
+#endif
+	}
+	else {
+		Application::Settings->GetBool(
+			"display", "fullscreen", &Application::WindowFullscreen);
+
+		if (Application::GetWindowFullscreen() != Application::WindowFullscreen) {
+			Application::SetWindowFullscreen(Application::WindowFullscreen);
+		}
+	}
+
+	Application::Settings->GetBool("display", "borderless", &Application::WindowBorderless);
+	Application::SetWindowBorderless(Application::WindowBorderless);
+
+	Application::SetWindowTitle(Application::GameTitleShort);
+}
+
+void Application::SetTargetFrameRate(int targetFPS) {
+	if (targetFPS < 1) {
+		TargetFPS = 1;
+	}
+	else if (targetFPS > MAX_TARGET_FRAMERATE) {
+		TargetFPS = MAX_TARGET_FRAMERATE;
+	}
+	else {
+		TargetFPS = targetFPS;
+	}
+
+	FrameTimeDesired = 1000.0 / TargetFPS;
+}
+
+void Application::ResetTimestepVariables() {
+	Application::SetTargetFrameRate(DEFAULT_TARGET_FRAMERATE);
+	Application::SetUseFixedTimestep(true);
+	Application::ShouldUseFixedTimestep = true;
+}
+
+void Application::MakeEngineVersion() {
+	std::string versionText =
+		std::to_string(VERSION_MAJOR) + "." + std::to_string(VERSION_MINOR);
 
 #ifdef VERSION_PATCH
-    versionText += ".";
-    versionText += std::to_string(VERSION_PATCH);
+	versionText += ".";
+	versionText += std::to_string(VERSION_PATCH);
 #endif
 
 #ifdef VERSION_PRERELEASE
-    versionText += "-";
-    versionText += VERSION_PRERELEASE;
+	versionText += "-";
+	versionText += VERSION_PRERELEASE;
 #endif
 
 #ifdef VERSION_CODENAME
-    versionText += " (";
-    versionText += VERSION_CODENAME;
-    versionText += ")";
+	versionText += " (";
+	versionText += VERSION_CODENAME;
+	versionText += ")";
 #endif
 
-    if (versionText.size() > 0)
-        StringUtils::Copy(Application::EngineVersion, versionText.c_str(), sizeof(Application::EngineVersion));
+	if (versionText.size() > 0) {
+		StringUtils::Copy(Application::EngineVersion,
+			versionText.c_str(),
+			sizeof(Application::EngineVersion));
+	}
 }
 
-PUBLIC STATIC bool Application::IsPC() {
-    return Application::Platform == Platforms::Windows || Application::Platform == Platforms::MacOS || Application::Platform == Platforms::Linux;
+bool Application::IsPC() {
+	return Application::Platform == Platforms::Windows ||
+		Application::Platform == Platforms::MacOS ||
+		Application::Platform == Platforms::Linux;
 }
-PUBLIC STATIC bool Application::IsMobile() {
-    return Application::Platform == Platforms::iOS || Application::Platform == Platforms::Android;
-}
-
-bool    AutomaticPerformanceSnapshots = false;
-double  AutomaticPerformanceSnapshotFrameTimeThreshold = 20.0;
-double  AutomaticPerformanceSnapshotLastTime = 0.0;
-double  AutomaticPerformanceSnapshotMinInterval = 5000.0; // 5 seconds
-
-int     MetricFrameCounterTime = 0;
-double  MetricEventTime = -1;
-double  MetricAfterSceneTime = -1;
-double  MetricPollTime = -1;
-double  MetricUpdateTime = -1;
-double  MetricClearTime = -1;
-double  MetricRenderTime = -1;
-double  MetricFPSCounterTime = -1;
-double  MetricPresentTime = -1;
-double  MetricFrameTime = 0.0;
-vector<ObjectList*> ListList;
-PUBLIC STATIC void Application::GetPerformanceSnapshot() {
-    if (Scene::ObjectLists) {
-        // General Performance Snapshot
-        double types[] = {
-            MetricEventTime,
-            MetricAfterSceneTime,
-            MetricPollTime,
-            MetricUpdateTime,
-            MetricClearTime,
-            MetricRenderTime,
-            MetricPresentTime,
-            0.0,
-            MetricFrameTime,
-            FPS,
-        };
-        const char* typeNames[] = {
-            "Event Polling:         %8.3f ms",
-            "Garbage Collector:     %8.3f ms",
-            "Input Polling:         %8.3f ms",
-            "Entity Update:         %8.3f ms",
-            "Clear Time:            %8.3f ms",
-            "World Render Commands: %8.3f ms",
-            "Frame Present Time:    %8.3f ms",
-            "==================================",
-            "Frame Total Time:      %8.3f ms",
-            "FPS:                   %11.3f",
-        };
-
-        ListList.clear();
-        Scene::ObjectLists->WithAll([](Uint32, ObjectList* list) -> void {
-            if ((list->Performance.Update.AverageTime > 0.0 && list->Performance.Update.AverageItemCount > 0) ||
-                (list->Performance.Render.AverageTime > 0.0 && list->Performance.Render.AverageItemCount > 0))
-                ListList.push_back(list);
-        });
-        std::sort(ListList.begin(), ListList.end(), [](ObjectList* a, ObjectList* b) -> bool {
-            ObjectListPerformanceStats& updatePerfA = a->Performance.Update;
-            ObjectListPerformanceStats& updatePerfB = b->Performance.Update;
-            ObjectListPerformanceStats& renderPerfA = a->Performance.Render;
-            ObjectListPerformanceStats& renderPerfB = b->Performance.Render;
-            return
-                updatePerfA.AverageTime * updatePerfA.AverageItemCount + renderPerfA.AverageTime * renderPerfA.AverageItemCount >
-                updatePerfB.AverageTime * updatePerfB.AverageItemCount + renderPerfB.AverageTime * renderPerfB.AverageItemCount;
-        });
-
-        Log::Print(Log::LOG_IMPORTANT, "General Performance Snapshot:");
-        for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
-            Log::Print(Log::LOG_INFO, typeNames[i], types[i]);
-        }
-
-        // View Rendering Performance Snapshot
-        char layerText[2048];
-        Log::Print(Log::LOG_IMPORTANT, "View Rendering Performance Snapshot:");
-        for (int i = 0; i < MAX_SCENE_VIEWS; i++) {
-            View* currentView = &Scene::Views[i];
-            if (currentView->Active) {
-                layerText[0] = 0;
-                double tilesTotal = 0.0;
-                for (size_t li = 0; li < Scene::Layers.size(); li++) {
-                    SceneLayer* layer = &Scene::Layers[li];
-                    char temp[128];
-                    snprintf(temp, sizeof(temp), "     > %24s:   %8.3f ms\n",
-                        layer->Name, Scene::PERF_ViewRender[i].LayerTileRenderTime[li]);
-                    StringUtils::Concat(layerText, temp, sizeof(layerText));
-                    tilesTotal += Scene::PERF_ViewRender[i].LayerTileRenderTime[li];
-                }
-                Log::Print(Log::LOG_INFO, "View %d:\n"
-                    "           - Render Setup:        %8.3f ms %s\n"
-                    "           - Projection Setup:    %8.3f ms\n"
-                    "           - Object RenderEarly:  %8.3f ms\n"
-                    "           - Object Render:       %8.3f ms\n"
-                    "           - Object RenderLate:   %8.3f ms\n"
-                    "           - Layer Tiles Total:   %8.3f ms\n%s"
-                    "           - Finish:              %8.3f ms\n"
-                    "           - Total:               %8.3f ms",
-                    i,
-                    Scene::PERF_ViewRender[i].RenderSetupTime, Scene::PERF_ViewRender[i].RecreatedDrawTarget ? "(recreated draw target)" : "",
-                    Scene::PERF_ViewRender[i].ProjectionSetupTime,
-                    Scene::PERF_ViewRender[i].ObjectRenderEarlyTime,
-                    Scene::PERF_ViewRender[i].ObjectRenderTime,
-                    Scene::PERF_ViewRender[i].ObjectRenderLateTime,
-                    tilesTotal, layerText,
-                    Scene::PERF_ViewRender[i].RenderFinishTime,
-                    Scene::PERF_ViewRender[i].RenderTime);
-            }
-        }
-
-        // Object Performance Snapshot
-        double totalUpdateEarly = 0.0;
-        double totalUpdate = 0.0;
-        double totalUpdateLate = 0.0;
-        double totalRender = 0.0;
-        Log::Print(Log::LOG_IMPORTANT, "Object Performance Snapshot:");
-        for (size_t i = 0; i < ListList.size(); i++) {
-            ObjectList* list = ListList[i];
-            ObjectListPerformance& perf = list->Performance;
-            Log::Print(Log::LOG_INFO, "Object \"%s\":\n"
-                "           - Avg Update Early %6.1f mcs (Total %6.1f mcs, Count %d)\n"
-                "           - Avg Update       %6.1f mcs (Total %6.1f mcs, Count %d)\n"
-                "           - Avg Update Late  %6.1f mcs (Total %6.1f mcs, Count %d)\n"
-                "           - Avg Render       %6.1f mcs (Total %6.1f mcs, Count %d)", list->ObjectName,
-                perf.EarlyUpdate.GetAverageTime(), perf.EarlyUpdate.GetTotalAverageTime(), (int)perf.EarlyUpdate.AverageItemCount,
-                perf.Update.GetAverageTime(), perf.Update.GetTotalAverageTime(), (int)perf.Update.AverageItemCount,
-                perf.LateUpdate.GetAverageTime(), perf.LateUpdate.GetTotalAverageTime(), (int)perf.LateUpdate.AverageItemCount,
-                perf.Render.GetAverageTime(), perf.Render.GetTotalAverageTime(), (int)perf.Render.AverageItemCount);
-
-            totalUpdateEarly += perf.EarlyUpdate.GetTotalAverageTime();
-            totalUpdate += perf.Update.GetTotalAverageTime();
-            totalUpdateLate += perf.LateUpdate.GetTotalAverageTime();
-            totalRender += perf.Render.GetTotalAverageTime();
-        }
-        Log::Print(Log::LOG_WARN, "Total Update Early: %8.3f mcs / %1.3f ms", totalUpdateEarly, totalUpdateEarly / 1000.0);
-        Log::Print(Log::LOG_WARN, "Total Update: %8.3f mcs / %1.3f ms", totalUpdate, totalUpdate / 1000.0);
-        Log::Print(Log::LOG_WARN, "Total Update Late: %8.3f mcs / %1.3f ms", totalUpdateLate, totalUpdateLate / 1000.0);
-        Log::Print(Log::LOG_WARN, "Total Render: %8.3f mcs / %1.3f ms", totalRender, totalRender / 1000.0);
-
-        Log::Print(Log::LOG_IMPORTANT, "Garbage Size:");
-        Log::Print(Log::LOG_INFO, "%u", (Uint32)GarbageCollector::GarbageSize);
-    }
+bool Application::IsMobile() {
+	return Application::Platform == Platforms::iOS ||
+		Application::Platform == Platforms::Android;
 }
 
-PUBLIC STATIC void Application::SetWindowTitle(const char* title) {
-    memset(Application::WindowTitle, 0, sizeof(Application::WindowTitle));
-    snprintf(Application::WindowTitle, sizeof(Application::WindowTitle), "%s", title);
-    Application::UpdateWindowTitle();
+void Application::AddCapability(std::string capability, int value) {
+	RemoveCapability(capability);
+
+	Application::CapabilityMap[capability] = Capability(value);
+}
+void Application::AddCapability(std::string capability, float value) {
+	RemoveCapability(capability);
+
+	Application::CapabilityMap[capability] = Capability(value);
+}
+void Application::AddCapability(std::string capability, bool value) {
+	RemoveCapability(capability);
+
+	Application::CapabilityMap[capability] = Capability(value);
+}
+void Application::AddCapability(std::string capability, std::string value) {
+	char* string = StringUtils::Create(value);
+
+	RemoveCapability(capability);
+
+	Application::CapabilityMap[capability] = Capability(string);
+}
+Capability Application::GetCapability(std::string capability) {
+	std::unordered_map<std::string, Capability>::iterator it = CapabilityMap.find(capability);
+	if (it != CapabilityMap.end()) {
+		return it->second;
+	}
+
+	return Capability();
+}
+bool Application::HasCapability(std::string capability) {
+	std::unordered_map<std::string, Capability>::iterator it = CapabilityMap.find(capability);
+	return it != CapabilityMap.end();
+}
+void Application::RemoveCapability(std::string capability) {
+	if (HasCapability(capability)) {
+		Capability cap = CapabilityMap[capability];
+
+		cap.Dispose();
+
+		CapabilityMap.erase(capability);
+	}
 }
 
-PUBLIC STATIC void Application::UpdateWindowTitle() {
-    std::string titleText = std::string(Application::WindowTitle);
+bool IsIdentifierBody(char c) {
+	switch (c) {
+	case '.':
+	case '-':
+	case '_':
+	case ' ':
+	case '\'':
+	case '!':
+	case '@':
+	case '&':
+		return true;
+	default:
+		return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+	}
+}
 
-    bool paren = false;
+bool Application::ValidateIdentifier(const char* string) {
+	if (string == nullptr || string[0] == '\0') {
+		return false;
+	}
+
+	// Cannot start with a dot, a hyphen, or space
+	if (string[0] == '.' || string[0] == '-' || string[0] == ' ') {
+		return false;
+	}
+
+	const char* ptr = string;
+	while (*ptr != '\0') {
+		char c = *ptr;
+
+		if (IsIdentifierBody(c)) {
+			ptr++;
+			continue;
+		}
+
+		return false;
+	}
+
+	// Cannot end with a space
+	if ((unsigned char)(*(ptr - 1)) == ' ') {
+		return false;
+	}
+
+	return true;
+}
+
+char* Application::GenerateIdentifier(const char* string) {
+	if (string == nullptr || string[0] == '\0') {
+		return nullptr;
+	}
+
+	// Prohibit '.' or '..'
+	if (strcmp(string, ".") == 0 || strcmp(string, "..") == 0) {
+		return nullptr;
+	}
+
+	char* buf = (char*)Memory::Malloc(strlen(string) + 1);
+	size_t i = 0;
+
+	const char* ptr = string;
+	if (*ptr == '-' || *ptr == ' ') {
+		ptr++;
+	}
+	else {
+		while (*ptr == '.') {
+			ptr++;
+		}
+	}
+
+	while (*ptr != '\0') {
+		char c = *ptr;
+		if (IsIdentifierBody(c)) {
+			buf[i++] = c;
+		}
+		ptr++;
+	}
+
+	if (i == 0) {
+		Memory::Free(buf);
+		return nullptr;
+	}
+
+	// Cannot end with a space
+	i--;
+
+	while (buf[i] == ' ') {
+		if (i == 0) {
+			Memory::Free(buf);
+			return nullptr;
+		}
+		i--;
+	}
+
+	i++;
+
+	buf[i] = '\0';
+
+	return (char*)Memory::Realloc(buf, i + 1);
+}
+
+bool Application::ValidateAndSetIdentifier(const char* name,
+	const char* id,
+	char* dest,
+	size_t destSize) {
+	if (Application::ValidateIdentifier(id)) {
+		StringUtils::Copy(dest, id, destSize);
+		return true;
+	}
+
+	Log::Print(Log::LOG_WARN, "Not a valid %s: %s", name, id);
+
+	return false;
+}
+
+// Returns a "safe" version of the developer's name (for e.g. file names)
+const char* Application::GetDeveloperIdentifier() {
+	if (DeveloperIdentifier[0] == '\0') {
+		return nullptr;
+	}
+
+	return DeveloperIdentifier;
+}
+
+// Returns a "safe" version of the game's name (for e.g. file names)
+const char* Application::GetGameIdentifier() {
+	if (GameIdentifier[0] == '\0') {
+		return nullptr;
+	}
+
+	return GameIdentifier;
+}
+
+// Returns the name of the saves directory
+const char* Application::GetSavesDir() {
+	if (SavesDir[0] == '\0') {
+		return nullptr;
+	}
+
+	return SavesDir;
+}
+
+// Returns the name of the screenshots directory
+const char* Application::GetScreenshotsPath() {
+	if (ScreenshotsPath[0] == '\0') {
+		return nullptr;
+	}
+
+	return ScreenshotsPath;
+}
+
+// Returns the name of the preferences directory
+const char* Application::GetPreferencesDir() {
+	if (PreferencesDir[0] == '\0') {
+		return nullptr;
+	}
+
+	return PreferencesDir;
+}
+
+std::string Application::GetFilenameForScreenshot() {
+	std::string filename = Screenshot::GetFilename();
+
+	return PATHLOCATION_SCREENSHOTS_URL + filename;
+}
+
+void Application::LoadDefaultFont() {
+	std::vector<Stream*> streamList;
+	bool hadError = false;
+
+	for (size_t i = 0; i < DefaultFontList.size(); i++) {
+		const char* filename = DefaultFontList[i].c_str();
+		Stream* stream = ResourceStream::New(filename);
+		if (stream) {
+			streamList.push_back(stream);
+		}
+		else {
+			Log::Print(Log::LOG_ERROR, "Resource \"%s\" does not exist!", filename);
+			hadError = true;
+		}
+	}
+
+	if (streamList.size() == 0) {
+		void* data = GetDefaultFontData();
+		if (data == nullptr) {
+			Application::UnloadDefaultFont();
+			return;
+		}
+
+		if (hadError) {
+			Log::Print(Log::LOG_IMPORTANT, "Loading the default font as a fallback.");
+		}
+
+		MemoryStream* stream = MemoryStream::New(data, GetDefaultFontDataLength());
+		if (stream) {
+			streamList.push_back(stream);
+		}
+	}
+
+	if (streamList.size() == 0) {
+		Log::Print(Log::LOG_WARN, "No default fonts to load!");
+		return;
+	}
+
+	Application::UnloadDefaultFont();
+
+	int oversampling = 1;
+	Application::Settings->GetInteger("graphics", "defaultFontOversampling", &oversampling);
+
+	DefaultFont = new Font();
+	DefaultFont->SetOversampling(oversampling);
+
+	if (DefaultFont->Load(streamList) && DefaultFont->LoadSize(DEFAULT_FONT_SIZE)) {
+		DefaultFont->LoadFailed = false;
+	}
+	else {
+		Log::Print(Log::LOG_WARN, "Couldn't load the default font!");
+		Application::UnloadDefaultFont();
+	}
+
+	for (size_t i = 0; i < streamList.size(); i++) {
+		streamList[i]->Close();
+	}
+}
+
+void Application::UnloadDefaultFont() {
+	if (DefaultFont) {
+		delete DefaultFont;
+		DefaultFont = nullptr;
+	}
+}
+
+void Application::GetPerformanceSnapshot() {
+	// General Performance Snapshot
+	Log::Print(Log::LOG_IMPORTANT, "General Performance Snapshot:");
+	for (size_t i = 0; i < Application::AllMetrics.size(); i++) {
+		PerformanceMeasure* measure = Application::AllMetrics[i];
+
+		char timeString[64];
+		snprintf(timeString, sizeof timeString, "%.3f ms", measure->Time);
+
+		char padStr[32 + 1];
+		int padding = (sizeof(padStr) - 1) - strlen(measure->Name) + 1 - strlen(timeString);
+		if (padding < 1) {
+			padding = 1;
+		}
+		for (int i = 0; i < padding; i++) {
+			padStr[i] = ' ';
+		}
+		padStr[padding] = '\0';
+
+		Log::Print(Log::LOG_INFO, "%s:%s%s", measure->Name, padStr, timeString);
+	}
+	Log::Print(Log::LOG_INFO, "FPS: %27.3f", CurrentFPS);
+
+	// View Rendering Performance Snapshot
+	char layerText[2048];
+	Log::Print(Log::LOG_IMPORTANT, "View Rendering Performance Snapshot:");
+	for (int i = 0; i < MAX_SCENE_VIEWS; i++) {
+		View* currentView = &Scene::Views[i];
+		if (currentView->Active) {
+			layerText[0] = 0;
+			double tilesTotal = 0.0;
+			for (size_t li = 0; li < Scene::Layers.size(); li++) {
+				SceneLayer* layer = Scene::Layers[li];
+				char temp[128];
+				snprintf(temp,
+					sizeof(temp),
+					"     > %24s:   %8.3f ms\n",
+					layer->Name,
+					Scene::PERF_ViewRender[i].LayerTileRenderTime[li]);
+				StringUtils::Concat(layerText, temp, sizeof(layerText));
+				tilesTotal += Scene::PERF_ViewRender[i].LayerTileRenderTime[li];
+			}
+			Log::Print(Log::LOG_INFO,
+				"View %d:\n"
+				"           - Render Setup:        %8.3f ms %s\n"
+				"           - Projection Setup:    %8.3f ms\n"
+				"           - Object RenderEarly:  %8.3f ms\n"
+				"           - Object Render:       %8.3f ms\n"
+				"           - Object RenderLate:   %8.3f ms\n"
+				"           - Layer Tiles Total:   %8.3f ms\n%s"
+				"           - Finish:              %8.3f ms\n"
+				"           - Total:               %8.3f ms",
+				i,
+				Scene::PERF_ViewRender[i].RenderSetupTime,
+				Scene::PERF_ViewRender[i].RecreatedDrawTarget
+					? "(recreated draw target)"
+					: "",
+				Scene::PERF_ViewRender[i].ProjectionSetupTime,
+				Scene::PERF_ViewRender[i].ObjectRenderEarlyTime,
+				Scene::PERF_ViewRender[i].ObjectRenderTime,
+				Scene::PERF_ViewRender[i].ObjectRenderLateTime,
+				tilesTotal,
+				layerText,
+				Scene::PERF_ViewRender[i].RenderFinishTime,
+				Scene::PERF_ViewRender[i].RenderTime);
+		}
+	}
+
+	// Object Performance Snapshot
+	vector<ObjectList*> objListPerf = Scene::GetObjectListPerformance();
+	if (objListPerf.size() > 0) {
+		double totalUpdateEarly = 0.0;
+		double totalUpdate = 0.0;
+		double totalUpdateLate = 0.0;
+		double totalRender = 0.0;
+		Log::Print(Log::LOG_IMPORTANT, "Object Performance Snapshot:");
+		for (size_t i = 0; i < objListPerf.size(); i++) {
+			ObjectList* list = objListPerf[i];
+			ObjectListPerformance& perf = list->Performance;
+			Log::Print(Log::LOG_INFO,
+				"Object \"%s\":\n"
+				"           - Avg Update Early %6.1f mcs (Total %6.1f mcs, Count %d)\n"
+				"           - Avg Update       %6.1f mcs (Total %6.1f mcs, Count %d)\n"
+				"           - Avg Update Late  %6.1f mcs (Total %6.1f mcs, Count %d)\n"
+				"           - Avg Render       %6.1f mcs (Total %6.1f mcs, Count %d)",
+				list->ObjectName,
+				perf.EarlyUpdate.GetAverageTime(),
+				perf.EarlyUpdate.GetTotalAverageTime(),
+				(int)perf.EarlyUpdate.AverageItemCount,
+				perf.Update.GetAverageTime(),
+				perf.Update.GetTotalAverageTime(),
+				(int)perf.Update.AverageItemCount,
+				perf.LateUpdate.GetAverageTime(),
+				perf.LateUpdate.GetTotalAverageTime(),
+				(int)perf.LateUpdate.AverageItemCount,
+				perf.Render.GetAverageTime(),
+				perf.Render.GetTotalAverageTime(),
+				(int)perf.Render.AverageItemCount);
+
+			totalUpdateEarly += perf.EarlyUpdate.GetTotalAverageTime();
+			totalUpdate += perf.Update.GetTotalAverageTime();
+			totalUpdateLate += perf.LateUpdate.GetTotalAverageTime();
+			totalRender += perf.Render.GetTotalAverageTime();
+		}
+		Log::Print(Log::LOG_WARN,
+			"Total Update Early: %8.3f mcs / %1.3f ms",
+			totalUpdateEarly,
+			totalUpdateEarly / 1000.0);
+		Log::Print(Log::LOG_WARN,
+			"Total Update: %8.3f mcs / %1.3f ms",
+			totalUpdate,
+			totalUpdate / 1000.0);
+		Log::Print(Log::LOG_WARN,
+			"Total Update Late: %8.3f mcs / %1.3f ms",
+			totalUpdateLate,
+			totalUpdateLate / 1000.0);
+		Log::Print(Log::LOG_WARN,
+			"Total Render: %8.3f mcs / %1.3f ms",
+			totalRender,
+			totalRender / 1000.0);
+	}
+
+	Log::Print(Log::LOG_IMPORTANT, "Garbage Size: %u", (Uint32)GarbageCollector::GarbageSize);
+}
+double Application::GetOverdelay() {
+	return Overdelay;
+}
+
+void Application::SetWindowTitle(const char* title) {
+	memset(Application::WindowTitle, 0, sizeof(Application::WindowTitle));
+	snprintf(Application::WindowTitle, sizeof(Application::WindowTitle), "%s", title);
+	Application::UpdateWindowTitle();
+}
+
+void Application::UpdateWindowTitle() {
+	std::string titleText = std::string(Application::WindowTitle);
+
+	bool paren = false;
 
 #define ADD_TEXT(text) \
-    if (!paren) { \
-        paren = true; \
-        titleText += " ("; \
-    } \
-    else titleText += ", "; \
-    titleText += text
+	if (!paren) { \
+		paren = true; \
+		titleText += " ("; \
+	} \
+	else \
+		titleText += ", "; \
+	titleText += text
 
-    if (DevMenu) {
-        if (ResourceManager::UsingDataFolder) {
-            ADD_TEXT("using Resources folder");
-        }
-        if (ResourceManager::UsingModPack) {
-            ADD_TEXT("using Modpack");
-        }
-    }
+	if (Application::DevMode) {
+		if (ResourceManager::UsingDataFolder) {
+			ADD_TEXT("using Resources folder");
+		}
+	}
 
-    if (UpdatesPerFrame != 1) {
-        ADD_TEXT("Frame Limit OFF");
-    }
+	if (UpdatesPerFrame != 1) {
+		ADD_TEXT("Frame Limit OFF");
+	}
 
-    switch (Scene::ShowTileCollisionFlag) {
-        case 1:
-            ADD_TEXT("Viewing Path A");
-            break;
-        case 2:
-            ADD_TEXT("Viewing Path B");
-            break;
-    }
+	switch (Scene::ShowTileCollisionFlag) {
+	case 1:
+		ADD_TEXT("Viewing Path A");
+		break;
+	case 2:
+		ADD_TEXT("Viewing Path B");
+		break;
+	}
 
-    if (Stepper) {
-        ADD_TEXT("Frame Stepper ON");
-    }
+	if (Stepper) {
+		ADD_TEXT("Frame Stepper ON");
+	}
 #undef ADD_TEXT
 
-    if (paren)
-        titleText += ")";
+	if (paren) {
+		titleText += ")";
+	}
 
-    SDL_SetWindowTitle(Application::Window, titleText.c_str());
+	SDL_SetWindowTitle(Application::Window, titleText.c_str());
 }
 
-PUBLIC STATIC void Application::Restart() {
-    // Reset FPS timer
-    BenchmarkFrameCount = 0;
+void Application::EndGame() {
+	// Call Application.OnGameEnd
+	ScriptManager::CallStaticClassFunction("Application", "OnGameEnd");
 
-    InputManager::ControllerStopRumble();
+	if (!Running) {
+		// Call Application.OnQuit if no longer running
+		ScriptManager::CallStaticClassFunction("Application", "OnQuit");
+	}
 
-    Scene::Dispose();
-    SceneInfo::Dispose();
-    Graphics::SpriteSheetTextureMap->WithAll([](Uint32, Texture* tex) -> void {
-        Graphics::DisposeTexture(tex);
-    });
-    Graphics::SpriteSheetTextureMap->Clear();
+	Application::UnloadDefaultFont();
+	Application::DefaultFontList.clear();
 
-    ScriptManager::LoadAllClasses = false;
-    ScriptEntity::DisableAutoAnimate = false;
+	// Reset FPS timer
+	BenchmarkFrame = 0;
+	BenchmarkCounter = 0.0f;
 
-    Graphics::Reset();
+	InputManager::ControllerStopRumble();
 
-    Application::LoadGameConfig();
-    Application::LoadGameInfo();
-    Application::LoadSceneInfo();
-    Application::ReloadSettings();
-    Application::DisposeGameConfig();
+	Scene::Dispose();
+	SceneInfo::Dispose();
+	Graphics::UnloadData();
+
+	AudioManager::LowPassFilter = 0.0f;
+
+	Application::TerminateScripting();
+
+	Entity::UnloadAll();
+
+	Entity::DisableAutoAnimate = false;
+	Entity::UseAnimationFrameSkip = true;
+
+	Discord::Dispose();
 }
 
-// The three reload flavours below are what the dev hotkeys have always done.
-// They live here as named calls so the editor's buttons and the key handler
-// share one implementation.
+void Application::UnloadGame() {
+	Application::EndGame();
 
-// Tears the engine down and brings it back up on the starting scene.
-PUBLIC STATIC void Application::RestartApplication() {
-    Application::Restart();
+	MemoryCache::Dispose();
+	ResourceManager::Dispose();
 
-    Scene::Init();
-    if (*StartingScene)
-        Scene::LoadScene(StartingScene);
-
-    Scene::Restart();
-    Application::UpdateWindowTitle();
+	InputManager::ClearPlayers();
+	InputManager::ClearInputs();
 }
 
-// Recompiles the scripts and reloads whatever scene is open.
-PUBLIC STATIC void Application::ReloadScene() {
-    Application::Restart();
+void Application::Restart(bool keepScene) {
+	Application::EndGame();
 
-    char currentScene[256];
-    memcpy(currentScene, Scene::CurrentScene, sizeof(currentScene));
+	Graphics::Reset();
 
-    Scene::Init();
+	Application::ResetTimestepVariables();
 
-    memcpy(Scene::CurrentScene, currentScene, sizeof(currentScene));
-    Scene::LoadScene(Scene::CurrentScene);
+	Application::LoadGameConfig();
+	Application::InitGameInfo();
+	Application::LoadGameInfo();
+	Application::ReloadSettings();
+	if (keepScene) {
+		Application::LoadSceneInfo(Scene::ActiveCategory, Scene::CurrentSceneInList, true);
+	}
+	else {
+		Application::LoadSceneInfo(0, 0, false);
+	}
+	Application::DisposeGameConfig();
 
-    Scene::Restart();
-    Application::UpdateWindowTitle();
+	FirstFrame = true;
 }
 
-// Starts the open scene over without recompiling anything.
-PUBLIC STATIC void Application::RestartScene() {
-    // Reset FPS timer
-    BenchmarkFrameCount = 0;
+bool Application::ChangeGame(const char* path) {
+	char startingScene[MAX_PATH_LENGTH];
+	char lastSettingsPath[MAX_PATH_LENGTH];
+	char currentSettingsPath[MAX_PATH_LENGTH];
 
-    InputManager::ControllerStopRumble();
+	Path::FromURL(SettingsFile, lastSettingsPath, sizeof lastSettingsPath);
 
-    Scene::Restart();
-    Application::UpdateWindowTitle();
+	if (NextGameStartingScene[0] != '\0') {
+		StringUtils::Copy(startingScene, NextGameStartingScene, sizeof startingScene);
+		NextGameStartingScene[0] = '\0';
+	}
+	else {
+		startingScene[0] = '\0';
+	}
+
+	Application::UnloadGame();
+
+	if (!ResourceManager::Init(path)) {
+		if (NextGameCmdLineArgs) {
+			delete NextGameCmdLineArgs;
+			NextGameCmdLineArgs = nullptr;
+		}
+
+		return false;
+	}
+
+	Application::LoadGameConfig();
+	Application::LoadGameInfo();
+
+	// Reload settings file if the path to it changed.
+	Path::FromURL(SettingsFile, currentSettingsPath, sizeof currentSettingsPath);
+	if (strcmp(currentSettingsPath, lastSettingsPath) != 0) {
+		Application::DisposeSettings();
+
+		if (!Application::LoadSettings(Application::SettingsFile)) {
+			// Couldn't load new settings file, so use a default one.
+			Application::InitSettings();
+		}
+	}
+
+	if (UseMemoryFileCache) {
+		MemoryCache::Init();
+	}
+
+	Application::LoadSceneInfo(0, 0, false);
+	Application::InitPlayerControls();
+	Application::DisposeGameConfig();
+
+	FirstFrame = true;
+
+	SourceFileMap::AllowCompilation = false;
+
+	if (startingScene[0] == '\0') {
+		StringUtils::Copy(startingScene, StartingScene, sizeof startingScene);
+	}
+
+	if (NextGameCmdLineArgs) {
+		Application::CmdLineArgs.clear();
+		for (size_t i = 0, iSz = NextGameCmdLineArgs->size(); i < iSz; i++) {
+			Application::CmdLineArgs.push_back((*NextGameCmdLineArgs)[i]);
+		}
+
+		delete NextGameCmdLineArgs;
+		NextGameCmdLineArgs = nullptr;
+	}
+
+	Application::StartGame(startingScene);
+	Application::UpdateWindowTitle();
+
+	// Call Application.OnGameChange
+	ScriptManager::CallStaticClassFunction("Application", "OnGameChange");
+
+	return true;
 }
 
-// Queues a scene to be swapped in at the top of the next frame. Going through
-// NextScene rather than loading straight away keeps the change on the same code
-// path the scripts use, so it is safe to call from the editor mid-frame.
-PUBLIC STATIC void Application::QueueSceneChange(const char* filename) {
-    if (!filename || !*filename)
-        return;
+bool Application::SetNextGame(const char* path,
+	const char* startingScene,
+	std::vector<std::string>* cmdLineArgs) {
+	bool exists = false;
 
-    StringUtils::Copy(Scene::NextScene, filename, sizeof(Scene::NextScene));
-    Scene::NoPersistency = true;
+	std::string resolved = "";
+	PathLocation location;
+
+	if (Path::FromURL(path, resolved, location, false, false) &&
+		(location == PathLocation::GAME || location == PathLocation::USER)) {
+		if (path[strlen(path) - 1] == '/') {
+			exists = Directory::Exists(resolved.c_str());
+		}
+		else {
+			exists = File::Exists(resolved.c_str());
+		}
+	}
+
+	if (exists) {
+		StringUtils::Copy(NextGame, resolved.c_str(), sizeof NextGame);
+
+		if (startingScene != nullptr) {
+			StringUtils::Copy(
+				NextGameStartingScene, startingScene, sizeof NextGameStartingScene);
+		}
+
+		NextGameCmdLineArgs = cmdLineArgs;
+
+		return true;
+	}
+
+	Log::Print(Log::LOG_ERROR, "Path \"%s\" is not valid!", path);
+
+	return false;
 }
 
-// Points the engine at a different game and reloads everything: either a folder
-// holding a Resources directory, or a .hatch data file.
-PUBLIC STATIC bool Application::LoadProject(const char* path) {
-    if (!path || !*path)
-        return false;
+void Application::LoadVideoSettings() {
+	bool vsyncEnabled = false;
+	Application::Settings->GetBool("display", "vsync", &vsyncEnabled);
+	Application::Settings->GetInteger("display", "frameSkip", &Application::FrameSkip);
+	Application::Settings->GetBool("graphics", "showFramerate", &Application::ShowFPS);
 
-    char directory[4096];
-    char dataFile[4096];
+	if (Application::FrameSkip > DEFAULT_MAX_FRAMESKIP) {
+		Application::FrameSkip = DEFAULT_MAX_FRAMESKIP;
+	}
 
-    StringUtils::Copy(directory, path, sizeof(directory));
-    dataFile[0] = '\0';
+	if (Graphics::Initialized) {
+		Graphics::SetVSync(vsyncEnabled);
+	}
+	else {
+		Graphics::VsyncEnabled = vsyncEnabled;
 
-    if (StringUtils::StrCaseStr(path, ".hatch")) {
-        // Split "some/where/Data.hatch" into the folder to move into and the
-        // file name to hand to the resource manager.
-        char* lastSlash = NULL;
-        for (char* i = directory; *i; i++) {
-            if (*i == '/' || *i == '\\')
-                lastSlash = i;
-        }
+		Application::Settings->GetInteger(
+			"display", "defaultMonitor", &Application::DefaultMonitor);
 
-        if (lastSlash) {
-            StringUtils::Copy(dataFile, lastSlash + 1, sizeof(dataFile));
-            *lastSlash = '\0';
-        }
-        else {
-            StringUtils::Copy(dataFile, directory, sizeof(dataFile));
-            StringUtils::Copy(directory, ".", sizeof(directory));
-        }
-    }
+		Application::Settings->GetInteger(
+			"graphics", "multisample", &Graphics::MultisamplingEnabled);
+		Application::Settings->GetBool(
+			"graphics", "precompileShaders", &Graphics::PrecompileShaders);
+		Application::Settings->GetBool(
+			"graphics", "layerTileBuffering", &Graphics::LayerTileBufferingEnabled);
 
-    if (!Directory::Exists(directory)) {
-        Log::Print(Log::LOG_ERROR, "Project folder \"%s\" does not exist!", directory);
-        return false;
-    }
-
-    // Pin the settings file to where the engine was launched from before moving
-    // out of that folder, otherwise the relative "config.ini" would follow the
-    // working directory and the editor's preferences and recent project list
-    // would be left behind in whichever project was open last.
-    bool settingsAreAbsolute = Application::SettingsFile[0] == '/' ||
-        Application::SettingsFile[0] == '\\' || strchr(Application::SettingsFile, ':') != NULL;
-
-    if (!settingsAreAbsolute) {
-        char workingDirectory[2048];
-        if (Directory::GetCurrentWorkingDirectory(workingDirectory, sizeof(workingDirectory))) {
-            char absolute[sizeof(workingDirectory) + sizeof(Application::SettingsFile) + 1];
-            snprintf(absolute, sizeof(absolute), "%s/%s", workingDirectory, Application::SettingsFile);
-            Application::SetSettingsFilename(absolute);
-        }
-    }
-
-    if (!Directory::SetCurrentWorkingDirectory(directory)) {
-        Log::Print(Log::LOG_ERROR, "Could not open project folder \"%s\"!", directory);
-        return false;
-    }
-
-    if (!dataFile[0] && !Directory::Exists("Resources"))
-        Log::Print(Log::LOG_WARN, "\"%s\" has no Resources folder.", directory);
-
-    Log::Print(Log::LOG_IMPORTANT, "Opening project \"%s\"...", path);
-
-    Application::ReloadForProject(dataFile[0] ? dataFile : NULL);
-
-    return true;
-}
-
-// Throws away everything belonging to the game that is loaded and reads it back
-// from whatever the working directory now holds. Shared by opening a project and
-// by closing one, which differ only in where they point the engine first.
-PRIVATE STATIC void Application::ReloadForProject(const char* dataFile) {
-    Scene::Dispose();
-    SceneInfo::Dispose();
-    Graphics::SpriteSheetTextureMap->WithAll([](Uint32, Texture* tex) -> void {
-        Graphics::DisposeTexture(tex);
-    });
-    Graphics::SpriteSheetTextureMap->Clear();
-
-    ScriptManager::LoadAllClasses = false;
-    ScriptEntity::DisableAutoAnimate = false;
-
-    ResourceManager::Dispose();
-    ResourceManager::Init(dataFile);
-
-    Graphics::Reset();
-
-    Application::LoadGameConfig();
-    Application::LoadGameInfo();
-    Application::LoadSceneInfo();
-    Application::ReloadSettings();
-    Application::DisposeGameConfig();
-
-    Scene::Init();
-    if (*StartingScene)
-        Scene::LoadScene(StartingScene);
-
-    Scene::Restart();
-
-    Application::SetWindowTitle(Application::GameTitleShort);
-}
-
-// Unloads the game without opening another, leaving the engine idle with the
-// editor in front of it.
-PUBLIC STATIC void Application::CloseProject() {
-    Log::Print(Log::LOG_IMPORTANT, "Closing project.");
-
-    StringUtils::Copy(Application::GameTitle, "Hatch Game Engine", sizeof(Application::GameTitle));
-    StringUtils::Copy(Application::GameTitleShort, Application::GameTitle, sizeof(Application::GameTitleShort));
-
-    Application::ReloadForProject(NULL);
-}
-
-// The scene the game config says to boot into, if it named one.
-PUBLIC STATIC const char* Application::GetStartingScene() {
-    return StartingScene;
-}
-
-// Reports the folder the engine is currently reading resources out of.
-PUBLIC STATIC void Application::GetProjectPath(char* out, size_t outSize) {
-    if (!Directory::GetCurrentWorkingDirectory(out, outSize))
-        StringUtils::Copy(out, ".", outSize);
+		if (Graphics::MultisamplingEnabled < 0) {
+			Graphics::MultisamplingEnabled = 0;
+		}
+	}
 }
 
 #define CLAMP_VOLUME(vol) \
-    if (vol < 0) \
-        vol = 0; \
-    else if (vol > 100) \
-        vol = 100
+	if (vol < 0) \
+		vol = 0; \
+	else if (vol > 100) \
+	vol = 100
 
-PUBLIC STATIC void Application::SetMasterVolume(int volume) {
-    CLAMP_VOLUME(volume);
+void Application::SetMasterVolume(int volume) {
+	CLAMP_VOLUME(volume);
 
-    Application::MasterVolume = volume;
-    AudioManager::MasterVolume = Application::MasterVolume / 100.0f;
+	Application::MasterVolume = volume;
+	AudioManager::MasterVolume = Application::MasterVolume / 100.0f;
 }
-PUBLIC STATIC void Application::SetMusicVolume(int volume) {
-    CLAMP_VOLUME(volume);
+void Application::SetMusicVolume(int volume) {
+	CLAMP_VOLUME(volume);
 
-    Application::MusicVolume = volume;
-    AudioManager::MusicVolume = Application::MusicVolume / 100.0f;
+	Application::MusicVolume = volume;
+	AudioManager::MusicVolume = Application::MusicVolume / 100.0f;
 }
-PUBLIC STATIC void Application::SetSoundVolume(int volume) {
-    CLAMP_VOLUME(volume);
+void Application::SetSoundVolume(int volume) {
+	CLAMP_VOLUME(volume);
 
-    Application::SoundVolume = volume;
-    AudioManager::SoundVolume = Application::SoundVolume / 100.0f;
+	Application::SoundVolume = volume;
+	AudioManager::SoundVolume = Application::SoundVolume / 100.0f;
 }
 
-PRIVATE STATIC void Application::LoadAudioSettings() {
-    INI* settings = Application::Settings;
+void Application::LoadAudioSettings() {
+	INI* settings = Application::Settings;
 
-    int masterVolume = Application::MasterVolume;
-    int musicVolume = Application::MusicVolume;
-    int soundVolume = Application::SoundVolume;
+	int masterVolume = Application::MasterVolume;
+	int musicVolume = Application::MusicVolume;
+	int soundVolume = Application::SoundVolume;
 
 #define GET_OR_SET_VOLUME(var) \
-    if (!settings->PropertyExists("audio", #var)) \
-        settings->SetInteger("audio", #var, var); \
-    else \
-        settings->GetInteger("audio", #var, &var)
+	if (!settings->PropertyExists("audio", #var)) \
+		settings->SetInteger("audio", #var, var); \
+	else \
+		settings->GetInteger("audio", #var, &var)
 
-    GET_OR_SET_VOLUME(masterVolume);
-    GET_OR_SET_VOLUME(musicVolume);
-    GET_OR_SET_VOLUME(soundVolume);
+	GET_OR_SET_VOLUME(masterVolume);
+	GET_OR_SET_VOLUME(musicVolume);
+	GET_OR_SET_VOLUME(soundVolume);
 
 #undef GET_OR_SET_VOLUME
 
-    Application::SetMasterVolume(masterVolume);
-    Application::SetMusicVolume(musicVolume);
-    Application::SetSoundVolume(soundVolume);
+	Application::SetMasterVolume(masterVolume);
+	Application::SetMusicVolume(musicVolume);
+	Application::SetSoundVolume(soundVolume);
 }
 
 #undef CLAMP_VOLUME
 
 SDL_Keycode KeyBindsSDL[(int)KeyBind::Max];
 
-PRIVATE STATIC void Application::LoadKeyBinds() {
-    XMLNode* node = nullptr;
-    if (Application::GameConfig)
-        node = XMLParser::SearchNode(Application::GameConfig->children[0], "keys");
+void Application::LoadKeyBinds() {
+	XMLNode* node = nullptr;
+	if (Application::GameConfig) {
+		node = XMLParser::SearchNode(Application::GameConfig->children[0], "keys");
+	}
 
-    #define GET_KEY(setting, bind, def) { \
-        char read[256] = {0}; \
-        if (node) { \
-            XMLNode* child = XMLParser::SearchNode(node, setting); \
-            if (child) { \
-                XMLParser::CopyTokenToString(child->children[0]->name, read, sizeof(read)); \
-            } \
-        } \
-        Application::Settings->GetString("keys", setting, read, sizeof(read)); \
-        int key = def; \
-        if (read[0]) { \
-            int parsed = InputManager::ParseKeyName(read); \
-            if (parsed >= 0) \
-                key = parsed; \
-            else \
-                key = Key_UNKNOWN; \
-        } \
-        Application::SetKeyBind((int)KeyBind::bind, key); \
-    }
+#define GET_KEY(setting, bind, def) \
+	{ \
+		char read[256] = {0}; \
+		if (node) { \
+			XMLNode* child = XMLParser::SearchNode(node, setting); \
+			if (child) { \
+				XMLParser::CopyTokenToString( \
+					child->children[0]->name, read, sizeof(read)); \
+			} \
+		} \
+		Application::Settings->GetString("keys", setting, read, sizeof(read)); \
+		int key = def; \
+		if (read[0]) { \
+			int parsed = InputManager::ParseKeyName(read); \
+			if (parsed >= 0) \
+				key = parsed; \
+			else \
+				key = Key_UNKNOWN; \
+		} \
+		Application::SetKeyBind((int)KeyBind::bind, key); \
+	}
 
-    GET_KEY("fullscreen",            Fullscreen,       Key_F4);
-    GET_KEY("devRestartApp",         DevRestartApp,    Key_F1);
-    GET_KEY("devRestartScene",       DevRestartScene,  Key_F6);
-    GET_KEY("devRecompile",          DevRecompile,     Key_F5);
-    GET_KEY("devPerfSnapshot",       DevPerfSnapshot,  Key_F3);
-    GET_KEY("devLogLayerInfo",       DevLayerInfo,     Key_F2);
-    GET_KEY("devFastForward",        DevFastForward,   Key_BACKSPACE);
-    GET_KEY("devToggleFrameStepper", DevFrameStepper,  Key_F9);
-    GET_KEY("devStepFrame",          DevStepFrame,     Key_F10);
-    GET_KEY("devShowTileCol",        DevTileCol,       Key_F7);
-    GET_KEY("devShowObjectRegions",  DevObjectRegions, Key_F8);
-    GET_KEY("devQuit",               DevQuit,          Key_ESCAPE);
-    GET_KEY("studio",                Studio,           Key_F12);
+	GET_KEY("fullscreen", Fullscreen, Key_F4);
+	GET_KEY("screenshot", Screenshot, Key_UNKNOWN);
+	GET_KEY("toggleFPSCounter", ToggleFPSCounter, Key_F2);
+	GET_KEY("devRestartApp", DevRestartApp, Key_F1);
+	GET_KEY("devRestartScene", DevRestartScene, Key_F6);
+	GET_KEY("devRecompile", DevRecompile, Key_F5);
+	GET_KEY("devPerfSnapshot", DevPerfSnapshot, Key_F3);
+	GET_KEY("devLogLayerInfo", DevLayerInfo, Key_F7);
+	GET_KEY("devFastForward", DevFastForward, Key_BACKSPACE);
+	GET_KEY("devToggleFrameStepper", DevFrameStepper, Key_F9);
+	GET_KEY("devStepFrame", DevStepFrame, Key_F10);
+	GET_KEY("devShowTileCol", DevTileCol, Key_UNKNOWN);
+	GET_KEY("devShowObjectRegions", DevObjectRegions, Key_UNKNOWN);
+	GET_KEY("devViewHitboxes", DevViewHitboxes, Key_UNKNOWN);
+	GET_KEY("devPreviousScene", DevPreviousScene, Key_PAGEDOWN);
+	GET_KEY("devNextScene", DevNextScene, Key_PAGEUP);
+	GET_KEY("devMenuToggle", DevMenuToggle, Key_ESCAPE);
+	GET_KEY("devScriptDebugger", DevScriptDebugger, Key_UNKNOWN);
+	GET_KEY("devQuit", DevQuit, Key_UNKNOWN);
+	GET_KEY("studio", Studio, Key_F12);
 
 #undef GET_KEY
 }
 
-PRIVATE STATIC void Application::LoadDevSettings() {
-    Application::Settings->GetBool("dev", "devMenu", &DevMenu);
-    Application::Settings->GetBool("dev", "viewPerformance", &ShowFPS);
-    Application::Settings->GetBool("dev", "donothing", &DoNothing);
-    Application::Settings->GetInteger("dev", "fastforward", &UpdatesPerFastForward);
+void Application::AddPerformanceMetric(PerformanceMeasure* measure,
+	const char* name,
+	float r,
+	float g,
+	float b) {
+	*measure = PerformanceMeasure(name, r, g, b);
+	AllMetrics.push_back(measure);
+}
+void Application::AddPerformanceMetric(PerformanceMeasure* measure,
+	const char* name,
+	float r,
+	float g,
+	float b,
+	bool* isActive) {
+	*measure = PerformanceMeasure(name, r, g, b, isActive);
+	AllMetrics.push_back(measure);
 }
 
-// Accessors for the developer toggles, so the editor can drive the same flags
-// the dev hotkeys do without them having to become globals.
+void Application::InitPerformanceMetrics() {
+	AutomaticPerformanceSnapshots = false;
+	AutomaticPerformanceSnapshotFrameTimeThreshold = 20.0;
+	AutomaticPerformanceSnapshotLastTime = 0.0;
+	AutomaticPerformanceSnapshotMinInterval = 5000.0; // 5 seconds
 
-PUBLIC STATIC bool Application::IsDevMenuEnabled() {
-    return DevMenu;
-}
-PUBLIC STATIC void Application::SetDevMenuEnabled(bool enabled) {
-    DevMenu = enabled;
-    Application::UpdateWindowTitle();
-}
+	AllMetrics.clear();
 
-PUBLIC STATIC bool Application::IsShowingPerformance() {
-    return ShowFPS;
-}
-PUBLIC STATIC void Application::SetShowingPerformance(bool showing) {
-    ShowFPS = showing;
-}
-
-// Whether the overlay has anything to draw itself with. The editor asks so it
-// can say why the overlay is not appearing.
-PUBLIC STATIC bool Application::HasPerformanceFont() {
-    return !DEBUG_fontMissing;
-}
-
-// The same timings the overlay breaks a frame down into, so they can be shown
-// somewhere that does not need the game to supply a font.
-
-PUBLIC STATIC int Application::GetFrameMetricCount() {
-    return 7;
-}
-PUBLIC STATIC const char* Application::GetFrameMetricName(int index) {
-    static const char* names[] = {
-        "Event polling",
-        "Garbage collector",
-        "Input polling",
-        "Entity update",
-        "Clear",
-        "World render commands",
-        "Frame present",
-    };
-
-    if (index < 0 || index >= Application::GetFrameMetricCount())
-        return "";
-
-    return names[index];
-}
-PUBLIC STATIC double Application::GetFrameMetric(int index) {
-    double values[] = {
-        MetricEventTime,
-        MetricAfterSceneTime,
-        MetricPollTime,
-        MetricUpdateTime,
-        MetricClearTime,
-        MetricRenderTime,
-        MetricPresentTime,
-    };
-
-    if (index < 0 || index >= Application::GetFrameMetricCount())
-        return 0.0;
-
-    return values[index] < 0.0 ? 0.0 : values[index];
+	AddPerformanceMetric(&Metrics.Event, "Event Polling", 1.0, 0.0, 0.0);
+	AddPerformanceMetric(&Metrics.AfterScene, "Post-Scene", 0.0, 1.0, 0.0);
+	AddPerformanceMetric(&Metrics.Poll, "Input Polling", 0.0, 0.0, 1.0);
+	AddPerformanceMetric(&Metrics.Update, "Entity Update", 1.0, 1.0, 0.0);
+	AddPerformanceMetric(&Metrics.Clear, "Clear Time", 0.0, 1.0, 1.0);
+	AddPerformanceMetric(&Metrics.Render, "World Render Commands", 1.0, 0.0, 1.0);
+	AddPerformanceMetric(&Metrics.PostProcess,
+		"Render Post-Process",
+		1.0,
+		1.0,
+		1.0,
+		&Graphics::UsingPostProcessShader);
+	AddPerformanceMetric(&Metrics.Present, "Frame Present Time", 0.75, 0.75, 0.75);
 }
 
-PUBLIC STATIC bool Application::IsFastForwarding() {
-    return UpdatesPerFrame != 1;
-}
-PUBLIC STATIC void Application::SetFastForwarding(bool fastForwarding) {
-    Application::UpdatesPerFrame = fastForwarding ? UpdatesPerFastForward : 1;
-    Application::UpdateWindowTitle();
-}
-
-PUBLIC STATIC void Application::TakePerformanceSnapshot() {
-    TakeSnapshot = true;
-}
-
-PUBLIC STATIC bool Application::IsWindowResizeable() {
-    return !Application::IsMobile();
-}
-
-PUBLIC STATIC void Application::SetWindowSize(int window_w, int window_h) {
-    if (!Application::IsWindowResizeable())
-        return;
-
-    SDL_SetWindowSize(Application::Window, window_w, window_h);
-
-    int defaultMonitor = Application::DefaultMonitor;
-    SDL_SetWindowPosition(Application::Window, SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor), SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor));
-
-    // In case the window just doesn't resize (Android)
-    SDL_GetWindowSize(Application::Window, &window_w, &window_h);
-
-    Graphics::Resize(window_w, window_h);
-}
-
-PUBLIC STATIC bool Application::GetWindowFullscreen() {
-    return !!(SDL_GetWindowFlags(Application::Window) & SDL_WINDOW_FULLSCREEN_DESKTOP);
-}
-
-PUBLIC STATIC void Application::SetWindowFullscreen(bool isFullscreen) {
-    SDL_SetWindowFullscreen(Application::Window, isFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-
-    int window_w, window_h;
-    SDL_GetWindowSize(Application::Window, &window_w, &window_h);
-
-    Graphics::Resize(window_w, window_h);
-}
-
-PUBLIC STATIC void Application::SetWindowBorderless(bool isBorderless) {
-    SDL_SetWindowBordered(Application::Window, (SDL_bool)(!isBorderless));
-}
-
-PUBLIC STATIC int  Application::GetKeyBind(int bind) {
-    return KeyBinds[bind];
-}
-PUBLIC STATIC void Application::SetKeyBind(int bind, int key) {
-    KeyBinds[bind] = key;
-    if (key == Key_UNKNOWN)
-        KeyBindsSDL[bind] = SDLK_UNKNOWN;
-    else
-        KeyBindsSDL[bind] = SDL_GetKeyFromScancode(InputManager::KeyToSDLScancode[key]);
-}
-
-PRIVATE STATIC void Application::PollEvents() {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        // While the editor is open it gets first refusal on input. It only
-        // claims key presses when one of its text fields has focus, so the
-        // shortcuts below still work with it on screen.
-        if (Studio::HandleEvent(&e))
-            continue;
-
-        switch (e.type) {
-            case SDL_QUIT: {
-                Running = false;
-                break;
-            }
-            case SDL_KEYDOWN: {
-                SDL_Keycode key = e.key.keysym.sym;
-
-                // Open and close the editor
-                if (key == KeyBindsSDL[(int)KeyBind::Studio] || key == SDLK_BACKQUOTE) {
-                    Studio::Toggle();
-                    break;
-                }
-
-                // Fullscreen
-                if (key == KeyBindsSDL[(int)KeyBind::Fullscreen]) {
-                    Application::SetWindowFullscreen(!Application::GetWindowFullscreen());
-                    break;
-                }
-
-                // Escape backs out of the editor rather than quitting.
-                if (Studio::Visible && key == SDLK_ESCAPE) {
-                    Studio::Hide();
-                    break;
-                }
-
-                if (DevMenu) {
-                    // Quit game (dev)
-                    if (key == KeyBindsSDL[(int)KeyBind::DevQuit]) {
-                        Running = false;
-                        // Application::DevMenuActivated ^= 1;
-                        // Log::Print(Log::LOG_VERBOSE, "Dev Menu Activated: %d", DevMenuActivated);
-                        break;
-                    }
-                    // Restart application (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevRestartApp]) {
-                        Application::RestartApplication();
-                        break;
-                    }
-                    // Show layer info (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevLayerInfo]) {
-                        for (size_t li = 0; li < Scene::Layers.size(); li++) {
-                            SceneLayer layer = Scene::Layers[li];
-                            Log::Print(Log::LOG_IMPORTANT, "%2d: %20s (Visible: %d, Width: %d, Height: %d, OffsetX: %d, OffsetY: %d, RelativeY: %d, ConstantY: %d, DrawGroup: %d, ScrollDirection: %d, Flags: %d)", li,
-                                layer.Name,
-                                layer.Visible,
-                                layer.Width,
-                                layer.Height,
-                                layer.OffsetX,
-                                layer.OffsetY,
-                                layer.RelativeY,
-                                layer.ConstantY,
-                                layer.DrawGroup,
-                                layer.DrawBehavior,
-                                layer.Flags);
-                        }
-                        break;
-                    }
-                    // Print performance snapshot (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevPerfSnapshot]) {
-                        TakeSnapshot = true;
-                        break;
-                    }
-                    // Recompile and restart scene (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevRecompile]) {
-                        Application::ReloadScene();
-                        break;
-                    }
-                    // Restart scene (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevRestartScene]) {
-                        Application::RestartScene();
-                        break;
-                    }
-                    // Enable update speedup (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevFastForward]) {
-                        if (UpdatesPerFrame == 1)
-                            UpdatesPerFrame = UpdatesPerFastForward;
-                        else
-                            UpdatesPerFrame = 1;
-
-                        Application::UpdateWindowTitle();
-                        break;
-                    }
-                    // Cycle view tile collision (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevTileCol]) {
-                        Scene::ShowTileCollisionFlag = (Scene::ShowTileCollisionFlag + 1) % 3;
-                        Application::UpdateWindowTitle();
-                        break;
-                    }
-                    // View object regions (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevObjectRegions]) {
-                        Scene::ShowObjectRegions ^= 1;
-                        Application::UpdateWindowTitle();
-                        break;
-                    }
-                    // Toggle frame stepper (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevFrameStepper]) {
-                        Stepper = !Stepper;
-                        MetricFrameCounterTime = 0;
-                        Application::UpdateWindowTitle();
-                        break;
-                    }
-                    // Step frame (dev)
-                    else if (key == KeyBindsSDL[(int)KeyBind::DevStepFrame]) {
-                        Stepper = true;
-                        Step = true;
-                        MetricFrameCounterTime++;
-                        Application::UpdateWindowTitle();
-                        break;
-                    }
-                }
-                break;
-            }
-            case SDL_WINDOWEVENT: {
-                switch (e.window.event) {
-                    case SDL_WINDOWEVENT_RESIZED:
-                        Graphics::Resize(e.window.data1, e.window.data2);
-                        break;
-                }
-                break;
-            }
-            case SDL_CONTROLLERDEVICEADDED: {
-                int i = e.cdevice.which;
-                Log::Print(Log::LOG_VERBOSE, "Added controller device %d", i);
-                InputManager::AddController(i);
-                break;
-            }
-            case SDL_CONTROLLERDEVICEREMOVED: {
-                int i = e.cdevice.which;
-                Log::Print(Log::LOG_VERBOSE, "Removed controller device %d", i);
-                InputManager::RemoveController(i);
-                break;
-            }
-        }
-    }
-}
-PRIVATE STATIC void Application::RunFrame(void* p) {
-    FrameTimeStart = Clock::GetTicks();
-
-    // Event loop
-    MetricEventTime = Clock::GetTicks();
-    Application::PollEvents();
-    MetricEventTime = Clock::GetTicks() - MetricEventTime;
-
-    // Anything the editor's buttons asked for last frame happens here, where
-    // no rendering is in progress.
-    Studio::Update();
-
-    // BUG: Having Stepper on prevents the first
-    //   frame of a new scene from Updating, but still rendering.
-    if (*Scene::NextScene)
-        Step = true;
-
-    MetricAfterSceneTime = Clock::GetTicks();
-    Scene::AfterScene();
-    MetricAfterSceneTime = Clock::GetTicks() - MetricAfterSceneTime;
-
-    if (DoNothing) goto DO_NOTHING;
-
-    // Update
-    for (int m = 0; m < UpdatesPerFrame; m++) {
-        Scene::ResetPerf();
-        MetricPollTime = 0.0;
-        MetricUpdateTime = 0.0;
-        // The editor holds the game still while it is open, so its buttons act
-        // on a scene that isn't moving underneath them.
-        if (Studio::IsPausingGame())
-            break;
-        if ((Stepper && Step) || !Stepper) {
-            // Poll for inputs
-            MetricPollTime = Clock::GetTicks();
-            InputManager::Poll();
-            MetricPollTime = Clock::GetTicks() - MetricPollTime;
-
-            // Update scene
-            MetricUpdateTime = Clock::GetTicks();
-            Scene::Update();
-            MetricUpdateTime = Clock::GetTicks() - MetricUpdateTime;
-        }
-        Step = false;
-        if (UpdatesPerFrame != 1 && (*Scene::NextScene || Scene::DoRestart))
-            break;
-    }
-
-    // Rendering
-    MetricClearTime = Clock::GetTicks();
-    Graphics::Clear();
-    MetricClearTime = Clock::GetTicks() - MetricClearTime;
-
-    MetricRenderTime = Clock::GetTicks();
-    Scene::Render();
-    MetricRenderTime = Clock::GetTicks() - MetricRenderTime;
-
-    DO_NOTHING:
-
-    // Show FPS counter
-    MetricFPSCounterTime = Clock::GetTicks();
-    if (ShowFPS && DEBUG_EnsureFont() && DEBUG_BorrowView()) {
-        int ww, wh;
-        char textBuffer[256];
-        SDL_GetWindowSize(Application::Window, &ww, &wh);
-        Graphics::SetViewport(0.0, 0.0, ww, wh);
-        Graphics::UpdateOrthoFlipped(ww, wh);
-
-        Graphics::SetBlendMode(BlendFactor_SRC_ALPHA, BlendFactor_INV_SRC_ALPHA, BlendFactor_SRC_ALPHA, BlendFactor_INV_SRC_ALPHA);
-
-        float infoW = 400.0;
-        float infoH = 290.0;
-        float infoPadding = 20.0;
-        Graphics::Save();
-        Graphics::Translate(0.0, 0.0, 0.0);
-            Graphics::SetBlendColor(0.0, 0.0, 0.0, 0.75);
-            Graphics::FillRectangle(0.0f, 0.0f, infoW, infoH);
-
-            double types[] = {
-                MetricEventTime,
-                MetricAfterSceneTime,
-                MetricPollTime,
-                MetricUpdateTime,
-                MetricClearTime,
-                MetricRenderTime,
-                MetricPresentTime,
-            };
-            const char* typeNames[] = {
-                "Event Polling: %3.3f ms",
-                "Garbage Collector: %3.3f ms",
-                "Input Polling: %3.3f ms",
-                "Entity Update: %3.3f ms",
-                "Clear Time: %3.3f ms",
-                "World Render Commands: %3.3f ms",
-                "Frame Present Time: %3.3f ms",
-            };
-            struct { float r; float g; float b; } colors[8] = {
-                { 1.0, 0.0, 0.0 },
-                { 0.0, 1.0, 0.0 },
-                { 0.0, 0.0, 1.0 },
-                { 1.0, 1.0, 0.0 },
-                { 0.0, 1.0, 1.0 },
-                { 1.0, 0.0, 1.0 },
-                { 1.0, 1.0, 1.0 },
-                { 0.0, 0.0, 0.0 },
-            };
-
-            int typeCount = sizeof(types) / sizeof(double);
-
-
-            Graphics::Save();
-            Graphics::Translate(infoPadding - 2.0, infoPadding, 0.0);
-            Graphics::Scale(0.85, 0.85, 1.0);
-                snprintf(textBuffer, 256, "Frame Information");
-                DEBUG_DrawText(textBuffer, 0.0, 0.0);
-            Graphics::Restore();
-
-            Graphics::Save();
-            Graphics::Translate(infoW - infoPadding - (8 * 16.0 * 0.85), infoPadding, 0.0);
-            Graphics::Scale(0.85, 0.85, 1.0);
-                snprintf(textBuffer, 256, "FPS: %03.1f", FPS);
-                DEBUG_DrawText(textBuffer, 0.0, 0.0);
-            Graphics::Restore();
-
-            if (Application::Platform == Platforms::Android || true) {
-                // Draw bar
-                double total = 0.0001;
-                for (int i = 0; i < typeCount; i++) {
-                    if (types[i] < 0.0)
-                        types[i] = 0.0;
-                    total += types[i];
-                }
-
-                Graphics::Save();
-                Graphics::Translate(infoPadding, 50.0, 0.0);
-                    Graphics::SetBlendColor(0.0, 0.0, 0.0, 0.25);
-                    Graphics::FillRectangle(0.0, 0.0f, infoW - infoPadding * 2, 30.0);
-                Graphics::Restore();
-
-                double rectx = 0.0;
-                for (int i = 0; i < typeCount; i++) {
-                    Graphics::Save();
-                    Graphics::Translate(infoPadding, 50.0, 0.0);
-                        if (i < 8)
-                            Graphics::SetBlendColor(colors[i].r, colors[i].g, colors[i].b, 0.5);
-                        else
-                            Graphics::SetBlendColor(0.5, 0.5, 0.5, 0.5);
-                        Graphics::FillRectangle(rectx, 0.0f, types[i] / total * (infoW - infoPadding * 2), 30.0);
-                    Graphics::Restore();
-
-                    rectx += types[i] / total * (infoW - infoPadding * 2);
-                }
-
-                // Draw list
-                float listY = 90.0;
-                double totalFrameCount = 0.0f;
-                infoPadding += infoPadding;
-                for (int i = 0; i < typeCount; i++) {
-                    Graphics::Save();
-                    Graphics::Translate(infoPadding, listY, 0.0);
-                        Graphics::SetBlendColor(colors[i].r, colors[i].g, colors[i].b, 0.5);
-                        Graphics::FillRectangle(-infoPadding / 2.0, 0.0, 12.0, 12.0);
-                    Graphics::Scale(0.6, 0.6, 1.0);
-                        snprintf(textBuffer, 256, typeNames[i], types[i]);
-                        DEBUG_DrawText(textBuffer, 0.0, 0.0);
-                        listY += 20.0;
-                    Graphics::Restore();
-
-                    totalFrameCount += types[i];
-                }
-
-                // Draw total
-                Graphics::Save();
-                Graphics::Translate(infoPadding, listY, 0.0);
-                    Graphics::SetBlendColor(1.0, 1.0, 1.0, 0.5);
-                    Graphics::FillRectangle(-infoPadding / 2.0, 0.0, 12.0, 12.0);
-                Graphics::Scale(0.6, 0.6, 1.0);
-                    snprintf(textBuffer, 256, "Total Frame Time: %.3f ms", totalFrameCount);
-                    DEBUG_DrawText(textBuffer, 0.0, 0.0);
-                    listY += 20.0;
-                Graphics::Restore();
-
-                // Draw Overdelay
-                Graphics::Save();
-                Graphics::Translate(infoPadding, listY, 0.0);
-                    Graphics::SetBlendColor(1.0, 1.0, 1.0, 0.5);
-                    Graphics::FillRectangle(-infoPadding / 2.0, 0.0, 12.0, 12.0);
-                Graphics::Scale(0.6, 0.6, 1.0);
-                    snprintf(textBuffer, 256, "Overdelay: %.3f ms", Overdelay);
-                    DEBUG_DrawText(textBuffer, 0.0, 0.0);
-                    listY += 20.0;
-                Graphics::Restore();
-
-                float count = (float)Memory::MemoryUsage;
-                const char* moniker = "B";
-
-                if (count >= 1000000000) {
-                    count /= 1000000000;
-                    moniker = "GB";
-                }
-                else if (count >= 1000000) {
-                    count /= 1000000;
-                    moniker = "MB";
-                }
-                else if (count >= 1000) {
-                    count /= 1000;
-                    moniker = "KB";
-                }
-
-                listY += 30.0 - 20.0;
-
-                Graphics::Save();
-                Graphics::Translate(infoPadding / 2.0, listY, 0.0);
-                Graphics::Scale(0.6, 0.6, 1.0);
-                    snprintf(textBuffer, 256, "RAM Usage: %.3f %s", count, moniker);
-                    DEBUG_DrawText(textBuffer, 0.0, 0.0);
-                Graphics::Restore();
-
-                listY += 30.0;
-
-                float* listYPtr = &listY;
-                if (Scene::ObjectLists && Application::Platform != Platforms::Android) {
-                    Scene::ObjectLists->WithAll([infoPadding, listYPtr](Uint32, ObjectList* list) -> void {
-                        char textBufferXXX[1024];
-                        if (list->Performance.Update.AverageItemCount > 0.0) {
-                            Graphics::Save();
-                            Graphics::Translate(infoPadding / 2.0, *listYPtr, 0.0);
-                            Graphics::Scale(0.6, 0.6, 1.0);
-                                snprintf(textBufferXXX, 1024, "Object \"%s\": Avg Render %.1f mcs (Total %.1f mcs, Count %d)", list->ObjectName, list->Performance.Render.GetAverageTime(), list->Performance.Render.GetTotalAverageTime(), (int)list->Performance.Render.AverageItemCount);
-                                DEBUG_DrawText(textBufferXXX, 0.0, 0.0);
-                            Graphics::Restore();
-
-                            *listYPtr += 20.0;
-                        }
-                    });
-                }
-            }
-        Graphics::Restore();
-
-        DEBUG_ReturnView();
-    }
-    MetricFPSCounterTime = Clock::GetTicks() - MetricFPSCounterTime;
-
-    // Drawn last so it sits on top of both the game and the debug overlay.
-    Studio::Render();
-
-    MetricPresentTime = Clock::GetTicks();
-    Graphics::Present();
-    MetricPresentTime = Clock::GetTicks() - MetricPresentTime;
-
-    MetricFrameTime = Clock::GetTicks() - FrameTimeStart;
-}
-PRIVATE STATIC void Application::DelayFrame() {
-    // HACK: MacOS V-Sync timing gets disabled if window is not visible
-    if (!Graphics::VsyncEnabled || Application::Platform == Platforms::MacOS) {
-        double frameTime = Clock::GetTicks() - FrameTimeStart;
-        double frameDurationRemainder = FrameTimeDesired - frameTime;
-        if (frameDurationRemainder >= 0.0) {
-            // NOTE: Delay duration will always be more than requested wait time.
-            if (frameDurationRemainder > 1.0) {
-                double delayStartTime = Clock::GetTicks();
-
-                Clock::Delay(frameDurationRemainder - 1.0);
-
-                double delayTime = Clock::GetTicks() - delayStartTime;
-                Overdelay = delayTime - (frameDurationRemainder - 1.0);
-            }
-
-            // frameDurationRemainder = floor(frameDurationRemainder);
-            // if (delayTime > frameDurationRemainder)
-            //     printf("delayTime: %.3f   frameDurationRemainder: %.3f\n", delayTime, frameDurationRemainder);
-
-            while ((Clock::GetTicks() - FrameTimeStart) < FrameTimeDesired);
-        }
-    }
-    else {
-        Clock::Delay(1);
-    }
-}
-// One turn of the main loop, without the waiting. Desktop calls this and then
-// paces itself; the browser calls it from a callback and is paced by the
-// display, so the two need the same body but not the same loop around it.
-PRIVATE STATIC void Application::RunLoopIteration() {
-    if (BenchmarkFrameCount == 0)
-        BenchmarkTickStart = Clock::GetTicks();
-
-    Application::RunFrame(NULL);
-
-    BenchmarkFrameCount++;
-    if (BenchmarkFrameCount == TargetFPS) {
-        double measuredSecond = Clock::GetTicks() - BenchmarkTickStart;
-        FPS = 1000.0 / floor(measuredSecond) * TargetFPS;
-        BenchmarkFrameCount = 0;
-    }
-
-    if (AutomaticPerformanceSnapshots && MetricFrameTime > AutomaticPerformanceSnapshotFrameTimeThreshold) {
-        if (Clock::GetTicks() - AutomaticPerformanceSnapshotLastTime > AutomaticPerformanceSnapshotMinInterval) {
-            AutomaticPerformanceSnapshotLastTime = Clock::GetTicks();
-            TakeSnapshot = true;
-        }
-    }
-
-    if (TakeSnapshot) {
-        TakeSnapshot = false;
-        Application::GetPerformanceSnapshot();
-    }
+void Application::LoadDevSettings() {
+#ifdef DEVELOPER_MODE
+	Application::Settings->GetBool("dev", "devMenu", &Application::DevMode);
+	Application::Settings->GetBool("dev", "viewPerformance", &ViewPerformance);
+	Application::Settings->GetBool("dev", "doNothing", &DoNothing);
+	Application::Settings->GetInteger("dev", "fastForward", &UpdatesPerFastForward);
+	Application::Settings->GetBool("dev", "convertModels", &Application::DevConvertModels);
+	Application::Settings->GetBool("dev", "useMemoryFileCache", &UseMemoryFileCache);
+	Application::Settings->GetBool("dev", "loadAllClasses", &ScriptManager::LoadAllClasses);
+
+	if (!Running) {
+		Application::Settings->GetBool("dev", "writeLogFile", &Log::WriteToFile);
+		Application::Settings->GetBool("dev", "trackMemory", &Memory::IsTracking);
+	}
+
+	int logLevel = 0;
+#ifdef DEBUG
+	logLevel = -2;
+#endif
+
+	bool hasLogLevelSetting = Application::Settings->GetInteger("dev", "logLevel", &logLevel);
+	if (!Running || hasLogLevelSetting) {
+		Log::SetLogLevel(logLevel);
+	}
+
+	Application::Settings->GetBool("dev", "autoPerfSnapshots", &AutomaticPerformanceSnapshots);
+	int apsFrameTimeThreshold = 0, apsMinInterval = 0;
+	if (Application::Settings->GetInteger("dev", "apsMinFrameTime", &apsFrameTimeThreshold)) {
+		AutomaticPerformanceSnapshotFrameTimeThreshold = apsFrameTimeThreshold;
+	}
+	if (Application::Settings->GetInteger("dev", "apsMinInterval", &apsMinInterval)) {
+		AutomaticPerformanceSnapshotMinInterval = apsMinInterval;
+	}
+
+	// The main resource file is not writable by default.
+	// This can be enabled by using allowWritableResource.
+	bool allowWritableResource = false;
+	if (Application::Settings->GetBool(
+		    "dev", "allowWritableResource", &allowWritableResource)) {
+		if (allowWritableResource) {
+			ResourceManager::SetMainResourceWritable(true);
+		}
+	}
+
+	char str[64];
+	if (Application::Settings->GetString("dev", "sceneBrowserMode", str, sizeof str) && str[0] != '\0') {
+		if (strcmp(str, "resources") == 0) {
+			DevMenu.SceneBrowserMode = SCENEBROWSER_RESOURCES;
+		}
+		else if (strcmp(str, "scenelist") == 0) {
+			DevMenu.SceneBrowserMode = SCENEBROWSER_SCENELIST;
+		}
+		else if (strcmp(str, "default") == 0) {
+			DevMenu.SceneBrowserMode = SCENEBROWSER_DEFAULT;
+		}
+		else {
+			Log::Print(Log::LOG_WARN,
+				"Unrecognized option \"%s\" for \"sceneBrowserMode\"",
+				str);
+			DevMenu.SceneBrowserMode = SCENEBROWSER_DEFAULT;
+		}
+	}
+#endif
 }
 
-PRIVATE STATIC void Application::Shutdown() {
-    Studio::Dispose();
+bool Application::IsWindowResizeable() {
+	return !Application::IsMobile();
+}
 
-    Scene::Dispose();
+void Application::SetWindowSize(int window_w, int window_h) {
+	if (!Application::IsWindowResizeable()) {
+		return;
+	}
 
-    if (DEBUG_fontSprite) {
-        DEBUG_fontSprite->Dispose();
-        delete DEBUG_fontSprite;
-        DEBUG_fontSprite = NULL;
-    }
+	if (Application::Window == nullptr) {
+		return;
+	}
 
-    Application::Cleanup();
+	SDL_SetWindowSize(Application::Window, window_w, window_h);
 
-    Memory::PrintLeak();
+	int defaultMonitor = Application::DefaultMonitor;
+	SDL_SetWindowPosition(Application::Window,
+		SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor),
+		SDL_WINDOWPOS_CENTERED_DISPLAY(defaultMonitor));
+
+	// In case the window just doesn't resize (Android)
+	SDL_GetWindowSize(Application::Window, &window_w, &window_h);
+	if (Application::DevMenuActivated) {
+		DevMenu.CurrentWindowWidth = window_w;
+		DevMenu.CurrentWindowHeight = window_h;
+	}
+
+	Graphics::Resize(window_w, window_h);
+}
+
+bool Application::GetWindowFullscreen() {
+	return !!(SDL_GetWindowFlags(Application::Window) & SDL_WINDOW_FULLSCREEN_DESKTOP);
+}
+
+void Application::SetWindowFullscreen(bool isFullscreen) {
+	SDL_SetWindowFullscreen(
+		Application::Window, isFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+	Application::WindowFullscreen = isFullscreen;
+	Application::Settings->SetBool("display", "fullscreen", Application::WindowFullscreen);
+
+	int window_w, window_h;
+	SDL_GetWindowSize(Application::Window, &window_w, &window_h);
+
+	if (InputManager::MouseMode != MOUSEMODE_DEFAULT) {
+		// Toggling fullscreen in relative mouse modes seems a little finnicky with respect to the
+		// mouse position... So we warp the cursor to the center of the window.
+		// Something more proper should be done, if possible.
+		SDL_WarpMouseInWindow(Application::Window, window_w / 2, window_h / 2);
+	}
+
+	if (Application::DevMenuActivated) {
+		DevMenu.Fullscreen = isFullscreen;
+		DevMenu.CurrentWindowWidth = window_w;
+		DevMenu.CurrentWindowHeight = window_h;
+	}
+
+	Graphics::Resize(window_w, window_h);
+}
+
+void Application::SetWindowBorderless(bool isBorderless) {
+	Application::WindowBorderless = isBorderless;
+	Application::Settings->SetBool("display", "borderless", isBorderless);
+	SDL_SetWindowBordered(Application::Window, (SDL_bool)(!isBorderless));
+}
+
+void Application::SetWindowScale(int scale) {
+	if (scale < 0) {
+		scale = 0;
+	}
+	if (scale > 8) {
+		scale = 8;
+	}
+	Application::WindowScale = scale;
+	Application::Settings->SetInteger("display", "scale", Application::WindowScale);
+	Application::SetWindowSize(Application::WindowWidth * Application::WindowScale,
+		Application::WindowHeight * Application::WindowScale);
+}
+
+int Application::GetKeyBind(int bind) {
+	return KeyBinds[bind];
+}
+void Application::SetKeyBind(int bind, int key) {
+	KeyBinds[bind] = key;
+	if (key == Key_UNKNOWN) {
+		KeyBindsSDL[bind] = SDLK_UNKNOWN;
+	}
+	else {
+		KeyBindsSDL[bind] = SDL_GetKeyFromScancode(InputManager::KeyToSDLScancode[key]);
+	}
+}
+
+void Application::PollEvents() {
+	SDL_Event e;
+	while (SDL_PollEvent(&e)) {
+		// While the editor is open it gets first refusal on input. It only
+		// claims key presses when one of its text fields has focus, so the
+		// shortcuts below still work with it on screen.
+		if (Studio::HandleEvent(&e)) {
+			continue;
+		}
+
+		switch (e.type) {
+		case SDL_QUIT: {
+			Running = false;
+			break;
+		}
+		case SDL_KEYDOWN: {
+			SDL_Keycode key = e.key.keysym.sym;
+
+			// Open and close the editor
+			if (key == KeyBindsSDL[(int)KeyBind::Studio] || key == SDLK_BACKQUOTE) {
+				Studio::Toggle();
+				break;
+			}
+
+			// Escape backs out of the editor rather than reaching the game.
+			if (Studio::Visible && key == SDLK_ESCAPE) {
+				Studio::Hide();
+				break;
+			}
+
+			// Fullscreen
+			if (key == KeyBindsSDL[(int)KeyBind::Fullscreen]) {
+				Uint16 mod = e.key.keysym.mod;
+				if (key == SDLK_F4 && (mod & KMOD_ALT)) {
+					break;
+				}
+
+				Application::SetWindowFullscreen(
+					!Application::GetWindowFullscreen());
+				break;
+			}
+			// Screenshot
+			else if (key == KeyBindsSDL[(int)KeyBind::Screenshot]) {
+				if (!HitScreenshotKey) {
+					Application::TakeScreenshot();
+					HitScreenshotKey = true;
+				}
+			}
+			// Toggle FPS counter
+			else if (key == KeyBindsSDL[(int)KeyBind::ToggleFPSCounter]) {
+				Application::ShowFPS = !Application::ShowFPS;
+				break;
+			}
+
+			if (Application::DevMode) {
+				// Quit application (dev)
+				// Unbound by default, must be set in GameConfig
+				if (key == KeyBindsSDL[(int)KeyBind::DevQuit]) {
+					Running = false;
+					break;
+				}
+				// Open dev menu (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevMenuToggle]) {
+					Application::DevMenuActivated ? Application::CloseDevMenu()
+								      : Application::OpenDevMenu();
+					break;
+				}
+#if defined(WIN32) || defined(LINUX) || defined(MACOSX)
+				// Open script debugger
+				else if (key == KeyBindsSDL[(int)KeyBind::DevScriptDebugger]) {
+					ToggleDebugger = true;
+					break;
+				}
+#endif
+				// Restart application (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevRestartApp]) {
+					Application::RestartApplication();
+					break;
+				}
+				// Show layer info (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevLayerInfo]) {
+					for (size_t li = 0; li < Scene::Layers.size(); li++) {
+						SceneLayer* layer = Scene::Layers[li];
+						Log::Print(Log::LOG_IMPORTANT,
+							"%2d: %20s (Visible: %d, Width: %d, Height: %d, OffsetX: %f, OffsetY: %f, RelativeX: %f, RelativeY: %f, ConstantX: %f, ConstantY: %f, DrawGroup: %d, ScrollDirection: %d, Flags: %d)",
+							li,
+							layer->Name,
+							layer->Visible,
+							layer->Width,
+							layer->Height,
+							layer->OffsetX,
+							layer->OffsetY,
+							layer->RelativeX,
+							layer->RelativeY,
+							layer->ConstantX,
+							layer->ConstantY,
+							layer->DrawGroup,
+							layer->DrawBehavior,
+							layer->Flags);
+					}
+					break;
+				}
+				// Print performance snapshot (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevPerfSnapshot]) {
+					TakePerfSnapshot = true;
+					break;
+				}
+				// Recompile and restart scene (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevRecompile]) {
+					Application::ReloadScene();
+					break;
+				}
+				// Restart scene (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevRestartScene]) {
+					Application::RestartScene();
+					break;
+				}
+				// Enable update speedup (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevFastForward]) {
+					Application::SetFastForwarding(!Application::IsFastForwarding());
+					break;
+				}
+				// Cycle view tile collision (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevTileCol]) {
+					Scene::ShowTileCollisionFlag =
+						(Scene::ShowTileCollisionFlag + 1) % 3;
+					Application::UpdateWindowTitle();
+					break;
+				}
+				// View object regions (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevObjectRegions]) {
+					Scene::ShowObjectRegions ^= 1;
+					break;
+				}
+				// View object regions (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevViewHitboxes]) {
+					Scene::ShowHitboxes ^= 1;
+					break;
+				}
+				// Toggle frame stepper (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevFrameStepper]) {
+					Stepper = !Stepper;
+					Application::UpdateWindowTitle();
+					break;
+				}
+				// Step frame (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevStepFrame]) {
+					Stepper = true;
+					Step = true;
+					Application::UpdateWindowTitle();
+					break;
+				}
+				// Previous scene in List (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevPreviousScene]) {
+					if (Application::DevMenuActivated) {
+						Application::CloseDevMenu();
+					}
+					Application::DevNavigateSceneList(true);
+					break;
+				}
+				// Next scene in List (dev)
+				else if (key == KeyBindsSDL[(int)KeyBind::DevNextScene]) {
+					if (Application::DevMenuActivated) {
+						Application::CloseDevMenu();
+					}
+					Application::DevNavigateSceneList(false);
+					break;
+				}
+			}
+			break;
+		}
+		case SDL_MOUSEMOTION: {
+			int motionX = e.motion.xrel;
+			int motionY = e.motion.yrel;
+			InputManager::HandleMouseMotionEvent(motionX, motionY);
+			break;
+		}
+		case SDL_MOUSEWHEEL: {
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+			float motionX = e.wheel.preciseX;
+			float motionY = e.wheel.preciseY;
+#else
+			// Fractional wheel motion arrived in SDL 2.0.18.
+			float motionX = (float)e.wheel.x;
+			float motionY = (float)e.wheel.y;
+#endif
+			InputManager::HandleMouseWheelEvent(motionX, motionY);
+			break;
+		}
+		case SDL_WINDOWEVENT: {
+			switch (e.window.event) {
+			case SDL_WINDOWEVENT_RESIZED:
+				Graphics::Resize(e.window.data1, e.window.data2);
+				break;
+			}
+			break;
+		}
+		case SDL_CONTROLLERDEVICEADDED: {
+			int i = e.cdevice.which;
+			Log::Print(Log::LOG_VERBOSE, "Added controller device %d", i);
+			InputManager::AddController(i);
+			break;
+		}
+		case SDL_CONTROLLERDEVICEREMOVED: {
+			int i = e.cdevice.which;
+			Log::Print(Log::LOG_VERBOSE, "Removed controller device %d", i);
+			InputManager::RemoveController(i);
+			break;
+		}
+		}
+	}
+}
+void Application::MainLoopCallback(void* p) {
+	MainLoop();
+}
+void Application::RunFrame(int runFrames) {
+	Metrics.Frame.Begin();
+
+	FrameTimeStart = Clock::GetTicks();
+
+	Metrics.Clear.Begin();
+	Graphics::Clear();
+	Metrics.Clear.End();
+
+	// Event loop
+	Metrics.Event.Begin();
+	InputManager::OnFrameBegin();
+	Application::PollEvents();
+	Metrics.Event.End();
+
+	// Anything the editor's buttons asked for last frame happens here, where
+	// no rendering is in progress.
+	Studio::Update();
+
+	// BUG: Having Stepper on prevents the first
+	//   frame of a new scene from Updating, but still rendering.
+	if (*Scene::NextScene || Scene::DoRestart) {
+		Step = true;
+	}
+
+	FirstFrame = false;
+
+	Metrics.AfterScene.Begin();
+	Scene::AfterScene();
+	Metrics.AfterScene.End();
+
+	if (DoNothing) {
+		goto DO_NOTHING;
+	}
+
+	// Update
+	for (int m = 0; m < runFrames; m++) {
+		Scene::ResetPerf();
+		Metrics.Poll.Reset();
+		Metrics.Update.Reset();
+		// The editor holds the game still while it is open, so its buttons act
+		// on a scene that isn't moving underneath them.
+		if (((Stepper && Step) || !Stepper) && !Application::DevMenuActivated &&
+			!Studio::IsPausingGame()) {
+			// Poll for inputs
+			Metrics.Poll.Begin();
+			InputManager::Poll();
+			Metrics.Poll.Accumulate();
+
+			// Update scene
+			Metrics.Update.Begin();
+			Scene::FrameUpdate();
+			if (Application::UseFixedTimestep) {
+				Scene::FixedUpdate();
+			}
+			else {
+				Scene::Update();
+
+				while (FixedUpdateCounter >= FixedFrameTimeDesired) {
+					Scene::FixedUpdate();
+
+					FixedUpdateCounter -= FixedFrameTimeDesired;
+				}
+			}
+			Metrics.Update.Accumulate();
+		}
+		else if (!Application::UseFixedTimestep) {
+			while (FixedUpdateCounter >= FixedFrameTimeDesired) {
+				FixedUpdateCounter -= FixedFrameTimeDesired;
+			}
+		}
+		Step = false;
+		if (runFrames != 1 && (*Scene::NextScene || Scene::DoRestart)) {
+			break;
+		}
+	}
+
+#ifdef USING_FFMPEG
+	AudioManager::Lock();
+	Uint8 audio_buffer[0x8000]; // <-- Should be larger than AudioManager::AudioQueueMaxSize
+	int needed = 0x8000; // AudioManager::AudioQueueMaxSize;
+	for (size_t i = 0, i_sz = Scene::MediaList.size(); i < i_sz; i++) {
+		if (!Scene::MediaList[i]) {
+			continue;
+		}
+
+		MediaBag* media = Scene::MediaList[i]->AsMedia;
+		int queued = (int)AudioManager::AudioQueueSize;
+		if (queued < needed) {
+			int ready_bytes =
+				media->Player->GetAudioData(audio_buffer, needed - queued);
+			if (ready_bytes > 0) {
+				memcpy(AudioManager::AudioQueue + AudioManager::AudioQueueSize,
+					audio_buffer,
+					ready_bytes);
+				AudioManager::AudioQueueSize += ready_bytes;
+			}
+		}
+	}
+	AudioManager::Unlock();
+#endif
+
+	// Rendering
+	Metrics.Render.Begin();
+	Scene::Render();
+	Metrics.Render.End();
+
+	if (Graphics::UsingPostProcessShader) {
+		Metrics.PostProcess.Begin();
+		Graphics::DoScreenPostProcess();
+		Metrics.PostProcess.End();
+	}
+
+DO_NOTHING:
+	// Show FPS counter
+	Metrics.FPSCounter.Begin();
+	DrawPerformance();
+	Metrics.FPSCounter.End();
+
+	RunDevMenu();
+
+	// Drawn last so it sits on top of both the game and the debug overlays.
+	Studio::Render();
+
+	// Take screenshots
+	if (!Screenshot::IsQueueEmpty()) {
+		Screenshot::TakeQueued();
+	}
+
+	HitScreenshotKey = false;
+
+	Metrics.Present.Begin();
+	Graphics::Present();
+	Metrics.Present.End();
+
+	Metrics.Frame.End();
+}
+
+void Application::TakeScreenshot(const char* path, Operation operation) {
+	ScreenshotOperation op;
+
+	if (path) {
+		op.Path = std::string(path);
+	}
+	else {
+		const char* extension = ".png";
+
+		std::string basePath = Application::GetFilenameForScreenshot();
+		std::string path = basePath + extension;
+
+		if (Screenshot::Exists(path)) {
+			int attempt = 0;
+			do {
+				attempt++;
+
+				if (attempt == INT32_MAX) {
+					const char* realPath = basePath.c_str();
+					std::string resolved = "";
+					if (Path::FromURL(realPath, resolved)) {
+						realPath = resolved.c_str();
+					}
+
+					Log::Print(Log::LOG_ERROR,
+						"Could not save screenshot at \"%s\"!",
+						realPath);
+					return;
+				}
+
+				path = basePath + "-" + std::to_string(attempt) + extension;
+			} while (Screenshot::Exists(path));
+		}
+
+		op.Path = path;
+	}
+
+	op.OnFinish = operation;
+
+	Screenshot::QueueOperation(op);
+}
+void Application::TakeScreenshot() {
+	Operation operation;
+	operation.Callback = Application::TakeScreenshotCallback;
+	operation.Data = nullptr;
+
+	TakeScreenshot(nullptr, operation);
+}
+
+void Application::TakeScreenshotCallback(OperationResult result) {
+	const char* filename = (const char*)result.Output;
+
+	std::string resolved = "";
+	if (Path::FromURL(filename, resolved)) {
+		filename = resolved.c_str();
+	}
+
+	if (result.Success) {
+		Log::Print(Log::LOG_VERBOSE, "Saved screenshot at \"%s\"", filename);
+	}
+	else {
+		Log::Print(Log::LOG_ERROR, "Could not save screenshot at \"%s\"!", filename);
+	}
+}
+
+void Application::DrawPerformance() {
+	if (DefaultFont == nullptr) {
+		return;
+	}
+
+	if (ViewPerformance) {
+		PerformanceViewer::DrawDetailed(DefaultFont);
+	}
+	else if (Application::ShowFPS) {
+		PerformanceViewer::DrawFramerate(DefaultFont);
+	}
+}
+void Application::DelayFrame() {
+	double frameTime = Clock::GetTicks() - FrameTimeStart;
+	double frameDurationRemainder = FrameTimeDesired - frameTime;
+	if (frameDurationRemainder >= 0.0) {
+		// NOTE: Delay duration will always be more than
+		// requested wait time.
+		if (frameDurationRemainder > 1.0) {
+			double delayStartTime = Clock::GetTicks();
+
+			Clock::Delay(frameDurationRemainder - 1.0);
+
+			double delayTime = Clock::GetTicks() - delayStartTime;
+			Overdelay = delayTime - (frameDurationRemainder - 1.0);
+		}
+
+		while ((Clock::GetTicks() - FrameTimeStart) < FrameTimeDesired)
+			;
+	}
+}
+void Application::SetUseFixedTimestep(bool useFixedTimestep) {
+	UseFixedTimestep = useFixedTimestep;
+
+	ScriptEntity::SetUseFixedTimestep(useFixedTimestep);
+}
+void Application::StartGame(const char* startingScene) {
+	Application::LoadDefaultFont();
+	Application::InitScripting();
+
+	Entity::InitAll();
+
+	Scene::Init();
+	Scene::Prepare();
+	Scene::Initialize();
+
+	// Load initial scripts
+	ScriptManager::LoadScript("init.hsl");
+
+	if (ScriptManager::LoadAllClasses) {
+		ScriptManager::LoadClasses();
+	}
+
+	// Load Static class
+	Scene::AddStaticClass();
+
+	// Don't prepare the scene twice if there is no scene to load.
+	if (startingScene[0] != '\0') {
+		Scene::LoadScene(startingScene);
+	}
+
+	// Call Application's OnGameStart here
+	Scene::CallGameStart();
+
+	// Start scene
+	if (Scene::CurrentScene[0] != '\0') {
+		Scene::Restart();
+	}
+	else {
+		Scene::FinishLoad();
+	}
+}
+void Application::Run(int argc, char* args[]) {
+	Application::Init(argc, args);
+	if (!Running) {
+		return;
+	}
+
+	// A game has to allow its scenes to be named on the command line, but a
+	// scene named to be exported, or opened in the editor, is a developer
+	// working on their own game.
+	bool allowSceneLoad = AllowCmdLineSceneLoad || Application::IsExportRequested() ||
+		Application::HasCmdLineArg("--studio");
+
+	char scenePath[MAX_RESOURCE_PATH_LENGTH];
+	if (allowSceneLoad && SceneToLoad.size() > 0) {
+		StringUtils::Copy(scenePath, SceneToLoad.c_str(), sizeof scenePath);
+	}
+	else {
+		StringUtils::Copy(scenePath, StartingScene, sizeof scenePath);
+	}
+
+	Application::StartGame(scenePath);
+	Application::UpdateWindowTitle();
+	Application::SetWindowSize(Application::WindowWidth * Application::WindowScale,
+		Application::WindowHeight * Application::WindowScale);
+
+	// Asked to convert rather than to run. The scene is loaded by this point,
+	// which is all an exporter needs, so it happens here and the engine stops
+	// without ever showing its window.
+	if (Application::IsExportRequested()) {
+		Application::RunRequestedExport();
+		Application::Shutdown();
+		return;
+	}
+
+	// Launched with nothing to run -- no scene, no project. Rather than sitting
+	// on an empty window, open the editor so there is something to click.
+	if (Application::HasCmdLineArg("--studio") ||
+		(!Scene::CurrentScene[0] && !Scene::NextScene[0])) {
+		Studio::Show();
+	}
+
+	Graphics::Clear();
+	Graphics::Present();
+
+	SDL_ShowWindow(Application::Window);
+
+#ifdef IOS
+	// Initialize the Game Center for scoring and matchmaking
+	// InitGameCenter();
+
+	// Set up the game to run in the window animation callback on
+	// iOS so that Game Center and so forth works correctly.
+	SDL_iPhoneSetAnimationCallback(Application::Window, 1, MainLoopCallback, NULL);
+#elif defined(EMSCRIPTEN)
+	LastTick = Clock::GetTicks();
+
+	// The browser owns the loop. A page that spun on its own would never hand
+	// control back, and nothing it drew would ever reach the screen. A frame
+	// rate of 0 asks for requestAnimationFrame, which paces the page against
+	// the display; the last argument makes this call never return, which is
+	// what leaves the runtime alive to be called back into.
+	emscripten_set_main_loop(Application::RunWebFrame, 0, 1);
+#else
+	LastTick = Clock::GetTicks();
+
+	while (Running) {
+		MainLoop();
+	}
+
+	Application::Shutdown();
+#endif
+}
+
+void Application::Shutdown() {
+	Studio::Dispose();
+
+	Application::EndGame();
+	Application::Cleanup();
 }
 
 #ifdef EMSCRIPTEN
-// The browser owns the loop. A page that spun on its own would never hand
-// control back, and nothing it drew would ever reach the screen.
-PRIVATE STATIC void Application::RunWebFrame() {
-    if (!Running) {
-        emscripten_cancel_main_loop();
-        Application::Shutdown();
+void Application::RunWebFrame() {
+	if (!Running) {
+		emscripten_cancel_main_loop();
+		Application::Shutdown();
 
-        // A tab cannot close itself, so the page is left holding the last frame
-        // drawn. Saying so beats leaving it looking like the engine hung.
-        EM_ASM({
-            if (typeof Module !== 'undefined' && Module.setStatus)
-                Module.setStatus('The engine has shut down. Reload to start it again.');
-        });
-        return;
-    }
+		// A tab cannot close itself, so the page is left holding the last
+		// frame drawn. Saying so beats leaving it looking like the engine hung.
+		EM_ASM({
+			if (typeof Module !== 'undefined' && Module.setStatus)
+				Module.setStatus('The engine has shut down. Reload to start it again.');
+		});
+		return;
+	}
 
-    Application::RunLoopIteration();
+	Application::MainLoop();
 }
 #endif
+
+bool Application::IsExportRequested() {
+	return MegaDriveExportPath.size() || Sega32XExportPath.size() || MegaCDExportPath.size() ||
+		GameGearExportPath.size() || SegaSaturnExportPath.size() ||
+		DreamcastExportPath.size() || ConvertModelFrom.size();
+}
+
+bool Application::RunRequestedExport() {
+	if (ConvertModelFrom.size()) {
+		return Application::ConvertModel(ConvertModelFrom.c_str(), ConvertModelTo.c_str());
+	}
+
+#define REPORT_EXPORT(result) \
+	Log::Print((result).Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", (result).Message); \
+	return (result).Success
+
+	if (MegaDriveExportPath.size()) {
+		MegaDriveExportResult exported = MegaDriveExporter::ExportScene(MegaDriveExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+	if (Sega32XExportPath.size()) {
+		Sega32XExportResult exported = Sega32XExporter::ExportScene(Sega32XExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+	if (MegaCDExportPath.size()) {
+		MegaCDExportResult exported = MegaCDExporter::ExportScene(MegaCDExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+	if (GameGearExportPath.size()) {
+		GameGearExportResult exported = GameGearExporter::ExportScene(GameGearExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+	if (DreamcastExportPath.size()) {
+		DreamcastExportResult exported = DreamcastScene3DPath.size()
+			? DreamcastExporter::ExportScene3D(
+				  DreamcastExportPath.c_str(), DreamcastScene3DPath.c_str())
+			: DreamcastExporter::ExportScene(DreamcastExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+	if (SegaSaturnExportPath.size()) {
+		SegaSaturnExportResult exported = SegaSaturnScene3DPath.size()
+			? SegaSaturnExporter::ExportScene3D(
+				  SegaSaturnExportPath.c_str(), SegaSaturnScene3DPath.c_str())
+			: SegaSaturnExporter::ExportScene(SegaSaturnExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+
+#undef REPORT_EXPORT
+
+	return false;
+}
 
 // Loads a model through whichever reader knows the format and writes it back
 // out as a Hatch model.
 //
-// It also happens to be the only way to run the Hatch model writer, which had
-// no caller at all -- which is how it and the reader came to disagree about
-// how the animation count is stored without anyone noticing.
-PUBLIC STATIC bool Application::ConvertModel(const char* from, const char* to) {
-    ResourceStream* stream = ResourceStream::New(from);
-    if (!stream) {
-        Log::Print(Log::LOG_ERROR, "Could not open model \"%s\".", from);
-        return false;
-    }
+// It is also the only way to run the Hatch model writer, which had no caller at
+// all -- which is how it and the reader came to disagree about how the
+// animation count is stored without anyone noticing.
+bool Application::ConvertModel(const char* from, const char* to) {
+	// One of the game's resources, or failing that a file anywhere at all: a
+	// model being converted is as likely as not to be outside the game yet.
+	Stream* stream = ResourceStream::New(from);
+	if (!stream) {
+		stream = File::Open(from, File::READ_ACCESS);
+	}
+	if (!stream) {
+		Log::Print(Log::LOG_ERROR, "Could not open model \"%s\".", from);
+		return false;
+	}
 
-    IModel* model = new IModel();
-    bool loaded = model->Load(stream, from);
-    stream->Close();
+	IModel* model = new IModel();
+	bool loaded = model->Load(stream, from);
+	stream->Close();
 
-    if (!loaded) {
-        delete model;
-        return false;
-    }
+	if (!loaded) {
+		delete model;
+		return false;
+	}
 
-    Log::Print(Log::LOG_INFO, "Read \"%s\": %d mesh(es), %d vertices, %d material(s), %d animation(s).",
-        from, (int)model->MeshCount, (int)model->VertexCount,
-        (int)model->MaterialCount, (int)model->AnimationCount);
+	Log::Print(Log::LOG_INFO,
+		"Read \"%s\": %d mesh(es), %d vertices, %d material(s), %d animation(s).",
+		from,
+		(int)model->Meshes.size(),
+		(int)model->VertexCount,
+		(int)model->Materials.size(),
+		(int)model->Animations.size());
 
-    bool saved = HatchModel::Save(model, to);
+	// Written where it was asked for, which a game's own file access would
+	// refuse when that is outside the game.
+	bool saved = false;
+	Stream* output = File::Open(to, File::WRITE_ACCESS);
+	if (output) {
+		saved = HatchModel::Save(model, output, to);
+		output->Close();
+	}
 
-    delete model;
+	delete model;
 
-    if (!saved) {
-        Log::Print(Log::LOG_ERROR, "Could not write \"%s\".", to);
-        return false;
-    }
+	if (!saved) {
+		Log::Print(Log::LOG_ERROR, "Could not write \"%s\".", to);
+		return false;
+	}
 
-    Log::Print(Log::LOG_INFO, "Wrote \"%s\".", to);
+	Log::Print(Log::LOG_INFO, "Wrote \"%s\".", to);
 
-    return true;
+	return true;
 }
 
-PUBLIC STATIC void Application::Run(int argc, char* args[]) {
-    Application::Init(argc, args);
-    if (!Running)
-        return;
-
-    Scene::Init();
-
-    if (SceneToLoad.size())
-        Scene::LoadScene(SceneToLoad.c_str());
-    else if (*StartingScene)
-        Scene::LoadScene(StartingScene);
-
-    Scene::Restart();
-    Application::UpdateWindowTitle();
-    Application::SetWindowSize(Application::WindowWidth, Application::WindowHeight);
-
-    // Asked to convert rather than to run. The scene is loaded by this point,
-    // which is all the exporter needs, so it happens here and the engine stops
-    // without ever opening on anything.
-    if (Application::MegaDriveExportPath.size()) {
-        MegaDriveExportResult exported =
-            MegaDriveExporter::ExportScene(Application::MegaDriveExportPath.c_str());
-
-        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
-
-        Application::Shutdown();
-        return;
-    }
-
-    if (Application::Sega32XExportPath.size()) {
-        Sega32XExportResult exported =
-            Sega32XExporter::ExportScene(Application::Sega32XExportPath.c_str());
-
-        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
-
-        Application::Shutdown();
-        return;
-    }
-
-    if (Application::MegaCDExportPath.size()) {
-        MegaCDExportResult exported =
-            MegaCDExporter::ExportScene(Application::MegaCDExportPath.c_str());
-
-        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
-
-        Application::Shutdown();
-        return;
-    }
-
-    if (Application::GameGearExportPath.size()) {
-        GameGearExportResult exported =
-            GameGearExporter::ExportScene(Application::GameGearExportPath.c_str());
-
-        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
-
-        Application::Shutdown();
-        return;
-    }
-
-    if (Application::DreamcastExportPath.size()) {
-        DreamcastExportResult exported = Application::DreamcastScene3DPath.size()
-            ? DreamcastExporter::ExportScene3D(Application::DreamcastExportPath.c_str(),
-                  Application::DreamcastScene3DPath.c_str())
-            : DreamcastExporter::ExportScene(Application::DreamcastExportPath.c_str());
-
-        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
-
-        Application::Shutdown();
-        return;
-    }
-
-    if (Application::ConvertModelFrom.size()) {
-        Application::ConvertModel(Application::ConvertModelFrom.c_str(),
-            Application::ConvertModelTo.c_str());
-
-        Application::Shutdown();
-        return;
-    }
-
-    if (Application::SegaSaturnExportPath.size()) {
-        SegaSaturnExportResult exported = Application::SegaSaturnScene3DPath.size()
-            ? SegaSaturnExporter::ExportScene3D(Application::SegaSaturnExportPath.c_str(),
-                  Application::SegaSaturnScene3DPath.c_str())
-            : SegaSaturnExporter::ExportScene(Application::SegaSaturnExportPath.c_str());
-
-        Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
-
-        Application::Shutdown();
-        return;
-    }
-
-    // Launched with nothing to run -- no scene, no project. Rather than sitting
-    // on an empty window, open the editor so there is something to click.
-    if (Application::CmdLineArgExists("--studio") ||
-        (!Scene::CurrentScene[0] && !Scene::NextScene[0]))
-        Studio::Show();
-
-    Graphics::Clear();
-    Graphics::Present();
-
-    #if defined(IOS)
-        // Initialize the Game Center for scoring and matchmaking
-        // InitGameCenter();
-
-        // Set up the game to run in the window animation callback on iOS
-        // so that Game Center and so forth works correctly.
-        SDL_iPhoneSetAnimationCallback(Application::Window, 1, RunFrame, NULL);
-    #elif defined(EMSCRIPTEN)
-        // A frame rate of 0 asks for requestAnimationFrame, which paces the
-        // page against the display rather than against a timer, so the engine
-        // does not delay for itself here. The second argument makes this call
-        // never return, which is what leaves the runtime alive to be called
-        // back into.
-        emscripten_set_main_loop(Application::RunWebFrame, 0, 1);
-    #else
-        while (Running) {
-            Application::RunLoopIteration();
-            Application::DelayFrame();
-        }
-
-        Application::Shutdown();
-    #endif
+// Tears the game down and brings it back up on the starting scene.
+void Application::RestartApplication() {
+	Application::Restart(false);
+	Application::StartGame(StartingScene);
+	if (Application::DevMenuActivated) {
+		Application::CloseDevMenu();
+	}
+	Application::UpdateWindowTitle();
 }
 
-PUBLIC STATIC void Application::Cleanup() {
-    ResourceManager::Dispose();
-    AudioManager::Dispose();
-    InputManager::Dispose();
+// Recompiles the scripts and reloads whatever scene is open.
+void Application::ReloadScene() {
+	char lastScene[MAX_RESOURCE_PATH_LENGTH];
+	memcpy(lastScene, Scene::CurrentScene, MAX_RESOURCE_PATH_LENGTH);
 
-    Graphics::Dispose();
+	Application::Restart(true);
+	Application::StartGame(lastScene);
+	if (Application::DevMenuActivated) {
+		Application::CloseDevMenu();
+	}
+	Application::UpdateWindowTitle();
+}
 
-    SDL_DestroyWindow(Application::Window);
+// Starts the open scene over without recompiling anything.
+void Application::RestartScene() {
+	// Reset FPS timer
+	BenchmarkFrame = 0;
+	BenchmarkCounter = 0.0f;
 
-    SDL_Quit();
+	InputManager::ControllerStopRumble();
+	AudioManager::AudioStopAll();
+	AudioManager::ClearMusic();
+	AudioManager::LowPassFilter = 0.0f;
+
+	if (Application::DevMenuActivated) {
+		Application::CloseDevMenu();
+	}
+
+	Scene::DoRestart = true;
+}
+
+// Queues a scene to be swapped in at the top of the next frame. Going through
+// NextScene rather than loading straight away keeps the change on the same code
+// path the scripts use, so it is safe to call from the editor mid-frame.
+void Application::QueueSceneChange(const char* filename) {
+	if (!filename || !*filename) {
+		return;
+	}
+
+	StringUtils::Copy(Scene::NextScene, filename, sizeof(Scene::NextScene));
+	Scene::NoPersistency = true;
+}
+
+// Moves into a project's folder and changes to its game. The editor calls this
+// between polling events and updating the scene, outside the script VM, so the
+// switch can happen straight away -- and has to, because the editor rescans the
+// project the moment it has asked for it.
+static bool SwitchProject(std::string directory, std::string data, std::string scripts) {
+	if (!Directory::SetCurrentWorkingDirectory(directory.c_str())) {
+		Log::Print(Log::LOG_ERROR, "Could not open project folder \"%s\"!", directory.c_str());
+		return false;
+	}
+
+	StringUtils::Copy(SourceFileMap::Path, scripts.c_str(), sizeof(SourceFileMap::Path));
+
+	return Application::ChangeGame(data.size() ? data.c_str() : nullptr);
+}
+
+// Points the engine at a different game: either a folder holding a Resources
+// directory, or a .hatch data file.
+bool Application::LoadProject(const char* path) {
+	if (!path || !*path) {
+		return false;
+	}
+
+	std::string absolute = Path::Normalize(Path::ToAbsolute(std::string(path)));
+	std::string directory = absolute;
+	std::string data = "";
+
+	if (StringUtils::StrCaseStr(absolute.c_str(), ".hatch")) {
+		// Run from the folder the data file is in, and load the file itself.
+		size_t slash = absolute.find_last_of("/\\");
+		directory = slash == std::string::npos ? "." : absolute.substr(0, slash);
+		data = absolute;
+	}
+	else {
+		data = Path::Concat(directory, "Resources");
+		if (!Directory::Exists(data.c_str())) {
+			Log::Print(Log::LOG_WARN, "\"%s\" has no Resources folder.", path);
+		}
+	}
+
+	if (!Directory::Exists(directory.c_str())) {
+		Log::Print(Log::LOG_ERROR, "Project folder \"%s\" does not exist!", directory.c_str());
+		return false;
+	}
+
+	Log::Print(Log::LOG_IMPORTANT, "Opening project \"%s\"...", path);
+
+	return SwitchProject(directory, data, Path::Concat(directory, SCRIPTS_DIRECTORY_NAME));
+}
+
+// Unloads the game, going back to wherever the engine was started from and
+// whatever it would have found there by itself.
+void Application::CloseProject() {
+	Log::Print(Log::LOG_IMPORTANT, "Closing project.");
+
+	SwitchProject(LaunchDirectory.size() ? LaunchDirectory : ".", "", SCRIPTS_DIRECTORY_NAME);
+}
+
+// The scene the game config says to boot into, if it named one.
+const char* Application::GetStartingScene() {
+	return StartingScene;
+}
+
+// Reports the folder the engine is currently working from.
+void Application::GetProjectPath(char* out, size_t outSize) {
+	if (!Path::GetCurrentWorkingDirectory(out, outSize)) {
+		StringUtils::Copy(out, ".", outSize);
+	}
+}
+
+// Accessors for the developer toggles, so the editor can drive the same flags
+// the developer keys do.
+bool Application::IsDevMenuEnabled() {
+	return Application::DevMode;
+}
+void Application::SetDevMenuEnabled(bool enabled) {
+	Application::DevMode = enabled;
+	Application::UpdateWindowTitle();
+}
+
+bool Application::IsShowingPerformance() {
+	return Application::ShowFPS;
+}
+void Application::SetShowingPerformance(bool showing) {
+	Application::ShowFPS = showing;
+}
+
+// Whether the overlay has anything to draw itself with. The editor asks so it
+// can say why the overlay is not appearing.
+bool Application::HasPerformanceFont() {
+	return Application::DefaultFont != nullptr;
+}
+
+// The same timings the overlay breaks a frame down into, so they can be shown
+// in the editor as well.
+int Application::GetFrameMetricCount() {
+	return (int)AllMetrics.size();
+}
+const char* Application::GetFrameMetricName(int index) {
+	if (index < 0 || index >= Application::GetFrameMetricCount() || !AllMetrics[index]->Name) {
+		return "";
+	}
+
+	return AllMetrics[index]->Name;
+}
+double Application::GetFrameMetric(int index) {
+	if (index < 0 || index >= Application::GetFrameMetricCount()) {
+		return 0.0;
+	}
+
+	double value = AllMetrics[index]->Time;
+	return value < 0.0 ? 0.0 : value;
+}
+
+bool Application::IsFastForwarding() {
+	return UpdatesPerFrame != 1;
+}
+void Application::SetFastForwarding(bool fastForwarding) {
+	UpdatesPerFrame = fastForwarding ? UpdatesPerFastForward : 1;
+	Application::UpdateWindowTitle();
+}
+
+void Application::TakePerformanceSnapshot() {
+	TakePerfSnapshot = true;
+}
+void Application::MainLoop() {
+	double tickStart = Clock::GetTicks();
+
+	DeltaTime = tickStart - LastTick;
+	LastTick = tickStart;
+
+	int adjustedUpdateFrames = UpdatesPerFrame;
+
+	if (UseFixedTimestep) {
+		// Compensate for lag
+		if (UpdatesPerFrame == 1) {
+			int lagFrames = ((int)round(DeltaTime / FrameTimeDesired)) - 1;
+			if (lagFrames > Application::FrameSkip) {
+				lagFrames = Application::FrameSkip;
+			}
+
+			if (!FirstFrame && lagFrames > 0) {
+				adjustedUpdateFrames += lagFrames;
+			}
+		}
+	}
+	else {
+		ActualDeltaTime = DeltaTime / 1000.0;
+		FixedFrameTimeDesired = 1000.0 / (TargetFPS * UpdatesPerFrame);
+		FixedUpdateCounter += DeltaTime;
+	}
+
+#ifdef VM_DEBUG
+	if (ToggleDebugger && ScriptManager::ThreadCount > 0) {
+		VMThreadDebugger* debugger;
+		bool wasInterrupted;
+
+		printf("Entering debugger.\n");
+
+		ToggleDebugger = false;
+
+		wasInterrupted = AudioManager::Interrupted;
+		if (!wasInterrupted) {
+			AudioManager::SetInterrupted(true);
+		}
+
+		debugger = new VMThreadDebugger(&ScriptManager::Threads[0]);
+		debugger->Enter();
+		debugger->MainLoop();
+		debugger->Exit();
+
+		printf("Exiting debugger.\n");
+
+		delete debugger;
+
+		if (!wasInterrupted) {
+			AudioManager::SetInterrupted(false);
+		}
+	}
+#endif
+
+	Application::RunFrame(adjustedUpdateFrames);
+
+	if (!Graphics::VsyncEnabled || UseFixedTimestep) {
+		Application::DelayFrame();
+	}
+
+	// Do benchmarking stuff
+	BenchmarkFrame++;
+	BenchmarkCounter += DeltaTime;
+	if (BenchmarkCounter >= 1000.0f) {
+		CurrentFPS = BenchmarkFrame;
+		BenchmarkFrame = 0;
+		BenchmarkCounter = 0.0f;
+	}
+
+	if (AutomaticPerformanceSnapshots &&
+		Metrics.Frame.Time > AutomaticPerformanceSnapshotFrameTimeThreshold) {
+		if (tickStart - AutomaticPerformanceSnapshotLastTime >
+			AutomaticPerformanceSnapshotMinInterval) {
+			AutomaticPerformanceSnapshotLastTime = tickStart;
+			TakePerfSnapshot = true;
+		}
+	}
+
+	if (TakePerfSnapshot) {
+		TakePerfSnapshot = false;
+		Application::GetPerformanceSnapshot();
+	}
+
+	if (ShouldUseFixedTimestep != UseFixedTimestep) {
+		SetUseFixedTimestep(ShouldUseFixedTimestep);
+	}
+
+	if (NextGame[0] != '\0') {
+		char gamePath[MAX_PATH_LENGTH];
+		StringUtils::Copy(gamePath, NextGame, sizeof gamePath);
+		NextGame[0] = '\0';
+
+		ChangeGame(gamePath);
+	}
+
+	if (Discord::Initialized) {
+		Discord::Update();
+	}
+}
+
+void Application::Cleanup() {
+	Application::TerminateScripting();
+
+	Application::UnloadDefaultFont();
+	Application::DefaultFontList.clear();
+
+	Application::DisposeSettings();
+
+	MemoryCache::Dispose();
+	ResourceManager::Dispose();
+	AudioManager::Dispose();
+	InputManager::Dispose();
+
+	Graphics::Dispose();
+
+	Application::CmdLineArgs.clear();
+
+	if (NextGameCmdLineArgs) {
+		delete NextGameCmdLineArgs;
+		NextGameCmdLineArgs = nullptr;
+	}
+
+	for (std::unordered_map<std::string, Capability>::iterator it = CapabilityMap.begin();
+		it != CapabilityMap.end();
+		it++) {
+		it->second.Dispose();
+	}
+	CapabilityMap.clear();
+
+	Memory::PrintLeak();
+	Memory::ClearTrackedMemory();
+
+	MemoryPools::Dispose();
+
+	Log::Close();
+
+	SDL_DestroyWindow(Application::Window);
+
+	SDL_Quit();
 
 #ifdef MSYS
-    FreeConsole();
+	FreeConsole();
 #endif
 }
+void Application::TerminateScripting() {
+	ScriptManager::Dispose();
+	SourceFileMap::Dispose();
+	Compiler::Dispose();
+	GarbageCollector::Dispose();
+#ifdef VM_DEBUG
+	VMThreadDebugger::Dispose();
+	ScriptManager::BreakpointsEnabled = false;
+#endif
 
-static void ParseGameConfigInt(XMLNode* parent, const char* option, int& val) {
-    XMLNode* node = XMLParser::SearchNode(parent, option);
-    if (!node)
-        return;
-
-    char read[32];
-    XMLParser::CopyTokenToString(node->children[0]->name, read, sizeof(read));
-    StringUtils::ToNumber(&val, read);
-}
-static void ParseGameConfigBool(XMLNode* node, const char* option, bool& val) {
-    node = XMLParser::SearchNode(node, option);
-    if (!node)
-        return;
-
-    char read[5];
-    XMLParser::CopyTokenToString(node->children[0]->name, read, sizeof(read));
-    val = !strcmp(read, "true");
+	ScriptManager::LoadAllClasses = false;
 }
 
-PRIVATE STATIC void Application::LoadGameConfig() {
-    StartingScene[0] = '\0';
+static char* ParseGameConfigText(XMLNode* parent, const char* option) {
+	XMLNode* node = XMLParser::SearchNode(parent, option);
+	if (!node) {
+		return nullptr;
+	}
 
-    Application::GameConfig = nullptr;
+	return XMLParser::TokenToString(node->children[0]->name);
+}
+static bool ParseGameConfigText(XMLNode* parent, const char* option, char* buf, size_t bufSize) {
+	XMLNode* node = XMLParser::SearchNode(parent, option);
+	if (!node) {
+		return false;
+	}
 
-    if (!ResourceManager::ResourceExists("GameConfig.xml"))
-        return;
+	XMLParser::CopyTokenToString(node->children[0]->name, buf, bufSize);
 
-    Application::GameConfig = XMLParser::ParseFromResource("GameConfig.xml");
-    if (!Application::GameConfig)
-        return;
+	return true;
+}
+static bool ParseGameConfigInt(XMLNode* parent, const char* option, int& val) {
+	XMLNode* node = XMLParser::SearchNode(parent, option);
+	if (!node) {
+		return false;
+	}
 
-    XMLNode* root = Application::GameConfig->children[0];
-    XMLNode* node;
+	char read[32];
+	XMLParser::CopyTokenToString(node->children[0]->name, read, sizeof(read));
+	return StringUtils::ToNumber(&val, read);
+}
+static bool ParseGameConfigBool(XMLNode* node, const char* option, bool& val) {
+	node = XMLParser::SearchNode(node, option);
+	if (!node) {
+		return false;
+	}
 
-    // Read engine settings
-    node = XMLParser::SearchNode(root, "engine");
-    if (node) {
-        ParseGameConfigBool(node, "loadAllClasses", ScriptManager::LoadAllClasses);
-        ParseGameConfigBool(node, "useSoftwareRenderer", Graphics::UseSoftwareRenderer);
-        ParseGameConfigBool(node, "enablePaletteUsage", Graphics::UsePalettes);
-    }
+	char read[5];
+	XMLParser::CopyTokenToString(node->children[0]->name, read, sizeof(read));
+	val = !strcmp(read, "true");
 
-    // Read display defaults
-    node = XMLParser::SearchNode(root, "display");
-    if (node) {
-        ParseGameConfigInt(node, "width", Application::WindowWidth);
-        ParseGameConfigInt(node, "height", Application::WindowHeight);
-    }
+	return true;
+}
 
-    // Read audio defaults
+void Application::LoadGameConfig() {
+	StartingScene[0] = '\0';
+
+	if (!Running) {
+		LogFilename[0] = '\0';
+	}
+
+	Application::GameConfig = nullptr;
+
+	if (!ResourceManager::ResourceExists("GameConfig.xml")) {
+		return;
+	}
+
+	Application::GameConfig = XMLParser::ParseFromResource("GameConfig.xml");
+	if (!Application::GameConfig) {
+		return;
+	}
+
+	XMLNode* root = Application::GameConfig->children[0];
+	XMLNode* node;
+
+	// Read engine settings
+	node = XMLParser::SearchNode(root, "engine");
+	if (node) {
+		int targetFPS = DEFAULT_TARGET_FRAMERATE;
+		bool useFixedTimestep = true;
+
+		ParseGameConfigInt(node, "framerate", targetFPS);
+		ParseGameConfigBool(node, "useFixedTimestep", useFixedTimestep);
+		ParseGameConfigBool(
+			node, "allowCmdLineSceneLoad", Application::AllowCmdLineSceneLoad);
+		ParseGameConfigBool(
+			node, "disableDefaultActions", Application::DisableDefaultActions);
+		ParseGameConfigBool(node, "loadAllClasses", ScriptManager::LoadAllClasses);
+		ParseGameConfigBool(node, "useSoftwareRenderer", Graphics::UseSoftwareRenderer);
+		ParseGameConfigBool(node, "enablePaletteUsage", Graphics::UsePalettes);
+		ParseGameConfigText(node, "settingsFile", SettingsFile, sizeof SettingsFile);
+
+		if (!Running) {
+			ParseGameConfigBool(node, "writeLogFile", Log::WriteToFile);
+			ParseGameConfigText(node, "logFilename", LogFilename, sizeof LogFilename);
+		}
+
+		Application::SetTargetFrameRate(targetFPS);
+		Application::SetUseFixedTimestep(useFixedTimestep);
+		Application::ShouldUseFixedTimestep = useFixedTimestep;
+	}
+
+	// Read display defaults
+	node = XMLParser::SearchNode(root, "display");
+	if (node) {
+		ParseGameConfigInt(node, "width", Application::WindowWidth);
+		ParseGameConfigInt(node, "height", Application::WindowHeight);
+	}
+
+	// Read audio defaults
 #define GET_VOLUME(node, func) \
-    if (node->attributes.Exists("volume")) { \
-        int volume; \
-        char xmlTokStr[32]; \
-        XMLParser::CopyTokenToString(node->attributes.Get("volume"), xmlTokStr, sizeof(xmlTokStr)); \
-        if (StringUtils::ToNumber(&volume, xmlTokStr)) \
-            Application::func(volume); \
-    }
-    node = XMLParser::SearchNode(root, "audio");
-    if (node) {
-        // Get master audio volume
-        GET_VOLUME(node, SetMasterVolume);
+	if (node->attributes.Exists("volume")) { \
+		int volume; \
+		char xmlTokStr[32]; \
+		XMLParser::CopyTokenToString( \
+			node->attributes.Get("volume"), xmlTokStr, sizeof(xmlTokStr)); \
+		if (StringUtils::ToNumber(&volume, xmlTokStr)) \
+			Application::func(volume); \
+	}
+	node = XMLParser::SearchNode(root, "audio");
+	if (node) {
+		// Get master audio volume
+		GET_VOLUME(node, SetMasterVolume);
 
-        XMLNode* parent = node;
+		XMLNode* parent = node;
 
-        // Get music volume
-        node = XMLParser::SearchNode(parent, "music");
-        if (node) {
-            GET_VOLUME(node, SetMusicVolume);
-        }
+		// Get music volume
+		node = XMLParser::SearchNode(parent, "music");
+		if (node) {
+			GET_VOLUME(node, SetMusicVolume);
+		}
 
-        // Get sound volume
-        node = XMLParser::SearchNode(parent, "sound");
-        if (node) {
-            GET_VOLUME(node, SetSoundVolume);
-        }
-    }
+		// Get sound volume
+		node = XMLParser::SearchNode(parent, "sound");
+		if (node) {
+			GET_VOLUME(node, SetSoundVolume);
+		}
+	}
 #undef GET_VOLUME
 
-    // Read starting scene
-    node = XMLParser::SearchNode(root, "startscene");
-    if (node)
-        XMLParser::CopyTokenToString(node->children[0]->name, StartingScene, sizeof(StartingScene));
+	// Read starting scene
+	node = XMLParser::SearchNode(root, "startscene");
+	if (node) {
+		XMLParser::CopyTokenToString(
+			node->children[0]->name, StartingScene, sizeof(StartingScene));
+	}
 }
 
-PRIVATE STATIC void Application::DisposeGameConfig() {
-    if (Application::GameConfig)
-        XMLParser::Free(Application::GameConfig);
-    Application::GameConfig = nullptr;
+void Application::DisposeGameConfig() {
+	if (Application::GameConfig) {
+		XMLParser::Free(Application::GameConfig);
+	}
+	Application::GameConfig = nullptr;
 }
 
-PRIVATE STATIC string Application::ParseGameVersion(XMLNode* versionNode) {
-    if (versionNode->children.size() == 1)
-        return versionNode->children[0]->name.ToString();
+string Application::ParseGameVersion(XMLNode* versionNode) {
+	if (versionNode->children.size() == 1) {
+		return versionNode->children[0]->name.ToString();
+	}
 
-    std::string versionText = "";
+	std::string versionText = "";
 
-    // major
-    XMLNode* node = XMLParser::SearchNode(versionNode, "major");
-    if (node)
-        versionText += node->children[0]->name.ToString();
-    else
-        return versionText;
+	// major
+	XMLNode* node = XMLParser::SearchNode(versionNode, "major");
+	if (node) {
+		versionText += node->children[0]->name.ToString();
+	}
+	else {
+		return versionText;
+	}
 
-    // minor
-    node = XMLParser::SearchNode(versionNode, "minor");
-    if (node)
-        versionText += "." + node->children[0]->name.ToString();
-    else
-        return versionText;
+	// minor
+	node = XMLParser::SearchNode(versionNode, "minor");
+	if (node) {
+		versionText += "." + node->children[0]->name.ToString();
+	}
+	else {
+		return versionText;
+	}
 
-    // patch
-    node = XMLParser::SearchNode(versionNode, "patch");
-    if (node)
-        versionText += "." + node->children[0]->name.ToString();
-    else
-        return versionText;
+	// patch
+	node = XMLParser::SearchNode(versionNode, "patch");
+	if (node) {
+		versionText += "." + node->children[0]->name.ToString();
+	}
+	else {
+		return versionText;
+	}
 
-    // pre-release
-    node = XMLParser::SearchNode(versionNode, "prerelease");
-    if (node)
-        versionText += "-" + node->children[0]->name.ToString();
+	// pre-release
+	node = XMLParser::SearchNode(versionNode, "prerelease");
+	if (node) {
+		versionText += "-" + node->children[0]->name.ToString();
+	}
 
-    return versionText;
+	return versionText;
 }
 
-PRIVATE STATIC void Application::LoadGameInfo() {
-    StringUtils::Copy(Application::GameTitle, "Hatch Game Engine", sizeof(Application::GameTitle));
-    StringUtils::Copy(Application::GameTitleShort, Application::GameTitle, sizeof(Application::GameTitleShort));
-    StringUtils::Copy(Application::GameVersion, "1.0", sizeof(Application::GameVersion));
-    StringUtils::Copy(Application::GameDescription, "Cluck cluck I'm a chicken", sizeof(Application::GameDescription));
+void Application::InitGameInfo() {
+	StringUtils::Copy(GameTitle, DEFAULT_GAME_TITLE, sizeof(GameTitle));
+	StringUtils::Copy(GameTitleShort, DEFAULT_GAME_SHORT_TITLE, sizeof(GameTitleShort));
+	StringUtils::Copy(GameVersion, DEFAULT_GAME_VERSION, sizeof(GameVersion));
+	StringUtils::Copy(GameDescription, DEFAULT_GAME_DESCRIPTION, sizeof(GameDescription));
 
-    if (Application::GameConfig) {
-        XMLNode* root = Application::GameConfig->children[0];
+	StringUtils::Copy(GameIdentifier, DEFAULT_GAME_IDENTIFIER, sizeof(GameIdentifier));
+	StringUtils::Copy(SavesDir, DEFAULT_SAVES_DIR, sizeof(SavesDir));
 
-        XMLNode* node = XMLParser::SearchNode(root, "gameTitle");
-        if (node == nullptr)
-            node = XMLParser::SearchNode(root, "name");
-        if (node) {
-            XMLParser::CopyTokenToString(node->children[0]->name, Application::GameTitle, sizeof(Application::GameTitle));
-            StringUtils::Copy(Application::GameTitleShort, Application::GameTitle, sizeof(Application::GameTitleShort));
-        }
-
-        node = XMLParser::SearchNode(root, "shortTitle");
-        if (node)
-            XMLParser::CopyTokenToString(node->children[0]->name, Application::GameTitleShort, sizeof(Application::GameTitleShort));
-
-        node = XMLParser::SearchNode(root, "version");
-        if (node) {
-            std::string versionText = Application::ParseGameVersion(node);
-            if (versionText.size() > 0)
-                StringUtils::Copy(Application::GameVersion, versionText.c_str(), sizeof(Application::GameVersion));
-        }
-
-        node = XMLParser::SearchNode(root, "description");
-        if (node)
-            XMLParser::CopyTokenToString(node->children[0]->name, Application::GameDescription, sizeof(Application::GameDescription));
-    }
+	memset(ScreenshotsPath, '\0', sizeof(ScreenshotsPath));
 }
 
-PUBLIC STATIC void Application::LoadSceneInfo() {
-    if (ResourceManager::ResourceExists("Game/SceneConfig.xml")) {
-        XMLNode* node;
+void Application::LoadGameInfo() {
+	bool shouldSetGameId = false;
+	bool shouldSetGameDevId = false;
 
-        // Read category and starting scene number to be used by the SceneConfig
-        if (Application::GameConfig) {
-            node = Application::GameConfig->children[0];
-            if (node) {
-                ParseGameConfigInt(node, "activeCategory", Scene::ActiveCategory);
-                ParseGameConfigInt(node, "startSceneNum", Application::StartSceneNum);
-            }
-        }
+	if (GameConfig) {
+		XMLNode* root = GameConfig->children[0];
 
-        // Open and read SceneConfig
-        XMLNode* sceneConfig = XMLParser::ParseFromResource("Game/SceneConfig.xml");
-        if (!sceneConfig)
-            return;
+		XMLNode* node = XMLParser::SearchNode(root, "gameTitle");
+		if (node == nullptr) {
+			node = XMLParser::SearchNode(root, "name");
+		}
 
-        // TODO: Check existing scene folder and id here to reset them upon reload
-        Scene::ActiveCategory = 0;
-        Application::StartSceneNum = 0;
+		if (node) {
+			XMLParser::CopyTokenToString(
+				node->children[0]->name, GameTitle, sizeof(GameTitle));
+			StringUtils::Copy(GameTitleShort, GameTitle, sizeof(GameTitleShort));
+			shouldSetGameId = true;
+		}
 
-        // Parse Scene List
-        if (SceneInfo::Load(sceneConfig->children[0])) {
-            if (SceneInfo::IsCategoryValid(Scene::ActiveCategory)) {
-                SceneListCategory& category = SceneInfo::Categories[Scene::ActiveCategory];
-                size_t listPos = category.OffsetStart + Application::StartSceneNum;
-                if (listPos < category.OffsetEnd) {
-                    Scene::CurrentSceneInList = listPos;
-                    Scene::SetInfoFromCurrentID();
-                }
-            }
+		node = XMLParser::SearchNode(root, "shortTitle");
+		if (node) {
+			XMLParser::CopyTokenToString(
+				node->children[0]->name, GameTitleShort, sizeof(GameTitleShort));
+			shouldSetGameId = true;
+		}
 
-            Log::Print(Log::LOG_VERBOSE, "Loaded scene list (%d categories, %d scenes)",
-                SceneInfo::Categories.size(), SceneInfo::Entries.size());
-        }
+		node = XMLParser::SearchNode(root, "version");
+		if (node) {
+			std::string versionText = ParseGameVersion(node);
+			if (versionText.size() > 0) {
+				StringUtils::Copy(
+					GameVersion, versionText.c_str(), sizeof(GameVersion));
+			}
+		}
 
-        XMLParser::Free(sceneConfig);
-    }
+		node = XMLParser::SearchNode(root, "description");
+		if (node) {
+			XMLParser::CopyTokenToString(
+				node->children[0]->name, GameDescription, sizeof(GameDescription));
+		}
+
+		node = XMLParser::SearchNode(root, "developer");
+		if (node) {
+			XMLParser::CopyTokenToString(
+				node->children[0]->name, GameDeveloper, sizeof(GameDeveloper));
+			shouldSetGameDevId = true;
+		}
+
+		node = XMLParser::SearchNode(root, "gameIdentifier");
+		if (node) {
+			char* id = XMLParser::TokenToString(node->children[0]->name);
+			if (ValidateAndSetIdentifier("game identifier",
+				    id,
+				    GameIdentifier,
+				    sizeof(GameIdentifier))) {
+				shouldSetGameId = false;
+			}
+
+			Memory::Free(id);
+		}
+
+		node = XMLParser::SearchNode(root, "developerIdentifier");
+		if (node) {
+			char* id = XMLParser::TokenToString(node->children[0]->name);
+			if (ValidateAndSetIdentifier("developer identifier",
+				    id,
+				    DeveloperIdentifier,
+				    sizeof(DeveloperIdentifier))) {
+				shouldSetGameDevId = false;
+			}
+
+			Memory::Free(id);
+		}
+
+		ParseGameConfigBool(root, "useDeveloperIdentifierInPaths", shouldSetGameDevId);
+
+		node = XMLParser::SearchNode(root, "savesDir");
+		if (node) {
+			char* id = XMLParser::TokenToString(node->children[0]->name);
+			ValidateAndSetIdentifier("saves directory", id, SavesDir, sizeof(SavesDir));
+			Memory::Free(id);
+		}
+
+		node = XMLParser::SearchNode(root, "screenshotsPath");
+		if (node) {
+			char* path = XMLParser::TokenToString(node->children[0]->name);
+
+			bool isPathValid = false;
+			if (!Path::IsAbsolute(path) && !StringUtils::StartsWith(path, PATHLOCATION_SCREENSHOTS_URL) && Path::IsValid(path)) {
+				isPathValid = true;
+			}
+
+			if (isPathValid) {
+				StringUtils::Copy(ScreenshotsPath, path, sizeof(ScreenshotsPath));
+			}
+			else {
+				Log::Print(Log::LOG_ERROR,
+					"screenshotsPath \"%s\" is not valid!",
+					path);
+			}
+
+			Memory::Free(path);
+		}
+
+		node = XMLParser::SearchNode(root, "preferencesDir");
+		if (node) {
+			char* id = XMLParser::TokenToString(node->children[0]->name);
+			ValidateAndSetIdentifier("preferences directory",
+				id,
+				PreferencesDir,
+				sizeof(PreferencesDir));
+			Memory::Free(id);
+		}
+	}
+
+	if (shouldSetGameId) {
+		char* id = Application::GenerateIdentifier(GameTitleShort);
+		if (id != nullptr) {
+			StringUtils::Copy(GameIdentifier, id, sizeof(GameIdentifier));
+			Memory::Free(id);
+		}
+	}
+
+	if (shouldSetGameDevId) {
+		char* id = Application::GenerateIdentifier(GameDeveloper);
+		if (id != nullptr) {
+			StringUtils::Copy(DeveloperIdentifier, id, sizeof(DeveloperIdentifier));
+			Memory::Free(id);
+		}
+	}
 }
 
-PUBLIC STATIC bool Application::LoadSettings(const char* filename) {
-    INI* ini = INI::Load(filename);
-    if (ini == nullptr)
-        return false;
+void Application::LoadSceneInfo(int activeCategory, int currentSceneNum, bool keepScene) {
+	XMLNode* sceneConfig = nullptr;
+	int startSceneNum = currentSceneNum;
 
-    StringUtils::Copy(Application::SettingsFile, filename, sizeof(Application::SettingsFile));
+	Scene::ActiveCategory = 0;
+	Scene::CurrentSceneInList = 0;
 
-    if (Application::Settings)
-        Application::Settings->Dispose();
-    Application::Settings = ini;
+	// Open and read SceneConfig
+	if (ResourceManager::ResourceExists("Game/SceneConfig.xml")) {
+		sceneConfig = XMLParser::ParseFromResource("Game/SceneConfig.xml");
+	}
+	else if (ResourceManager::ResourceExists("SceneConfig.xml")) {
+		sceneConfig = XMLParser::ParseFromResource("SceneConfig.xml");
+	}
 
-    return true;
+	// Parse Scene List
+	if (sceneConfig) {
+		if (SceneInfo::Load(sceneConfig->children[0])) {
+			// Read category and starting scene number to be used by the SceneConfig
+			if (Application::GameConfig) {
+				XMLNode* node = Application::GameConfig->children[0];
+				if (node) {
+					// Parse active category
+					if (!ParseGameConfigInt(node,
+						    "activeCategory",
+						    Scene::ActiveCategory)) { // backwards compat
+						char* text =
+							ParseGameConfigText(node, "activeCategory");
+						if (text) {
+							int id = SceneInfo::GetCategoryID(text);
+							if (id >= 0) {
+								Scene::ActiveCategory = id;
+							}
+							Memory::Free(text);
+						}
+					}
+
+					// Parse starting scene
+					ParseGameConfigInt(node,
+						"startSceneNum",
+						startSceneNum); // backwards compat
+
+					char* text = ParseGameConfigText(node, "startscene");
+					if (text) {
+						int id = SceneInfo::GetEntryID(
+							Scene::ActiveCategory, text);
+						if (id >= 0) {
+							startSceneNum = id;
+						}
+						Memory::Free(text);
+					}
+				}
+			}
+
+			if (keepScene) {
+				Scene::ActiveCategory = activeCategory;
+				startSceneNum = currentSceneNum;
+			}
+
+			if (SceneInfo::IsEntryValid(Scene::ActiveCategory, startSceneNum)) {
+				Scene::CurrentSceneInList = startSceneNum;
+			}
+
+			if (StartingScene[0] == '\0' &&
+				SceneInfo::CategoryHasEntries(Scene::ActiveCategory)) {
+				Scene::SetInfoFromCurrentID();
+
+				StringUtils::Copy(StartingScene,
+					SceneInfo::GetFilename(
+						Scene::ActiveCategory, Scene::CurrentSceneInList)
+						.c_str(),
+					sizeof(StartingScene));
+			}
+
+			Log::Print(Log::LOG_VERBOSE,
+				"Loaded scene list (%d categories, %d scenes)",
+				SceneInfo::Categories.size(),
+				SceneInfo::NumTotalScenes);
+		}
+
+		XMLParser::Free(sceneConfig);
+	}
 }
 
-PUBLIC STATIC void Application::ReadSettings() {
-    Application::LoadAudioSettings();
-    Application::LoadDevSettings();
-    Application::LoadKeyBinds();
+void Application::DevNavigateSceneList(bool previous) {
+	if (SceneInfo::Categories.empty() || SceneInfo::NumTotalScenes == 0) {
+		return;
+	}
+
+	int catID = Scene::ActiveCategory;
+	if (catID < 0 || catID >= (int)SceneInfo::Categories.size()) {
+		catID = 0;
+	}
+
+	int entID = Scene::CurrentSceneInList + (previous ? -1 : 1);
+
+	// Navigate Forward
+	if (!previous) {
+		if (entID >= (int)SceneInfo::Categories[catID].Entries.size()) {
+			entID = 0;
+			do {
+				catID = (catID + 1) % SceneInfo::Categories.size();
+			} while (SceneInfo::Categories[catID].Entries.empty());
+		}
+	}
+	// Navigate Backward
+	else if (previous) {
+		if (entID < 0) {
+			do {
+				catID = (catID - 1 + SceneInfo::Categories.size()) % SceneInfo::Categories.size();
+			} while (SceneInfo::Categories[catID].Entries.empty());
+
+			entID = (int)SceneInfo::Categories[catID].Entries.size() - 1;
+		}
+	}
+
+	Scene::ActiveCategory = catID;
+	Scene::CurrentSceneInList = entID;
+
+	const char* categoryName = SceneInfo::Categories[catID].Name;
+	const char* sceneName = SceneInfo::Categories[catID].Entries[entID].Name;
+
+	BenchmarkFrame = 0;
+	BenchmarkCounter = 0.0f;
+	InputManager::ControllerStopRumble();
+	AudioManager::AudioStopAll();
+	AudioManager::ClearMusic();
+	AudioManager::LowPassFilter = 0.0f;
+
+	Scene::SetCurrent(categoryName, sceneName);
+	StringUtils::Copy(Scene::NextScene,
+		SceneInfo::GetFilename(catID, entID).c_str(),
+		sizeof(Scene::NextScene));
 }
 
-PUBLIC STATIC void Application::ReloadSettings() {
-    if (Application::Settings && Application::Settings->Reload())
-        Application::ReadSettings();
+void Application::InitPlayerControls() {
+	InputManager::InitPlayerControls();
+
+	if (Application::DisableDefaultActions) {
+		return;
+	}
+
+	std::unordered_map<std::string, unsigned> actions;
+
+	const char* name[] = {
+		"Up", "Down", "Left", "Right", "A", "B", "C", "X", "Y", "Z", "Start", "Select"};
+	const int keys[] = {Key_UP,
+		Key_DOWN,
+		Key_LEFT,
+		Key_RIGHT,
+		Key_A,
+		Key_S,
+		Key_D,
+		Key_Q,
+		Key_W,
+		Key_E,
+		Key_RETURN,
+		Key_TAB};
+	const int buttons[] = {(int)ControllerButton::DPadUp,
+		(int)ControllerButton::DPadDown,
+		(int)ControllerButton::DPadLeft,
+		(int)ControllerButton::DPadRight,
+		(int)ControllerButton::A,
+		(int)ControllerButton::B,
+		(int)ControllerButton::LeftShoulder,
+		(int)ControllerButton::X,
+		(int)ControllerButton::Y,
+		(int)ControllerButton::RightShoulder,
+		(int)ControllerButton::Start,
+		(int)ControllerButton::Back};
+
+	for (size_t i = 0; i < std::size(name); ++i) {
+		actions[name[i]] = InputManager::RegisterAction(name[i]);
+	}
+
+	if (InputManager::Players.size() < 1) {
+		InputManager::AddPlayer();
+		InputManager::SetPlayerControllerIndex(0, 0);
+	}
+
+	for (size_t p = 0; p < InputManager::Players.size(); ++p) {
+		InputPlayer& player = InputManager::Players[p];
+
+		for (size_t b = 0; b < std::size(name); ++b) {
+			KeyboardBind* keyboardBind = new KeyboardBind(keys[b]);
+			ControllerButtonBind* controllerBind = new ControllerButtonBind(buttons[b]);
+
+			if (!player.GetDefaultBind(actions[name[b]], p)) {
+				if (player.AddDefaultBind(actions[name[b]], keyboardBind) < 0) {
+					delete keyboardBind;
+				}
+
+				if (player.AddDefaultBind(actions[name[b]], controllerBind) < 0) {
+					delete controllerBind;
+				}
+
+				if (strcmp(name[b], "Up") == 0 || strcmp(name[b], "Down") == 0 ||
+					strcmp(name[b], "Left") == 0 ||
+					strcmp(name[b], "Right") == 0) {
+					ControllerAxisBind* axisBind = new ControllerAxisBind();
+					axisBind->AxisDeadzone = 0.0;
+					axisBind->AxisDigitalThreshold =
+						DEFAULT_DIGITAL_AXIS_THRESHOLD;
+
+					if (strcmp(name[b], "Up") == 0) {
+						axisBind->IsAxisNegative = true;
+						axisBind->Axis = (int)ControllerAxis::LeftY;
+					}
+					else if (strcmp(name[b], "Down") == 0) {
+						axisBind->IsAxisNegative = false;
+						axisBind->Axis = (int)ControllerAxis::LeftY;
+					}
+					else if (strcmp(name[b], "Left") == 0) {
+						axisBind->IsAxisNegative = true;
+						axisBind->Axis = (int)ControllerAxis::LeftX;
+					}
+					else if (strcmp(name[b], "Right") == 0) {
+						axisBind->IsAxisNegative = false;
+						axisBind->Axis = (int)ControllerAxis::LeftX;
+					}
+
+					if (player.AddDefaultBind(actions[name[b]], axisBind) < 0) {
+						delete axisBind;
+					}
+				}
+			}
+		}
+
+		player.ResetBinds();
+	}
 }
 
-PUBLIC STATIC void Application::ReloadSettings(const char* filename) {
-    if (Application::LoadSettings(filename))
-        Application::ReadSettings();
+bool Application::LoadSettings(const char* filename) {
+	INI* ini = INI::Load(filename);
+	if (ini == nullptr) {
+		return false;
+	}
+
+	if (filename != Application::SettingsFile) {
+		StringUtils::Copy(
+			Application::SettingsFile, filename, sizeof(Application::SettingsFile));
+	}
+
+	Application::DisposeSettings();
+	Application::Settings = ini;
+
+	return true;
 }
 
-PUBLIC STATIC void Application::InitSettings(const char* filename) {
-    Application::LoadSettings(filename);
+void Application::ReadSettings() {
+	Application::LoadVideoSettings();
+	Application::LoadAudioSettings();
+	Application::LoadDevSettings();
+	Application::LoadKeyBinds();
+}
 
-    // NOTE: If no settings could be loaded, create settings with default values.
-    if (!Application::Settings) {
-        // LoadSettings only records the name of a file it managed to read, and
-        // on a first run there is nothing to read yet. Without this the fresh
-        // settings are given an empty filename, and saving them later writes
-        // nowhere -- the editor's Save Settings button appeared to do nothing
-        // until a config.ini already existed.
-        Application::SetSettingsFilename(filename);
+void Application::ReloadSettings() {
+	// First time load
+	if (Application::Settings == nullptr) {
+		if (Application::SettingsFile[0] == '\0') {
+			StringUtils::Copy(Application::SettingsFile,
+				DEFAULT_SETTINGS_FILENAME,
+				sizeof(Application::SettingsFile));
+		}
 
-        Application::Settings = INI::New(Application::SettingsFile);
+		Application::InitSettings();
+	}
 
-        Application::Settings->SetBool("display", "fullscreen", false);
-        Application::Settings->SetBool("display", "vsync", false);
-    }
+	if (Application::Settings->Reload()) {
+		Application::ReadSettings();
+	}
+}
 
-    int logLevel = 0;
+void Application::ReloadSettings(const char* filename) {
+	if (Application::LoadSettings(filename)) {
+		Application::ReadSettings();
+	}
+}
+
+void Application::InitSettings() {
+	// Create settings with default values.
+	Application::Settings = INI::New(Application::SettingsFile);
+
+	Application::Settings->SetBool("display", "fullscreen", false);
+	Application::Settings->SetInteger("display", "scale", 2);
+	Application::Settings->SetBool("display", "vsync", false);
+	Application::Settings->SetBool("display", "borderless", false);
+	Application::Settings->SetInteger("display", "defaultMonitor", 0);
+	Application::Settings->SetBool("display", "retina", false);
+	Application::Settings->SetInteger("display", "multisample", 0);
+	Application::Settings->SetInteger("display", "frameSkip", DEFAULT_MAX_FRAMESKIP);
+
+#ifdef DEVELOPER_MODE
+	Application::DevMode = true;
+	Application::Settings->SetBool("dev", "devMenu", true);
+	if (!Running) {
+		Application::Settings->SetBool("dev", "writeLogFile", true);
+		Application::Settings->SetBool("dev", "trackMemory", false);
+	}
+	Application::Settings->SetBool("dev", "viewPerformance", false);
+	Application::Settings->SetInteger("dev", "fastForward", 4);
+	int logLevel = 0;
 #ifdef DEBUG
-    logLevel = -1;
+	logLevel = -2;
 #endif
-#ifdef ANDROID
-    logLevel = -1;
- #endif
-    Application::Settings->GetInteger("dev", "logLevel", &logLevel);
-    Application::Settings->GetBool("dev", "trackMemory", &Memory::IsTracking);
-    Log::SetLogLevel(logLevel);
-
-    Application::Settings->GetBool("dev", "autoPerfSnapshots", &AutomaticPerformanceSnapshots);
-    int apsFrameTimeThreshold = 20, apsMinInterval = 5;
-    Application::Settings->GetInteger("dev", "apsMinFrameTime", &apsFrameTimeThreshold);
-    Application::Settings->GetInteger("dev", "apsMinInterval", &apsMinInterval);
-    AutomaticPerformanceSnapshotFrameTimeThreshold = apsFrameTimeThreshold;
-    AutomaticPerformanceSnapshotMinInterval = apsMinInterval;
-
-    Application::Settings->GetBool("display", "vsync", &Graphics::VsyncEnabled);
-    Application::Settings->GetInteger("display", "multisample", &Graphics::MultisamplingEnabled);
-    Application::Settings->GetInteger("display", "defaultMonitor", &Application::DefaultMonitor);
+	Application::Settings->SetInteger("dev", "logLevel", logLevel);
+	Application::Settings->SetBool("dev", "trackMemory", false);
+	Application::Settings->SetBool("dev", "autoPerfSnapshots", false);
+	Application::Settings->SetString("dev", "sceneBrowserMode", "default");
+#endif
 }
-PUBLIC STATIC void Application::SaveSettings() {
-    if (Application::Settings)
-        Application::Settings->Save();
+void Application::SaveSettings() {
+	if (Application::Settings) {
+		Application::Settings->Save();
+	}
 }
-PUBLIC STATIC void Application::SaveSettings(const char* filename) {
-    if (Application::Settings)
-        Application::Settings->Save(filename);
+void Application::SaveSettings(const char* filename) {
+	if (Application::Settings) {
+		Application::Settings->Save(filename);
+	}
 }
-PUBLIC STATIC void Application::SetSettingsFilename(const char* filename) {
-    StringUtils::Copy(Application::SettingsFile, filename, sizeof(Application::SettingsFile));
-    if (Application::Settings)
-        Application::Settings->SetFilename(filename);
+void Application::SetSettingsFilename(const char* filename) {
+	StringUtils::Copy(Application::SettingsFile, filename, sizeof(Application::SettingsFile));
+	if (Application::Settings) {
+		Application::Settings->SetFilename(filename);
+	}
 }
 
-PRIVATE STATIC int Application::HandleAppEvents(void* data, SDL_Event* event) {
-    switch (event->type) {
-        case SDL_APP_TERMINATING:
-            Log::Print(Log::LOG_VERBOSE, "SDL_APP_TERMINATING");
-            Scene::OnEvent(event->type);
-            return 0;
-        case SDL_APP_LOWMEMORY:
-            Log::Print(Log::LOG_VERBOSE, "SDL_APP_LOWMEMORY");
-            Scene::OnEvent(event->type);
-            return 0;
-        case SDL_APP_WILLENTERBACKGROUND:
-            Log::Print(Log::LOG_VERBOSE, "SDL_APP_WILLENTERBACKGROUND");
-            Scene::OnEvent(event->type);
-            return 0;
-        case SDL_APP_DIDENTERBACKGROUND:
-            Log::Print(Log::LOG_VERBOSE, "SDL_APP_DIDENTERBACKGROUND");
-            Scene::OnEvent(event->type);
-            return 0;
-        case SDL_APP_WILLENTERFOREGROUND:
-            Log::Print(Log::LOG_VERBOSE, "SDL_APP_WILLENTERFOREGROUND");
-            Scene::OnEvent(event->type);
-            return 0;
-        case SDL_APP_DIDENTERFOREGROUND:
-            Log::Print(Log::LOG_VERBOSE, "SDL_APP_DIDENTERFOREGROUND");
-            Scene::OnEvent(event->type);
-            return 0;
-        default:
-            return 1;
-    }
+void Application::DisposeSettings() {
+	if (Application::Settings) {
+		Application::Settings->Dispose();
+		Application::Settings = nullptr;
+	}
+}
+
+int Application::HandleAppEvents(void* data, SDL_Event* event) {
+	switch (event->type) {
+	case SDL_APP_TERMINATING:
+		Log::Print(Log::LOG_VERBOSE, "SDL_APP_TERMINATING");
+		Scene::OnEvent(event->type);
+		return 0;
+	case SDL_APP_LOWMEMORY:
+		Log::Print(Log::LOG_VERBOSE, "SDL_APP_LOWMEMORY");
+		Scene::OnEvent(event->type);
+		return 0;
+	case SDL_APP_WILLENTERBACKGROUND:
+		Log::Print(Log::LOG_VERBOSE, "SDL_APP_WILLENTERBACKGROUND");
+		Scene::OnEvent(event->type);
+		return 0;
+	case SDL_APP_DIDENTERBACKGROUND:
+		Log::Print(Log::LOG_VERBOSE, "SDL_APP_DIDENTERBACKGROUND");
+		Scene::OnEvent(event->type);
+		return 0;
+	case SDL_APP_WILLENTERFOREGROUND:
+		Log::Print(Log::LOG_VERBOSE, "SDL_APP_WILLENTERFOREGROUND");
+		Scene::OnEvent(event->type);
+		return 0;
+	case SDL_APP_DIDENTERFOREGROUND:
+		Log::Print(Log::LOG_VERBOSE, "SDL_APP_DIDENTERFOREGROUND");
+		Scene::OnEvent(event->type);
+		return 0;
+	default:
+		return 1;
+	}
+}
+
+bool Application::IsResourcesBrowserAvailable() {
+	VFSProvider* mainVfs = ResourceManager::GetMainResource();
+	if (!mainVfs) {
+		return false;
+	}
+
+	std::string testPath = "Test/path";
+	return mainVfs->TransformFilename(testPath.c_str()) == testPath;
+}
+
+void Application::DrawDevString(const char* string, int x, int y, int align, bool isSelected) {
+	float scaleX = (float)DevMenu.CurrentWindowWidth / Application::WindowWidth;
+	float scaleY = (float)DevMenu.CurrentWindowHeight / Application::WindowHeight;
+
+	TextDrawParams textParams;
+	textParams.FontSize = 15 * scaleX;
+	textParams.Ascent = DefaultFont->Ascent;
+	textParams.Descent = DefaultFont->Descent;
+	textParams.Leading = DefaultFont->Leading;
+
+	float maxW = 0.0, maxH = 0.0;
+	Graphics::MeasureText(DefaultFont, string, &textParams, maxW, maxH);
+	if (align == ALIGN_CENTER) {
+		x -= (maxW / 2) / scaleX;
+	}
+	else if (align == ALIGN_RIGHT) {
+		x -= maxW / scaleX;
+	}
+
+	Graphics::SetBlendColor(0.28125, 0.28125, 0.4375, 1.0);
+	Graphics::DrawText(
+		DefaultFont, string, (x + 0.5) * scaleX, (y + 0.5) * scaleY, &textParams);
+	isSelected ? Graphics::SetBlendColor(0.9375, 0.9375, 0.9375, 1.0)
+		   : Graphics::SetBlendColor(0.5, 0.625, 0.6875, 1.0);
+	Graphics::DrawText(DefaultFont, string, x * scaleX, y * scaleY, &textParams);
+}
+
+void Application::SetBlendColor(int color) {
+	Graphics::SetBlendColor((color >> 16 & 0xFF) / 255.f,
+		(color >> 8 & 0xFF) / 255.f,
+		(color & 0xFF) / 255.f,
+		1.0);
+}
+
+void Application::DrawRectangle(float x, float y, float width, float height, int color, int alpha) {
+	float scaleX = (float)DevMenu.CurrentWindowWidth / Application::WindowWidth;
+	float scaleY = (float)DevMenu.CurrentWindowHeight / Application::WindowHeight;
+
+	Graphics::SetBlendColor((color >> 16 & 0xFF) / 255.f,
+		(color >> 8 & 0xFF) / 255.f,
+		(color & 0xFF) / 255.f,
+		alpha / 256.0f);
+
+	Graphics::FillRectangle(x * scaleX, y * scaleY, width * scaleX, height * scaleY);
+}
+
+void Application::RunDevMenu() {
+	if (DefaultFont == nullptr) {
+		Application::CloseDevMenu();
+		return;
+	}
+
+	SDL_GetWindowSize(
+		Application::Window, &DevMenu.CurrentWindowWidth, &DevMenu.CurrentWindowHeight);
+	Graphics::UpdateOrthoFlipped(DevMenu.CurrentWindowWidth, DevMenu.CurrentWindowHeight);
+	Graphics::SetBlendMode(BlendFactor_SRC_ALPHA,
+		BlendFactor_INV_SRC_ALPHA,
+		BlendFactor_ONE,
+		BlendFactor_INV_SRC_ALPHA);
+
+	Graphics::Save();
+	if (DevMenuActivated) {
+		// Poll for inputs, since the frame did not run
+		InputManager::Poll();
+
+		if (Application::DevMenu.State) {
+			Application::DevMenu.State();
+		}
+	}
+	Graphics::Restore();
+}
+
+void Application::OpenDevMenu() {
+	if (Application::DisableDefaultActions) {
+		return;
+	}
+
+	DevMenu.State = Application::DevMenu_MainMenu;
+	DevMenu.Selection = 0;
+	DevMenu.ScrollPos = 0;
+	DevMenu.SubSelection = 0;
+	DevMenu.SubScrollPos = 0;
+	DevMenu.Timer = 0;
+
+	DevMenu.WindowScale = Application::WindowScale;
+	SDL_GetWindowSize(
+		Application::Window, &DevMenu.CurrentWindowWidth, &DevMenu.CurrentWindowHeight);
+	DevMenu.Fullscreen = Application::WindowFullscreen;
+	DevMenu.WindowBorderless = Application::WindowBorderless;
+
+	if (DevMenu.SceneBrowserMode != SCENEBROWSER_SCENELIST && IsResourcesBrowserAvailable()) {
+		DevMenu.ResourcesBrowserAvailable = true;
+	}
+	else {
+		DevMenu.ResourcesBrowserAvailable = false;
+	}
+
+	AudioManager::AudioPauseAll();
+	AudioManager::Lock();
+	if (AudioManager::MusicStack.size() > 0) {
+		DevMenu.MusicPausedStore = AudioManager::MusicStack[0]->Paused;
+		AudioManager::MusicStack[0]->Paused = true;
+	}
+	AudioManager::Unlock();
+
+	Application::DevMenuActivated = true;
+}
+
+void Application::CloseDevMenu() {
+	Application::DevMenuActivated = false;
+
+	DevMenu.WindowScale = Application::WindowScale;
+	DevMenu.Fullscreen = Application::WindowFullscreen;
+	DevMenu.WindowBorderless = Application::WindowBorderless;
+
+	Application::SaveSettings();
+	Application::LoadAudioSettings();
+
+	AudioManager::AudioUnpauseAll();
+	AudioManager::Lock();
+	if (AudioManager::MusicStack.size() > 0) {
+		AudioManager::MusicStack[0]->Paused = DevMenu.MusicPausedStore;
+		DevMenu.MusicPausedStore = false;
+	}
+	AudioManager::Unlock();
+}
+
+void Application::DevMenu_DrawMainMenu() {
+	const char* selectionNames[] = {"Resume", "Restart", "Scene Select", "Settings", "Exit"};
+
+	DevMenu_DrawTitleBar();
+	DrawRectangle(0, 82, 128, 124, 0x000000, 0xC0);
+	DrawRectangle(144, 82, Application::WindowWidth - 144, 124, 0x000000, 0xC0);
+
+	for (size_t i = 0, y = 109; i < std::size(selectionNames); ++i, y += 14) {
+		DrawDevString(selectionNames[i], 16, y, ALIGN_LEFT, DevMenu.Selection == i);
+	}
+}
+
+void Application::DevMenu_DrawTitleBar() {
+	DrawRectangle(0, 16, Application::WindowWidth, 54, 0x000000, 0xC0);
+	DrawDevString("Hatch Engine Developer Menu",
+		Application::WindowWidth / 2,
+		20,
+		ALIGN_CENTER,
+		true);
+	DrawDevString(GameTitleShort, Application::WindowWidth / 2, 35, ALIGN_CENTER, true);
+}
+
+void Application::DevMenu_MainMenu() {
+	DevMenu_DrawMainMenu();
+
+	char versionDisplay[544];
+	snprintf(versionDisplay,
+		sizeof(versionDisplay),
+		"Engine version %s, game version %s",
+		Application::EngineVersion,
+		Application::GameVersion);
+	DrawDevString(versionDisplay, Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+
+	const char* tooltips[] = {"Resume the game.",
+		"Restart the current scene.",
+		"Navigate to a certain scene.",
+		"Adjust the application's settings.",
+		"Close the application."};
+	DrawDevString(tooltips[DevMenu.Selection], 160, 86, ALIGN_LEFT, true);
+
+	if (DevMenu.Selection == 2 &&
+		SceneInfo::Categories.empty() &&
+		!DevMenu.ResourcesBrowserAvailable) {
+		DrawDevString("Warning: No scene list is loaded.", 160, 101, ALIGN_LEFT, false);
+		DrawDevString("This option is disabled.", 160, 116, ALIGN_LEFT, false);
+	}
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+
+	if ((actionUp != -1 &&
+		    (InputManager::IsActionPressedByAny(actionUp) ||
+			    ((actionUp != -1 && InputManager::IsActionHeldByAny(actionUp)) &&
+				    !DevMenu.Timer))) ||
+		(actionDown != -1 &&
+			(InputManager::IsActionPressedByAny(actionDown) ||
+				((actionDown != -1 &&
+					 InputManager::IsActionHeldByAny(actionDown)) &&
+					!DevMenu.Timer)))) {
+
+		DevMenu.Selection =
+			(DevMenu.Selection +
+				(((actionUp != -1 &&
+					  InputManager::IsActionPressedByAny(actionUp)) ||
+					 (actionUp != -1 &&
+						 InputManager::IsActionHeldByAny(actionUp)))
+						? -1
+						: 1) +
+				(int)std::size(tooltips)) %
+			(int)std::size(tooltips);
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	bool confirm = false;
+	for (const char* action : {"A", "Start"}) {
+		int actionID = InputManager::GetActionID(action);
+		if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+			confirm = true;
+			break;
+		}
+	}
+
+	if (confirm) {
+		switch (DevMenu.Selection) {
+		case 0:
+			CloseDevMenu();
+			break;
+		case 1:
+			CloseDevMenu();
+			BenchmarkFrame = 0;
+			InputManager::ControllerStopRumble();
+			AudioManager::AudioStopAll();
+			AudioManager::ClearMusic();
+			AudioManager::LowPassFilter = 0.0f;
+			Scene::Restart();
+			UpdateWindowTitle();
+			break;
+		case 2:
+			switch (DevMenu.SceneBrowserMode) {
+			case SCENEBROWSER_RESOURCES:
+				DevMenu_OpenResourcesBrowser();
+				break;
+			case SCENEBROWSER_SCENELIST:
+				DevMenu.State = Application::DevMenu_CategorySelectMenu;
+				break;
+			case SCENEBROWSER_DEFAULT:
+				if (SceneInfo::Categories.empty()) {
+					DevMenu_OpenResourcesBrowser();
+				}
+				else {
+					DevMenu.State = Application::DevMenu_CategorySelectMenu;
+				}
+				break;
+			}
+			break;
+		case 3:
+			DevMenu.State = Application::DevMenu_SettingsMenu;
+			break;
+		case 4:
+			Running = false;
+			break;
+		}
+		DevMenu.SubSelection = 0;
+		DevMenu.Timer = 1 * FrameTimeDesired;
+	}
+	else {
+		int actionB = InputManager::GetActionID("B");
+		if (actionB != -1 && InputManager::IsActionPressedByAny(actionB)) {
+			CloseDevMenu();
+		}
+	}
+}
+
+void Application::DevMenu_CategorySelectMenu() {
+	DevMenu_DrawMainMenu();
+
+	if (SceneInfo::Categories.empty()) {
+		DrawDevString("No scene list is loaded!", 160, 86, ALIGN_LEFT, true);
+
+		int actionB = InputManager::GetActionID("B");
+		if (actionB != -1 && InputManager::IsActionPressedByAny(actionB)) {
+			DevMenu.State = DevMenu_MainMenu;
+			DevMenu.SubSelection = 0;
+			DevMenu.Timer = 1 * FrameTimeDesired;
+		}
+		return;
+	}
+
+	DrawDevString(
+		"Select category...", Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+
+	for (size_t i = 0, y = 86; i < 8 && DevMenu.SubScrollPos + i < SceneInfo::Categories.size();
+		i++, y += 14) {
+		DrawDevString(SceneInfo::Categories[DevMenu.SubScrollPos + i].Name,
+			160,
+			y,
+			ALIGN_LEFT,
+			(DevMenu.SubSelection - DevMenu.SubScrollPos) == i);
+	}
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+
+	if ((actionUp != -1 &&
+		    (InputManager::IsActionPressedByAny(actionUp) ||
+			    (InputManager::IsActionHeldByAny(actionUp) && !DevMenu.Timer))) ||
+		(actionDown != -1 &&
+			(InputManager::IsActionPressedByAny(actionDown) ||
+				(InputManager::IsActionHeldByAny(actionDown) && !DevMenu.Timer)))) {
+
+		DevMenu.SubSelection =
+			(DevMenu.SubSelection +
+				(((actionUp != -1 &&
+					  InputManager::IsActionPressedByAny(actionUp)) ||
+					 (actionUp != -1 &&
+						 InputManager::IsActionHeldByAny(actionUp)))
+						? -1
+						: 1) +
+				(int)SceneInfo::Categories.size()) %
+			(int)SceneInfo::Categories.size();
+
+		if (DevMenu.SubSelection >= DevMenu.SubScrollPos) {
+			if (DevMenu.SubSelection > DevMenu.SubScrollPos + 7) {
+				DevMenu.SubScrollPos = DevMenu.SubSelection - 7;
+			}
+		}
+		else {
+			DevMenu.SubScrollPos = DevMenu.SubSelection;
+		}
+
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	bool confirm = false;
+	for (const char* action : {"A", "Start"}) {
+		int actionID = InputManager::GetActionID(action);
+		if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+			confirm = true;
+			break;
+		}
+	}
+
+	if (confirm) {
+		SceneListCategory* list = &SceneInfo::Categories[DevMenu.SubSelection];
+		if (!list->Entries.empty()) {
+			DevMenu.State = DevMenu_SceneSelectMenu;
+			DevMenu.ListPos = DevMenu.SubSelection;
+			DevMenu.SubScrollPos = DevMenu.SubSelection = 0;
+		}
+	}
+	else {
+		int actionB = InputManager::GetActionID("B");
+		if (actionB != -1 && InputManager::IsActionPressedByAny(actionB)) {
+			DevMenu.State = DevMenu_MainMenu;
+			DevMenu.SubSelection = 0;
+			DevMenu.Timer = 1 * FrameTimeDesired;
+		}
+	}
+}
+
+void Application::DevMenu_OpenResourcesBrowser() {
+	if (!DevMenu.ResourcesBrowserAvailable) {
+		return;
+	}
+
+	std::vector<std::string> paths;
+
+	if (Scene::CurrentScene[0] != '\0') {
+		const char* sep = strrchr(Scene::CurrentScene, '/');
+		if (sep) {
+			std::string currentPath = std::string(Scene::CurrentScene);
+			paths.push_back(currentPath.substr(0, sep - Scene::CurrentScene));
+		}
+	}
+
+	paths.push_back("Scenes");
+	paths.push_back("scenes");
+	paths.push_back("Stages");
+	paths.push_back("");
+
+	if (!DevMenu_ResourcesBrowserTryGoToPaths(paths)) {
+		return;
+	}
+
+	DevMenu.State = DevMenu_ResourcesBrowserMenu;
+	DevMenu.SubScrollPos = 0;
+}
+
+bool Application::DevMenu_ResourcesBrowserTryGoToPaths(std::vector<std::string> paths) {
+	for (size_t i = 0; i < paths.size(); i++) {
+		std::string path = paths[i];
+
+		if (!DevMenu_GetDirectories(path.c_str())) {
+			continue;
+		}
+
+		if (ResourcesBrowserNumEntries > 0) {
+			// Add the path components
+			ResourcesBrowserPaths.clear();
+
+			if (path != "") {
+				char* currentPath = StringUtils::Duplicate(path.c_str());
+				while (true) {
+					ResourcesBrowserPaths.insert(ResourcesBrowserPaths.begin(),
+						std::string(currentPath) + "/");
+
+					char* sep = strrchr(currentPath, '/');
+					if (!sep) {
+						break;
+					}
+
+					*sep = '\0';
+				}
+				Memory::Free(currentPath);
+			}
+
+			if (path != "") {
+				ResourcesBrowserEntries.insert(ResourcesBrowserEntries.begin(), PARENT_DIRECTORY);
+			}
+
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool Application::DevMenu_ResourcesBrowserGoToPath(std::string path, std::string parentPath) {
+	if (path == PARENT_DIRECTORY) {
+		ResourcesBrowserPaths.pop_back();
+
+		if (ResourcesBrowserPaths.size() > 0) {
+			path = ResourcesBrowserPaths.back();
+		}
+		else {
+			path = "";
+		}
+	}
+	else {
+		path = parentPath + path;
+
+		ResourcesBrowserPaths.push_back(path);
+	}
+
+	if (!DevMenu_GetDirectories(path.c_str())) {
+		return false;
+	}
+
+	if (ResourcesBrowserPaths.size() > 0) {
+		ResourcesBrowserEntries.insert(ResourcesBrowserEntries.begin(), PARENT_DIRECTORY);
+	}
+
+	return true;
+}
+
+bool Application::DevMenu_GetDirectories(const char* path) {
+	VFSEnumerationOptions options;
+	options.OnlyCurrentDirectory = true;
+
+	VFSProvider* mainVfs = ResourceManager::GetMainResource();
+	if (!mainVfs) {
+		return false;
+	}
+
+	VFSEnumeration enumeration = mainVfs->EnumerateFiles(path, options);
+	VFSEnumerationResult result = enumeration.Result;
+	if (result != VFSEnumerationResult::NO_RESULTS && result != VFSEnumerationResult::SUCCESS) {
+		return false;
+	}
+
+	ResourcesBrowserEntries.clear();
+
+	for (size_t i = 0; i < enumeration.Entries.size(); i++) {
+		ResourcesBrowserEntries.push_back(enumeration.Entries[i]);
+	}
+
+	ResourcesBrowserNumEntries = ResourcesBrowserEntries.size();
+
+	return true;
+}
+
+void Application::DevMenu_ResourcesBrowserMenu() {
+	DevMenu_DrawMainMenu();
+
+	char title[MAX_PATH_LENGTH + 10];
+	std::string currentPath;
+	if (ResourcesBrowserPaths.size() > 0) {
+		currentPath = ResourcesBrowserPaths.back();
+	}
+	snprintf(title, sizeof title, "Browsing /%s", currentPath.c_str());
+
+	DrawDevString(title, Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+
+	for (size_t i = 0, y = 86; i < 8 && DevMenu.SubScrollPos + i < ResourcesBrowserEntries.size();
+		i++, y += 14) {
+		const char* entry = ResourcesBrowserEntries[DevMenu.SubScrollPos + i].c_str();
+		if (strcmp(entry, PARENT_DIRECTORY) == 0) {
+			entry = "Back...";
+		}
+
+		DrawDevString(entry,
+			160,
+			y,
+			ALIGN_LEFT,
+			(DevMenu.SubSelection - DevMenu.SubScrollPos) == i);
+	}
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+
+	if ((actionUp != -1 &&
+		    (InputManager::IsActionPressedByAny(actionUp) ||
+			    (InputManager::IsActionHeldByAny(actionUp) && !DevMenu.Timer))) ||
+		(actionDown != -1 &&
+			(InputManager::IsActionPressedByAny(actionDown) ||
+				(InputManager::IsActionHeldByAny(actionDown) && !DevMenu.Timer)))) {
+
+		DevMenu.SubSelection =
+			(DevMenu.SubSelection +
+				(((actionUp != -1 &&
+					  InputManager::IsActionPressedByAny(actionUp)) ||
+					 (actionUp != -1 &&
+						 InputManager::IsActionHeldByAny(actionUp)))
+						? -1
+						: 1) +
+				(int)ResourcesBrowserEntries.size()) %
+			(int)ResourcesBrowserEntries.size();
+
+		if (DevMenu.SubSelection >= DevMenu.SubScrollPos) {
+			if (DevMenu.SubSelection > DevMenu.SubScrollPos + 7) {
+				DevMenu.SubScrollPos = DevMenu.SubSelection - 7;
+			}
+		}
+		else {
+			DevMenu.SubScrollPos = DevMenu.SubSelection;
+		}
+
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	bool confirm = false;
+	for (const char* action : {"A", "Start"}) {
+		int actionID = InputManager::GetActionID(action);
+		if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+			confirm = true;
+			break;
+		}
+	}
+
+	if (confirm) {
+		std::string path = ResourcesBrowserEntries[DevMenu.SubSelection];
+
+		if (path.back() == '/' || path == PARENT_DIRECTORY) {
+			std::string parentPath;
+			if (ResourcesBrowserPaths.size() > 0) {
+				parentPath = ResourcesBrowserPaths.back();
+			}
+
+			DevMenu_ResourcesBrowserGoToPath(path, parentPath);
+		}
+		else {
+			if (ResourcesBrowserPaths.size() > 0) {
+				path = ResourcesBrowserPaths.back() + path;
+			}
+
+			Scene::ChangeFromPath(path.c_str(), -1);
+			StringUtils::Copy(Scene::NextScene,
+				path.c_str(),
+				sizeof(Scene::NextScene));
+
+			DevMenu_CloseResourcesBrowser();
+			CloseDevMenu();
+			AudioManager::AudioStopAll();
+			AudioManager::ClearMusic();
+			AudioManager::LowPassFilter = 0.0f;
+		}
+
+		DevMenu.SubSelection = 0;
+		DevMenu.SubScrollPos = 0;
+	}
+	else {
+		int actionB = InputManager::GetActionID("B");
+		if (actionB != -1 && InputManager::IsActionPressedByAny(actionB)) {
+			DevMenu_CloseResourcesBrowser();
+
+			DevMenu.State = DevMenu_MainMenu;
+			DevMenu.SubSelection = 0;
+			DevMenu.Timer = 1 * FrameTimeDesired;
+		}
+	}
+}
+
+void Application::DevMenu_CloseResourcesBrowser() {
+	ResourcesBrowserEntries.clear();
+	ResourcesBrowserPaths.clear();
+}
+
+void Application::DevMenu_SceneSelectMenu() {
+	DevMenu_DrawMainMenu();
+
+	SceneListCategory* list = &SceneInfo::Categories[DevMenu.ListPos];
+
+	char buffer[256];
+	snprintf(buffer, sizeof(buffer), "Select scene in the %s category...", list->Name);
+	DrawDevString(buffer, Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+	
+	for (size_t i = 0, y = 86; i < 8 && DevMenu.SubScrollPos + i < list->Entries.size();
+		i++, y += 14) {
+		DrawDevString(list->Entries[DevMenu.SubScrollPos + i].Name,
+			160,
+			y,
+			ALIGN_LEFT,
+			DevMenu.SubSelection - DevMenu.SubScrollPos == i);
+	}
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+	int actionLeft = InputManager::GetActionID("Left");
+	int actionRight = InputManager::GetActionID("Right");
+
+	bool moveUp = actionUp != -1 && (InputManager::IsActionPressedByAny(actionUp) || (InputManager::IsActionHeldByAny(actionUp) && !DevMenu.Timer));
+	bool moveDown = actionDown != -1 && (InputManager::IsActionPressedByAny(actionDown) || (InputManager::IsActionHeldByAny(actionDown) && !DevMenu.Timer));
+	bool moveLeft = actionLeft != -1 && (InputManager::IsActionPressedByAny(actionLeft) || (InputManager::IsActionHeldByAny(actionLeft) && !DevMenu.Timer));
+	bool moveRight = actionRight != -1 && (InputManager::IsActionPressedByAny(actionRight) || (InputManager::IsActionHeldByAny(actionRight) && !DevMenu.Timer));
+
+	if (moveUp || moveDown || moveLeft || moveRight) {
+		int moveAmount = 0;
+		if (moveUp)
+			moveAmount = -1;
+		else if (moveDown)
+			moveAmount = 1;
+		else if (moveLeft)
+			moveAmount = -10;
+		else if (moveRight)
+			moveAmount = 10;
+
+		int listSize = (int)list->Entries.size();
+
+		DevMenu.SubSelection = ((DevMenu.SubSelection + moveAmount) % listSize + listSize) % listSize;
+
+		if (DevMenu.SubSelection >= DevMenu.SubScrollPos) {
+			if (DevMenu.SubSelection > DevMenu.SubScrollPos + 7) {
+				DevMenu.SubScrollPos = DevMenu.SubSelection - 7;
+			}
+		}
+		else {
+			DevMenu.SubScrollPos = DevMenu.SubSelection;
+		}
+
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	bool confirm = false;
+	for (const char* action : {"A", "Start"}) {
+		int actionID = InputManager::GetActionID(action);
+		if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+			confirm = true;
+			break;
+		}
+	}
+
+	if (confirm) {
+		CloseDevMenu();
+		AudioManager::AudioStopAll();
+		AudioManager::ClearMusic();
+		AudioManager::LowPassFilter = 0.0f;
+
+		const char* categoryName = list->Name;
+		const char* sceneName = list->Entries[DevMenu.SubSelection].Name;
+
+		int categoryID = SceneInfo::GetCategoryID(categoryName);
+		int entryID = SceneInfo::GetEntryID(categoryName, sceneName);
+		if (categoryID < 0 || entryID < 0) {
+			return;
+		}
+
+		Scene::SetCurrent(categoryName, sceneName);
+		StringUtils::Copy(Scene::NextScene,
+			SceneInfo::GetFilename(categoryID, DevMenu.SubSelection).c_str(),
+			sizeof(Scene::NextScene));
+	}
+	else {
+		int actionB = InputManager::GetActionID("B");
+		if (actionB != -1 && InputManager::IsActionPressedByAny(actionB)) {
+			DevMenu.State = DevMenu_CategorySelectMenu;
+			DevMenu.SubScrollPos = DevMenu.SubSelection = 0;
+			DevMenu.ListPos = 1;
+		}
+	}
+}
+
+void Application::DevMenu_SettingsMenu() {
+	DevMenu_DrawMainMenu();
+
+	DrawDevString("Change settings...", Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+
+	const char* browserMode[] = { "(Default)", "(Resources)", "(Scene List)" };
+	const char* browserModeConfig[] = { "default", "resources", "scenelist" };
+
+	std::string labels[] = {
+		"Video Settings",
+		"Audio Settings",
+		std::string("Performance Viewer ") + (ViewPerformance ? "(On)" : "(Off)"),
+		std::string("Tile Collision Viewer (Path A) ") +
+			((Scene::ShowTileCollisionFlag == 1) ? "(On)" : "(Off)"),
+		std::string("Tile Collision Viewer (Path B) ") +
+			((Scene::ShowTileCollisionFlag == 2) ? "(On)" : "(Off)"),
+		std::string("Object Region Viewer ") +
+			(Scene::ShowObjectRegions ? "(On)" : "(Off)"),
+		std::string("Hitbox Viewer ") + (Scene::ShowHitboxes ? "(On)" : "(Off)"),
+		std::string("Scene Browser Mode ") + browserMode[DevMenu.SceneBrowserMode]
+	};
+	for (size_t i = 0, y = 86; i < std::size(labels); i++, y += 14) {
+		DrawDevString(labels[i].c_str(), 160, y, ALIGN_LEFT, DevMenu.SubSelection == i);
+	}
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+
+	if ((actionUp != -1 &&
+		    (InputManager::IsActionPressedByAny(actionUp) ||
+			    (InputManager::IsActionHeldByAny(actionUp) && !DevMenu.Timer))) ||
+		(actionDown != -1 &&
+			(InputManager::IsActionPressedByAny(actionDown) ||
+				(InputManager::IsActionHeldByAny(actionDown) && !DevMenu.Timer)))) {
+
+		DevMenu.SubSelection =
+			(DevMenu.SubSelection +
+				(((actionUp != -1 &&
+					  InputManager::IsActionPressedByAny(actionUp)) ||
+					 (actionUp != -1 &&
+						 InputManager::IsActionHeldByAny(actionUp)))
+						? -1
+						: 1) +
+				(int)std::size(labels)) %
+			(int)std::size(labels);
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	bool confirm = false;
+	for (const char* action : {"A", "Start"}) {
+		int actionID = InputManager::GetActionID(action);
+		if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+			confirm = true;
+			break;
+		}
+	}
+
+	if (confirm) {
+		switch (DevMenu.SubSelection) {
+		case 0: // Video Menu
+			DevMenu.State = DevMenu_VideoMenu;
+			DevMenu.SubSelection = 0;
+			break;
+		case 1: // Audio Menu
+			DevMenu.State = DevMenu_AudioMenu;
+			DevMenu.SubSelection = 0;
+			break;
+		case 2: // Performance Viewer
+			ViewPerformance = !ViewPerformance;
+			break;
+		case 3: // Tile Collision Viewer (Path A)
+			Scene::ShowTileCollisionFlag = (Scene::ShowTileCollisionFlag == 1) ? 0 : 1;
+			Application::UpdateWindowTitle();
+			break;
+		case 4: // Tile Collision Viewer (Path B)
+			Scene::ShowTileCollisionFlag = (Scene::ShowTileCollisionFlag == 2) ? 0 : 2;
+			Application::UpdateWindowTitle();
+			break;
+		case 5: // Object Region Viewer
+			Scene::ShowObjectRegions ^= 1;
+			break;
+		case 6: // Hitbox Viewer
+			Scene::ShowHitboxes ^= 1;
+			break;
+		case 7: // Scene Browser Mode
+			DevMenu.SceneBrowserMode = (DevMenu.SceneBrowserMode + 1) % 3;
+			Application::Settings->SetString("dev", "sceneBrowserMode", browserModeConfig[DevMenu.SceneBrowserMode]);
+			break;
+		}
+	}
+	else {
+		int actionB = InputManager::GetActionID("B");
+		if (actionB != -1 && InputManager::IsActionPressedByAny(actionB)) {
+			DevMenu.State = DevMenu_MainMenu;
+			DevMenu.SubSelection = 0;
+		}
+	}
+}
+
+void Application::DevMenu_VideoMenu() {
+	DevMenu_DrawTitleBar();
+
+	DrawDevString(
+		"Change video settings...", Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+	DrawRectangle((Application::WindowWidth / 2) - 140, 82, 280, 124, 0x000000, 0xC0);
+
+	const char* labels[] = {"Window Scale", "Fullscreen", "Borderless"};
+	for (size_t i = 0; i < std::size(labels); i++) {
+		DrawDevString(labels[i],
+			(Application::WindowWidth / 2) - 124,
+			105 + (i * 16),
+			ALIGN_LEFT,
+			DevMenu.SubSelection == i);
+	}
+
+	DrawDevString("Confirm",
+		Application::WindowWidth / 2,
+		161,
+		ALIGN_CENTER,
+		DevMenu.SubSelection == std::size(labels));
+	DrawDevString("Cancel",
+		Application::WindowWidth / 2,
+		177,
+		ALIGN_CENTER,
+		DevMenu.SubSelection == std::size(labels) + 1);
+
+	char scale[2];
+	snprintf(scale, sizeof scale, "%d", DevMenu.WindowScale);
+	DrawDevString(scale,
+		(Application::WindowWidth / 2) + 80,
+		105,
+		ALIGN_CENTER,
+		DevMenu.SubSelection == 0);
+	DrawDevString(DevMenu.Fullscreen ? "YES" : "NO",
+		(Application::WindowWidth / 2) + 80,
+		121,
+		ALIGN_CENTER,
+		DevMenu.SubSelection == 1);
+	DrawDevString(DevMenu.WindowBorderless ? "YES" : "NO",
+		(Application::WindowWidth / 2) + 80,
+		137,
+		ALIGN_CENTER,
+		DevMenu.SubSelection == 2);
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+
+	if ((actionUp != -1 &&
+		    (InputManager::IsActionPressedByAny(actionUp) ||
+			    (InputManager::IsActionHeldByAny(actionUp) && !DevMenu.Timer))) ||
+		(actionDown != -1 &&
+			(InputManager::IsActionPressedByAny(actionDown) ||
+				(InputManager::IsActionHeldByAny(actionDown) && !DevMenu.Timer)))) {
+
+		DevMenu.SubSelection =
+			(DevMenu.SubSelection +
+				(((actionUp != -1 &&
+					  InputManager::IsActionPressedByAny(actionUp)) ||
+					 (actionUp != -1 &&
+						 InputManager::IsActionHeldByAny(actionUp)))
+						? -1
+						: 1) +
+				(int)std::size(labels) + 2) %
+			((int)std::size(labels) + 2);
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	switch (DevMenu.SubSelection) {
+	case 0: { // Scale
+		const char* dir =
+			InputManager::IsActionPressedByAny(InputManager::GetActionID("Left"))
+			? "Left"
+			: InputManager::IsActionPressedByAny(InputManager::GetActionID("Right"))
+			? "Right"
+			: nullptr;
+		if (dir) {
+			DevMenu.WindowScale += (dir[0] == 'L') ? -1 : 1;
+			DevMenu.WindowScale = (DevMenu.WindowScale + 7) % 8 + 1;
+		}
+		break;
+	}
+	case 1: // Fullscreen
+	case 2: { // Borderless
+		if (InputManager::IsActionPressedByAny(InputManager::GetActionID("Left")) ||
+			InputManager::IsActionPressedByAny(InputManager::GetActionID("Right"))) {
+			DevMenu.SubSelection == 1 ? DevMenu.Fullscreen ^= 1
+						  : DevMenu.WindowBorderless ^= 1;
+		}
+		break;
+	}
+	case 3: // Confirm
+	case 4: { // Cancel
+		bool confirm = false;
+		for (const char* action : {"A", "Start"}) {
+			int actionID = InputManager::GetActionID(action);
+			if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+				confirm = true;
+				break;
+			}
+		}
+
+		if (confirm) {
+			if (DevMenu.SubSelection == 3) { // Confirm
+				Application::SetWindowFullscreen(DevMenu.Fullscreen);
+				Application::SetWindowBorderless(DevMenu.WindowBorderless);
+				if (Application::IsWindowResizeable()) {
+					Application::SetWindowScale(DevMenu.WindowScale);
+				}
+			}
+			else { // Cancel
+				DevMenu.WindowScale = Application::WindowScale;
+				DevMenu.Fullscreen = Application::WindowFullscreen;
+				DevMenu.WindowBorderless = Application::WindowBorderless;
+			}
+			DevMenu.State = DevMenu_SettingsMenu;
+			DevMenu.SubSelection = 0;
+		}
+		break;
+	}
+	}
+}
+
+void Application::DevMenu_AudioMenu() {
+	DevMenu_DrawTitleBar();
+
+	DrawDevString(
+		"Change audio settings...", Application::WindowWidth / 2, 50, ALIGN_CENTER, true);
+	DrawRectangle((Application::WindowWidth / 2) - 140, 82, 280, 124, 0x000000, 0xC0);
+
+	const char* labels[] = {"Master Volume", "Music Volume", "Sound Volume"};
+	const char* keys[] = {"masterVolume", "musicVolume", "soundVolume"};
+	for (size_t i = 0; i < std::size(labels); i++) {
+		DrawDevString(labels[i],
+			(Application::WindowWidth / 2) - 124,
+			105 + (i * 16),
+			ALIGN_LEFT,
+			DevMenu.SubSelection == i);
+	}
+
+	DrawDevString("Confirm",
+		Application::WindowWidth / 2,
+		169,
+		ALIGN_CENTER,
+		DevMenu.SubSelection == std::size(labels));
+
+	for (size_t i = 0, y = 105; i < std::size(labels); i++, y += 16) {
+		DrawRectangle(
+			(Application::WindowWidth / 2.0) + 22.0, y, 104.0, 15.0, 0x303030, 0xC0);
+		DrawRectangle((Application::WindowWidth / 2.0) + 24.0,
+			y + 2,
+			(float)((int*)&Application::MasterVolume)[i],
+			11.0,
+			0xFFFFFF,
+			0xC0);
+	}
+
+	int actionUp = InputManager::GetActionID("Up");
+	int actionDown = InputManager::GetActionID("Down");
+
+	if ((actionUp != -1 &&
+		    (InputManager::IsActionPressedByAny(actionUp) ||
+			    (InputManager::IsActionHeldByAny(actionUp) && !DevMenu.Timer))) ||
+		(actionDown != -1 &&
+			(InputManager::IsActionPressedByAny(actionDown) ||
+				(InputManager::IsActionHeldByAny(actionDown) && !DevMenu.Timer)))) {
+
+		DevMenu.SubSelection = (DevMenu.SubSelection +
+					       ((InputManager::IsActionPressedByAny(actionUp) ||
+							InputManager::IsActionHeldByAny(actionUp))
+							       ? -1
+							       : 1) +
+					       (int)std::size(labels) + 1) %
+			((int)std::size(labels) + 1);
+		DevMenu.Timer = 8 * FrameTimeDesired;
+	}
+
+	if (DevMenu.Timer > 0) {
+		DevMenu.Timer = std::max(DevMenu.Timer - DeltaTime, 0.0);
+	}
+
+	const char* volumeDirs[] = {"Left", "Right"};
+	for (const char* dir : volumeDirs) {
+		int actionID = InputManager::GetActionID(dir);
+		if (actionID != -1 &&
+			(InputManager::IsActionPressedByAny(actionID) ||
+				(InputManager::IsActionHeldByAny(actionID)))) {
+			if (DevMenu.SubSelection < std::size(labels)) {
+				int& volume = DevMenu.SubSelection == 0 ? Application::MasterVolume
+					: DevMenu.SubSelection == 1     ? Application::MusicVolume
+									: Application::SoundVolume;
+				volume = std::clamp(volume + (dir[0] == 'L' ? -1 : 1), 0, 100);
+				DevMenu.Timer = 8;
+				Application::Settings->SetInteger(
+					"audio", keys[DevMenu.SubSelection], volume);
+			}
+		}
+	}
+
+	bool confirm = false;
+	for (const char* action : {"A", "Start"}) {
+		int actionID = InputManager::GetActionID(action);
+		if (actionID != -1 && InputManager::IsActionPressedByAny(actionID)) {
+			confirm = true;
+			break;
+		}
+	}
+
+	if (DevMenu.SubSelection == std::size(labels) && confirm) {
+		Application::LoadAudioSettings();
+		DevMenu.State = DevMenu_SettingsMenu;
+		DevMenu.SubSelection = 1;
+		DevMenu.Timer = 1 * FrameTimeDesired;
+	}
 }

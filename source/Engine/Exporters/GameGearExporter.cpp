@@ -1,15 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/GameGearTypes.h>
-
-need_t SceneLayer;
-
-class GameGearExporter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/SegaSceneArt.h>
 
@@ -18,7 +6,7 @@ public:
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Scene.h>
 #include <Engine/Scene/SceneEnums.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a Game Gear can show.
@@ -46,7 +34,7 @@ static int                     ColorsMapped;
 
 // Rounded into the twelve bits the VDP keeps, then spread back over the full
 // range so comparisons happen in the space it will land in.
-PRIVATE STATIC Uint32 GameGearExporter::QuantizeColor(Uint32 native) {
+Uint32 GameGearExporter::QuantizeColor(Uint32 native) {
     Uint32 pixel = SegaSceneArt::ToARGB(native);
 
     if (((pixel >> 24) & 0xFF) < 128)
@@ -59,7 +47,7 @@ PRIVATE STATIC Uint32 GameGearExporter::QuantizeColor(Uint32 native) {
     return (r << 16) | (g << 8) | b;
 }
 
-PRIVATE STATIC long GameGearExporter::ColorDistance(Uint32 a, Uint32 b) {
+long GameGearExporter::ColorDistance(Uint32 a, Uint32 b) {
     long dr = (long)((a >> 16) & 0xFF) - (long)((b >> 16) & 0xFF);
     long dg = (long)((a >> 8) & 0xFF) - (long)((b >> 8) & 0xFF);
     long db = (long)(a & 0xFF) - (long)(b & 0xFF);
@@ -70,7 +58,7 @@ PRIVATE STATIC long GameGearExporter::ColorDistance(Uint32 a, Uint32 b) {
 // Cuts the layer into cells. Source tiles are usually 16x16, so each becomes
 // four; a flipped source tile is read from the far side here rather than being
 // left to the nametable, whose flip bits are spent on pattern reuse instead.
-PRIVATE STATIC void GameGearExporter::BuildCells(SceneLayer* layer, int mapW, int mapH) {
+void GameGearExporter::BuildCells(TileLayer* layer, int mapW, int mapH) {
     int cellsPerTileX = Scene::TileWidth / GG_TILE_SIZE;
     int cellsPerTileY = Scene::TileHeight / GG_TILE_SIZE;
 
@@ -134,7 +122,7 @@ PRIVATE STATIC void GameGearExporter::BuildCells(SceneLayer* layer, int mapW, in
     }
 }
 
-PRIVATE STATIC void GameGearExporter::CellColors(GameGearCell* cell, vector<Uint32>* out) {
+void GameGearExporter::CellColors(GameGearCell* cell, vector<Uint32>* out) {
     out->clear();
 
     for (int i = 0; i < GG_TILE_SIZE * GG_TILE_SIZE; i++) {
@@ -155,7 +143,7 @@ PRIVATE STATIC void GameGearExporter::CellColors(GameGearCell* cell, vector<Uint
     }
 }
 
-PRIVATE STATIC int GameGearExporter::MissingFrom(GameGearPalette* palette, vector<Uint32>* colors) {
+int GameGearExporter::MissingFrom(GameGearPalette* palette, vector<Uint32>* colors) {
     int missing = 0;
 
     for (size_t i = 0; i < colors->size(); i++) {
@@ -177,7 +165,7 @@ PRIVATE STATIC int GameGearExporter::MissingFrom(GameGearPalette* palette, vecto
 // Hands each cell a palette, first fit. Two palettes of fifteen is thirty
 // colours for a whole screen, which is tight -- the Mega Drive has sixty-one --
 // so a scene drawn for a bigger machine will spend some of its colours here.
-PRIVATE STATIC void GameGearExporter::AssignPalettes() {
+void GameGearExporter::AssignPalettes() {
     for (int i = 0; i < GG_PALETTE_COUNT; i++)
         Palettes[i].Count = 0;
 
@@ -278,7 +266,7 @@ PRIVATE STATIC void GameGearExporter::AssignPalettes() {
 // holds bit b of each of its eight pixels -- leftmost pixel in the high bit.
 // This is where the Mega Drive's packed nibbles and this machine's bitplanes
 // part company.
-PRIVATE STATIC void GameGearExporter::PackCell(GameGearCell* cell, GameGearTile* out) {
+void GameGearExporter::PackCell(GameGearCell* cell, GameGearTile* out) {
     GameGearPalette* palette = &Palettes[cell->Palette];
 
     memset(out->Data, 0, GG_TILE_BYTES);
@@ -320,7 +308,7 @@ PRIVATE STATIC void GameGearExporter::PackCell(GameGearCell* cell, GameGearTile*
     }
 }
 
-PRIVATE STATIC void GameGearExporter::FlipTile(GameGearTile* in, bool flipX, bool flipY, GameGearTile* out) {
+void GameGearExporter::FlipTile(GameGearTile* in, bool flipX, bool flipY, GameGearTile* out) {
     memset(out->Data, 0, GG_TILE_BYTES);
 
     for (int y = 0; y < GG_TILE_SIZE; y++) {
@@ -339,7 +327,7 @@ PRIVATE STATIC void GameGearExporter::FlipTile(GameGearTile* in, bool flipX, boo
 
 // A nametable entry carries a flip bit per axis, so a mirrored pattern costs
 // only the entry naming it.
-PRIVATE STATIC int GameGearExporter::AddPattern(GameGearTile* tile, bool* flipX, bool* flipY) {
+int GameGearExporter::AddPattern(GameGearTile* tile, bool* flipX, bool* flipY) {
     GameGearTile variant;
 
     for (int orientation = 0; orientation < 4; orientation++) {
@@ -365,7 +353,7 @@ PRIVATE STATIC int GameGearExporter::AddPattern(GameGearTile* tile, bool* flipX,
     return (int)Patterns.size() - 1;
 }
 
-PRIVATE STATIC bool GameGearExporter::WriteBinary(const char* path, const void* data, size_t size) {
+bool GameGearExporter::WriteBinary(const char* path, const void* data, size_t size) {
     FILE* f = fopen(path, "wb");
     if (!f)
         return false;
@@ -376,7 +364,7 @@ PRIVATE STATIC bool GameGearExporter::WriteBinary(const char* path, const void* 
     return ok;
 }
 
-PRIVATE STATIC bool GameGearExporter::WriteText(const char* path, const char* text) {
+bool GameGearExporter::WriteText(const char* path, const char* text) {
     FILE* f = fopen(path, "w");
     if (!f)
         return false;
@@ -387,11 +375,11 @@ PRIVATE STATIC bool GameGearExporter::WriteText(const char* path, const char* te
     return ok;
 }
 
-PUBLIC STATIC GameGearExportResult GameGearExporter::ExportScene(const char* outputPath) {
+GameGearExportResult GameGearExporter::ExportScene(const char* outputPath) {
     GameGearExportResult result;
     memset(&result, 0, sizeof(result));
 
-    SceneLayer* layer = SegaSceneArt::PickLayer();
+    TileLayer* layer = SegaSceneArt::PickLayer();
     if (!layer) {
         StringUtils::Copy(result.Message, "The scene has no visible tile layer to export.", sizeof(result.Message));
         return result;
@@ -482,7 +470,7 @@ PUBLIC STATIC GameGearExportResult GameGearExporter::ExportScene(const char* out
     return result;
 }
 
-PRIVATE STATIC bool GameGearExporter::WriteProject(const char* outputPath, GameGearExportResult* result) {
+bool GameGearExporter::WriteProject(const char* outputPath, GameGearExportResult* result) {
     char path[1024];
 
     const char* dirs[2] = { "", "/res" };
@@ -550,7 +538,7 @@ PRIVATE STATIC bool GameGearExporter::WriteProject(const char* outputPath, GameG
 // SDCC has no .incbin, so the data becomes C arrays. They are streamed rather
 // than built in memory first: a map is two bytes a cell and a large scene runs
 // to hundreds of thousands of them.
-PRIVATE STATIC bool GameGearExporter::WriteDataArrays(const char* outputPath, GameGearExportResult* result) {
+bool GameGearExporter::WriteDataArrays(const char* outputPath, GameGearExportResult* result) {
     char path[1024];
 
     snprintf(path, sizeof(path), "%s/res/data.c", outputPath);
@@ -637,7 +625,7 @@ PRIVATE STATIC bool GameGearExporter::WriteDataArrays(const char* outputPath, Ga
     return true;
 }
 
-PRIVATE STATIC bool GameGearExporter::WriteSources(const char* outputPath, GameGearExportResult* result) {
+bool GameGearExporter::WriteSources(const char* outputPath, GameGearExportResult* result) {
     char path[1024];
     char text[6144];
 

@@ -1,74 +1,156 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Bytecode/Types.h>
-
-class MapImpl {
-public:
-    static ObjClass *Class;
-};
-#endif
-
-#include <Engine/Bytecode/TypeImpl/MapImpl.h>
 #include <Engine/Bytecode/ScriptManager.h>
 #include <Engine/Bytecode/StandardLibrary.h>
+#include <Engine/Bytecode/TypeImpl/MapImpl.h>
+#include <Engine/Bytecode/TypeImpl/TypeImpl.h>
+#include <Engine/Bytecode/Value.h>
+
+/***
+* \class Map
+* \desc An associative array, also known as a dictionary, or a map.
+*/
 
 ObjClass* MapImpl::Class = nullptr;
 
-PUBLIC STATIC void MapImpl::Init() {
-    const char *name = "$$MapImpl";
+void MapImpl::Init() {
+	Class = NewClass("Map");
+	Class->NewFn = Constructor;
 
-    Class = NewClass(Murmur::EncryptString(name));
-    Class->Name = CopyString(name);
+	ScriptManager::DefineNative(Class, "Length", MapImpl::VM_Length);
+	ScriptManager::DefineNative(Class, "GetKeys", MapImpl::VM_GetKeys);
+	ScriptManager::DefineNative(Class, "keys", MapImpl::VM_GetKeys);
+	ScriptManager::DefineNative(Class, "Remove", MapImpl::VM_Remove);
+	ScriptManager::DefineNative(Class, "remove", MapImpl::VM_Remove);
+	ScriptManager::DefineNative(Class, "Clear", MapImpl::VM_Clear);
+	ScriptManager::DefineNative(Class, "iterate", MapImpl::VM_Iterate);
+	ScriptManager::DefineNative(Class, "iteratorValue", MapImpl::VM_IteratorValue);
 
-    ScriptManager::DefineNative(Class, "keys", MapImpl::VM_GetKeys);
-    ScriptManager::DefineNative(Class, "iterate", MapImpl::VM_Iterate);
-    ScriptManager::DefineNative(Class, "iteratorValue", MapImpl::VM_IteratorValue);
+	TypeImpl::RegisterClass(Class);
+	TypeImpl::ExposeClass(Class);
+}
 
-    ScriptManager::ClassImplList.push_back(Class);
+/***
+ * \constructor
+ * \desc Creates a map.
+ * \ns Map
+ */
+Obj* MapImpl::Constructor() {
+	ObjMap* map = (ObjMap*)AllocateObject(sizeof(ObjMap), OBJ_MAP);
+	Memory::Track(map, "NewMap");
+	map->Object.Class = Class;
+	map->Values = new OrderedHashMap<VMValue>(NULL, 4);
+	map->Keys = new OrderedHashMap<VMValue>(NULL, 4);
+	return (Obj*)map;
+}
+
+void MapImpl::Dispose(Obj* object) {
+	ObjMap* map = (ObjMap*)object;
+
+	// Free Keys table
+	delete map->Keys;
+
+	// Free Values table
+	delete map->Values;
 }
 
 #define GET_ARG(argIndex, argFunction) (StandardLibrary::argFunction(args, argIndex, threadID))
 
-PUBLIC STATIC VMValue MapImpl::VM_GetKeys(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 1);
+/***
+ * \method Length
+ * \desc Get the number of items in the map.
+ * \return integer Returns an integer value.
+ * \ns Map
+ */
+VMValue MapImpl::VM_Length(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 1);
 
-    ObjMap* map = GET_ARG(0, GetMap);
+	ObjMap* map = GET_ARG(0, GetMap);
 
-    ObjArray* array = NewArray();
-
-    map->Keys->WithAllOrdered([array](Uint32, char* key) -> void {
-        array->Values->push_back(OBJECT_VAL(CopyString(key)));
-    });
-
-    return OBJECT_VAL(array);
+	return INTEGER_VAL((int)map->Keys->Count());
 }
 
-PUBLIC STATIC VMValue MapImpl::VM_Iterate(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
+/***
+ * \method GetKeys
+ * \desc Gets a list of all keys in the map.
+ * \return array Returns an array of values.
+ * \ns Map
+ */
+VMValue MapImpl::VM_GetKeys(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 1);
 
-    ObjMap* map = GET_ARG(0, GetMap);
+	ObjMap* map = GET_ARG(0, GetMap);
 
-    int key;
-    if (IS_NULL(args[1]))
-        key = map->Values->GetFirstKey();
-    else
-        key = map->Values->GetNextKey(GET_ARG(1, GetInteger));
+	ObjArray* array = NewArray();
 
-    if (key)
-        return INTEGER_VAL(key);
+	map->Keys->WithAllOrdered([array](Uint32, VMValue value) -> void {
+		array->Values->push_back(value);
+	});
 
-    return NULL_VAL;
+	return OBJECT_VAL(array);
 }
 
-PUBLIC STATIC VMValue MapImpl::VM_IteratorValue(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
+/***
+ * \method Remove
+ * \desc Removes a key from the map.
+ * \param key (value): The key to remove.
+ * \ns Map
+ */
+VMValue MapImpl::VM_Remove(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 2);
 
-    ObjMap* map = GET_ARG(0, GetMap);
-    int key = GET_ARG(1, GetInteger);
+	ObjMap* map = GET_ARG(0, GetMap);
+	Uint32 hash = Value::Hash(args[1]);
+	map->Keys->Remove(hash);
+	map->Values->Remove(hash);
 
-    VMValue value;
-    if (map->Values->GetIfExists(key, &value))
-        return value;
+	return NULL_VAL;
+}
 
-    return NULL_VAL;
+/***
+ * \method Clear
+ * \desc Clears the map.
+ * \ns Map
+ */
+VMValue MapImpl::VM_Clear(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 1);
+
+	ObjMap* map = GET_ARG(0, GetMap);
+
+	map->Keys->Clear();
+	map->Values->Clear();
+
+	return NULL_VAL;
+}
+
+VMValue MapImpl::VM_Iterate(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 2);
+
+	ObjMap* map = GET_ARG(0, GetMap);
+
+	int key;
+	if (IS_NULL(args[1])) {
+		key = map->Values->GetFirstKey();
+	}
+	else {
+		key = map->Values->GetNextKey(GET_ARG(1, GetInteger));
+	}
+
+	if (key != 0xFFFFFFFF) {
+		return INTEGER_VAL(key);
+	}
+
+	return NULL_VAL;
+}
+
+VMValue MapImpl::VM_IteratorValue(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 2);
+
+	ObjMap* map = GET_ARG(0, GetMap);
+	int key = GET_ARG(1, GetInteger);
+
+	VMValue value;
+	if (map->Values->GetIfExists(key, &value)) {
+		return value;
+	}
+
+	return NULL_VAL;
 }

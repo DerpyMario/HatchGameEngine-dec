@@ -1,18 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/StandardSDL2.h>
-#include <Engine/Rendering/Texture.h>
-#include <Engine/Scene/View.h>
-
-class UIDraw {
-public:
-    static bool  Initialized;
-    static float Scale;
-    static int   ViewWidth;
-    static int   ViewHeight;
-};
-#endif
-
 #include <Engine/UI/UIDraw.h>
 #include <Engine/UI/UIFontData.h>
 
@@ -50,7 +35,7 @@ static vector<UIClipRect> ClipStack;
 // Builds the font atlas described by UIFontData.h: one 6x8 cell per glyph laid
 // out in a 16x6 grid, white pixels where the glyph is set and transparent
 // everywhere else. Tinting is done at draw time through the blend color.
-PRIVATE STATIC void UIDraw::MakeFontTexture() {
+void UIDraw::MakeFontTexture() {
     const int atlasW = UI_FONT_COLUMNS * UI_FONT_CELL_W;
     const int atlasH = UI_FONT_ROWS * UI_FONT_CELL_H;
 
@@ -76,7 +61,7 @@ PRIVATE STATIC void UIDraw::MakeFontTexture() {
     bool interpolate = Graphics::TextureInterpolate;
     Graphics::SetTextureInterpolation(false);
 
-    FontTexture = Graphics::CreateTextureFromPixels(atlasW, atlasH, pixels, atlasW * sizeof(Uint32));
+    FontTexture = Graphics::CreateTextureFromPixels(TextureFormat_ARGB8888, atlasW, atlasH, pixels, atlasW * sizeof(Uint32));
 
     Graphics::SetTextureInterpolation(interpolate);
 
@@ -86,7 +71,7 @@ PRIVATE STATIC void UIDraw::MakeFontTexture() {
         Log::Print(Log::LOG_ERROR, "Could not create the interface font texture!");
 }
 
-PUBLIC STATIC void UIDraw::Init() {
+void UIDraw::Init() {
     if (UIDraw::Initialized)
         return;
 
@@ -106,7 +91,7 @@ PUBLIC STATIC void UIDraw::Init() {
     UIDraw::Initialized = true;
 }
 
-PUBLIC STATIC void UIDraw::Dispose() {
+void UIDraw::Dispose() {
     if (FontTexture) {
         Graphics::DisposeTexture(FontTexture);
         FontTexture = NULL;
@@ -119,7 +104,7 @@ PUBLIC STATIC void UIDraw::Dispose() {
 
 // Picks an interface scale that keeps text readable on both a small window and
 // a 4K display.
-PUBLIC STATIC float UIDraw::GetAutoScale(int windowHeight) {
+float UIDraw::GetAutoScale(int windowHeight) {
     if (windowHeight >= 1400)
         return 3.0f;
     if (windowHeight >= 700)
@@ -127,7 +112,7 @@ PUBLIC STATIC float UIDraw::GetAutoScale(int windowHeight) {
     return 1.0f;
 }
 
-PUBLIC STATIC void UIDraw::Begin() {
+void UIDraw::Begin() {
     if (InFrame)
         return;
 
@@ -165,7 +150,6 @@ PUBLIC STATIC void UIDraw::Begin() {
     UIView.OutputWidth = (float)windowW;
     UIView.OutputHeight = (float)windowH;
     UIView.ProjectionMatrix = Scene::Views[Scene::ViewCurrent].ProjectionMatrix;
-    UIView.BaseProjectionMatrix = Scene::Views[Scene::ViewCurrent].BaseProjectionMatrix;
 
     Graphics::CurrentView = &UIView;
 
@@ -190,11 +174,11 @@ PUBLIC STATIC void UIDraw::Begin() {
 }
 
 // False when Begin declined to start a frame, which means nothing may be drawn.
-PUBLIC STATIC bool UIDraw::IsInFrame() {
+bool UIDraw::IsInFrame() {
     return InFrame;
 }
 
-PUBLIC STATIC void UIDraw::End() {
+void UIDraw::End() {
     if (!InFrame)
         return;
 
@@ -213,7 +197,7 @@ PUBLIC STATIC void UIDraw::End() {
     InFrame = false;
 }
 
-PRIVATE STATIC void UIDraw::ApplyClip() {
+void UIDraw::ApplyClip() {
     if (!ClipStack.size()) {
         Graphics::ClearClip();
         return;
@@ -223,7 +207,7 @@ PRIVATE STATIC void UIDraw::ApplyClip() {
     Graphics::SetClip(clip.X, clip.Y, clip.Width, clip.Height);
 }
 
-PUBLIC STATIC void UIDraw::PushClip(float x, float y, float w, float h) {
+void UIDraw::PushClip(float x, float y, float w, float h) {
     UIClipRect clip;
     clip.X = (int)x;
     clip.Y = (int)y;
@@ -248,7 +232,7 @@ PUBLIC STATIC void UIDraw::PushClip(float x, float y, float w, float h) {
     UIDraw::ApplyClip();
 }
 
-PUBLIC STATIC void UIDraw::PopClip() {
+void UIDraw::PopClip() {
     if (!ClipStack.size())
         return;
 
@@ -256,7 +240,7 @@ PUBLIC STATIC void UIDraw::PopClip() {
     UIDraw::ApplyClip();
 }
 
-PUBLIC STATIC bool UIDraw::IsClipped(float x, float y, float w, float h) {
+bool UIDraw::IsClipped(float x, float y, float w, float h) {
     if (!ClipStack.size())
         return false;
 
@@ -269,11 +253,11 @@ PUBLIC STATIC bool UIDraw::IsClipped(float x, float y, float w, float h) {
 // starts half a pixel in covers half a pixel less than it should -- enough to
 // drop the last column of a five pixel wide glyph. Everything the interface
 // draws is snapped to whole pixels to keep the text crisp.
-PRIVATE STATIC float UIDraw::Snap(float value) {
+float UIDraw::Snap(float value) {
     return floorf(value + 0.5f);
 }
 
-PRIVATE STATIC void UIDraw::UseColor(Uint32 color) {
+void UIDraw::UseColor(Uint32 color) {
     Graphics::SetBlendColor(
         ((color >> 16) & 0xFF) / 255.0f,
         ((color >> 8) & 0xFF) / 255.0f,
@@ -281,7 +265,7 @@ PRIVATE STATIC void UIDraw::UseColor(Uint32 color) {
         ((color >> 24) & 0xFF) / 255.0f);
 }
 
-PUBLIC STATIC void UIDraw::FillRect(float x, float y, float w, float h, Uint32 color) {
+void UIDraw::FillRect(float x, float y, float w, float h, Uint32 color) {
     if (w <= 0.0f || h <= 0.0f || !(color & 0xFF000000U))
         return;
     if (UIDraw::IsClipped(x, y, w, h))
@@ -302,7 +286,7 @@ PUBLIC STATIC void UIDraw::FillRect(float x, float y, float w, float h, Uint32 c
     Graphics::FillRectangle(left, top, right - left, bottom - top);
 }
 
-PUBLIC STATIC void UIDraw::StrokeRect(float x, float y, float w, float h, Uint32 color) {
+void UIDraw::StrokeRect(float x, float y, float w, float h, Uint32 color) {
     if (w <= 0.0f || h <= 0.0f)
         return;
 
@@ -314,7 +298,7 @@ PUBLIC STATIC void UIDraw::StrokeRect(float x, float y, float w, float h, Uint32
 
 // Draws a rectangle with a lighter top edge and a darker bottom edge, which is
 // what gives buttons and panels their raised look.
-PUBLIC STATIC void UIDraw::BeveledRect(float x, float y, float w, float h, Uint32 fill, Uint32 light, Uint32 dark) {
+void UIDraw::BeveledRect(float x, float y, float w, float h, Uint32 fill, Uint32 light, Uint32 dark) {
     UIDraw::FillRect(x, y, w, h, fill);
     UIDraw::FillRect(x, y, w, 1.0f, light);
     UIDraw::FillRect(x, y, 1.0f, h, light);
@@ -322,15 +306,15 @@ PUBLIC STATIC void UIDraw::BeveledRect(float x, float y, float w, float h, Uint3
     UIDraw::FillRect(x + w - 1.0f, y, 1.0f, h, dark);
 }
 
-PUBLIC STATIC float UIDraw::CharWidth() {
+float UIDraw::CharWidth() {
     return UI_FONT_CELL_W * UIDraw::Scale;
 }
 
-PUBLIC STATIC float UIDraw::LineHeight() {
+float UIDraw::LineHeight() {
     return UI_FONT_CELL_H * UIDraw::Scale;
 }
 
-PUBLIC STATIC float UIDraw::TextWidth(const char* text, float scale) {
+float UIDraw::TextWidth(const char* text, float scale) {
     if (!text)
         return 0.0f;
 
@@ -342,11 +326,11 @@ PUBLIC STATIC float UIDraw::TextWidth(const char* text, float scale) {
     return (length * UI_FONT_CELL_W - 1) * scale;
 }
 
-PUBLIC STATIC float UIDraw::TextWidth(const char* text) {
+float UIDraw::TextWidth(const char* text) {
     return UIDraw::TextWidth(text, UIDraw::Scale);
 }
 
-PUBLIC STATIC float UIDraw::Text(float x, float y, const char* text, Uint32 color, float scale) {
+float UIDraw::Text(float x, float y, const char* text, Uint32 color, float scale) {
     if (!text || !FontTexture)
         return x;
 
@@ -381,21 +365,21 @@ PUBLIC STATIC float UIDraw::Text(float x, float y, const char* text, Uint32 colo
     return penX;
 }
 
-PUBLIC STATIC float UIDraw::Text(float x, float y, const char* text, Uint32 color) {
+float UIDraw::Text(float x, float y, const char* text, Uint32 color) {
     return UIDraw::Text(x, y, text, color, UIDraw::Scale);
 }
 
-PUBLIC STATIC void UIDraw::TextCentered(float centerX, float y, const char* text, Uint32 color, float scale) {
+void UIDraw::TextCentered(float centerX, float y, const char* text, Uint32 color, float scale) {
     UIDraw::Text(centerX - UIDraw::TextWidth(text, scale) / 2.0f, y, text, color, scale);
 }
 
-PUBLIC STATIC void UIDraw::TextRight(float rightX, float y, const char* text, Uint32 color, float scale) {
+void UIDraw::TextRight(float rightX, float y, const char* text, Uint32 color, float scale) {
     UIDraw::Text(rightX - UIDraw::TextWidth(text, scale), y, text, color, scale);
 }
 
 // Draws text cut off at maxWidth, ending in an ellipsis when it doesn't fit.
 // Long file paths and scene names are common enough here to be worth it.
-PUBLIC STATIC void UIDraw::TextClipped(float x, float y, const char* text, Uint32 color, float scale, float maxWidth) {
+void UIDraw::TextClipped(float x, float y, const char* text, Uint32 color, float scale, float maxWidth) {
     if (!text)
         return;
 

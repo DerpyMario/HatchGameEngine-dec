@@ -1,554 +1,610 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Bytecode/CompilerEnums.h>
-#include <Engine/IO/Stream.h>
-#include <Engine/Includes/HashMap.h>
-#include <Engine/TextFormats/XML/XMLNode.h>
-#include <Engine/IO/MemoryStream.h>
-
-class XMLParser {
-public:
-
-};
-#endif
-
 #include <Engine/TextFormats/XML/XMLParser.h>
 
-#include <Engine/Includes/Token.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Diagnostics/Memory.h>
+#include <Engine/Error.h>
 #include <Engine/IO/ResourceStream.h>
-#include <Engine/IO/MemoryStream.h>
+#include <Engine/IO/TextStream.h>
+#include <Engine/Includes/Token.h>
 #include <Engine/Utilities/StringUtils.h>
 
-Parser   parser;
-Scanner  scanner;
+Parser parser;
+Scanner scanner;
 
-bool     IsEOF() {
-    return *scanner.Current == 0;
+bool IsEOF() {
+	return *scanner.Current == 0;
 }
-bool     IsDigit(int c) {
-    return c >= '0' && c <= '9';
+bool IsDigit(int c) {
+	return c >= '0' && c <= '9';
 }
-bool     IsHexDigit(int c) {
-    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+bool IsHexDigit(int c) {
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
 }
-bool     IsAlpha(int c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+bool IsAlpha(int c) {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
-bool     IsIdentifierStart(int c) {
-    return IsAlpha(c) || c == ':' || c == '_' || c >= 0x80;
+bool IsIdentifierStart(int c) {
+	return IsAlpha(c) || c == ':' || c == '_' || c >= 0x80;
 }
-bool     IsIdentifierBody(int c) {
-    return IsIdentifierStart(c) ||
-        c == '-' || c == '.' || ('0'  <= c && c <= '9') ||
-        c == 0xB7 || (0x0300 <= c && c <= 0x036F) || (0x203F <= c && c <= 0x2040);
-}
-
-bool     MatchChar(int expected) {
-    if (IsEOF()) return false;
-    if (*scanner.Current != expected) return false;
-
-    scanner.Current++;
-    return true;
-}
-char     AdvanceChar() {
-    return *scanner.Current++;
-    // scanner.Current++;
-    // return *(scanner.Current - 1);
-}
-char     PrevChar() {
-    return *(scanner.Current - 1);
-}
-char     PeekChar() {
-    return *scanner.Current;
-}
-char     PeekNextChar() {
-    if (IsEOF()) return 0;
-    return *(scanner.Current + 1);
+bool IsIdentifierBody(int c) {
+	return IsIdentifierStart(c) || c == '-' || c == '.' || ('0' <= c && c <= '9') ||
+		c == 0xB7 || (0x0300 <= c && c <= 0x036F) || (0x203F <= c && c <= 0x2040);
 }
 
-void     SkipWhitespace() {
-    while (true) {
-        char c = PeekChar();
-        switch (c) {
-            case ' ':
-            case '\r':
-            case '\t':
-                AdvanceChar();
-                break;
+bool MatchChar(int expected) {
+	if (IsEOF()) {
+		return false;
+	}
+	if (*scanner.Current != expected) {
+		return false;
+	}
 
-            case '\n':
-                scanner.Line++;
-                AdvanceChar();
-                scanner.LinePos = scanner.Current;
-                break;
+	scanner.Current++;
+	return true;
+}
+char AdvanceChar() {
+	return *scanner.Current++;
+	// scanner.Current++;
+	// return *(scanner.Current - 1);
+}
+char PrevChar() {
+	return *(scanner.Current - 1);
+}
+char PeekChar() {
+	return *scanner.Current;
+}
+char PeekNextChar() {
+	if (IsEOF()) {
+		return 0;
+	}
+	return *(scanner.Current + 1);
+}
 
-            default:
-                return;
-        }
-    }
+void SkipWhitespace() {
+	while (true) {
+		char c = PeekChar();
+		switch (c) {
+		case ' ':
+		case '\r':
+		case '\t':
+			AdvanceChar();
+			break;
+
+		case '\n':
+			scanner.Line++;
+			AdvanceChar();
+			scanner.LinePos = scanner.Current;
+			break;
+
+		default:
+			return;
+		}
+	}
 }
 
 // Token functions
 enum {
-    // Single-character tokens.
-    TOKEN_LEFT_BRACE,
-    TOKEN_RIGHT_BRACE,
-    TOKEN_BANG,
-    TOKEN_QUESTION,
-    TOKEN_DASH,
-    TOKEN_SLASH,
-    TOKEN_EQUAL,
-    // Others
-    TOKEN_IDENTIFIER, TOKEN_STRING, TOKEN_NUMBER,
+	// Single-character tokens.
+	TOKEN_LEFT_BRACE,
+	TOKEN_RIGHT_BRACE,
+	TOKEN_BANG,
+	TOKEN_QUESTION,
+	TOKEN_DASH,
+	TOKEN_SLASH,
+	TOKEN_EQUAL,
+	// Others
+	TOKEN_IDENTIFIER,
+	TOKEN_STRING,
+	TOKEN_NUMBER,
 
-    TOKEN_ERROR,
-    TOKEN_EOF,
+	TOKEN_ERROR,
+	TOKEN_EOF,
 
-    // XML Tokens
-    TOKEN_STARTTAG,
-    TOKEN_ENDTAG,
+	// XML Tokens
+	TOKEN_STARTTAG,
+	TOKEN_ENDTAG,
 
-    TOKEN_CHARACTER,
-    TOKEN_CDATA,
+	TOKEN_CHARACTER,
+	TOKEN_CDATA,
 
-    TOKEN_INSTRUCTION,
-    TOKEN_DOCTYPE,
-    TOKEN_COMMENT,
+	TOKEN_INSTRUCTION,
+	TOKEN_DOCTYPE,
+	TOKEN_COMMENT,
 };
-Token    MakeToken(int type) {
-    Token token;
-    token.Type = type;
-    token.Start = scanner.Start;
-    token.Length = (int)(scanner.Current - scanner.Start);
-    token.Line = scanner.Line;
-    token.Pos = (scanner.Start - scanner.LinePos) + 1;
+Token MakeToken(int type) {
+	Token token;
+	token.Type = type;
+	token.Start = scanner.Start;
+	token.Length = (int)(scanner.Current - scanner.Start);
+	token.Line = scanner.Line;
+	token.Pos = (scanner.Start - scanner.LinePos) + 1;
 
-    return token;
+	return token;
 }
-Token    MakeTokenRaw(int type, const char* message) {
-    Token token;
-    token.Type = type;
-    token.Start = (char*)message;
-    token.Length = (int)strlen(message);
-    token.Line = 0;
-    token.Pos = scanner.Current - scanner.LinePos;
+Token MakeTokenRaw(int type, const char* message) {
+	Token token;
+	token.Type = type;
+	token.Start = (char*)message;
+	token.Length = (int)strlen(message);
+	token.Line = 0;
+	token.Pos = scanner.Current - scanner.LinePos;
 
-    return token;
+	return token;
 }
-Token    ErrorToken(const char* message) {
-    Token token;
-    token.Type = TOKEN_ERROR;
-    token.Start = (char*)message;
-    token.Length = (int)strlen(message);
-    token.Line = scanner.Line;
-    token.Pos = scanner.Current - scanner.LinePos;
+Token ErrorToken(const char* message) {
+	Token token;
+	token.Type = TOKEN_ERROR;
+	token.Start = (char*)message;
+	token.Length = (int)strlen(message);
+	token.Line = scanner.Line;
+	token.Pos = scanner.Current - scanner.LinePos;
 
-    return token;
-}
-
-int      CheckKeyword(int start, int length, const char* rest, int type) {
-    if (scanner.Current - scanner.Start == start + length && memcmp(scanner.Start + start, rest, length) == 0)
-        return type;
-
-    return TOKEN_IDENTIFIER;
-}
-int      GetKeywordType() {
-    return TOKEN_IDENTIFIER;
+	return token;
 }
 
-Token    StringToken() {
-    while (PeekChar() != '"' && !IsEOF()) {
-        bool lineBreak = false;
-        switch (PeekChar()) {
-            // Line Break
-            case '\n':
-                lineBreak = true;
-                break;
-            // Escaped
-            case '\\':
-                AdvanceChar();
-                break;
-        }
+int CheckKeyword(int start, int length, const char* rest, int type) {
+	if (scanner.Current - scanner.Start == start + length &&
+		memcmp(scanner.Start + start, rest, length) == 0) {
+		return type;
+	}
 
-        AdvanceChar();
-
-        if (lineBreak) {
-            scanner.Line++;
-            scanner.LinePos = scanner.Current;
-        }
-    }
-
-    if (IsEOF()) return ErrorToken("Unterminated string.");
-
-    // The closing double-quote.
-    AdvanceChar();
-    Token tok = MakeToken(TOKEN_STRING);
-    tok.Start += 1;
-    tok.Length -= 2;
-    return tok;
+	return TOKEN_IDENTIFIER;
 }
-Token    NumberToken() {
-    if (*scanner.Start == '0' && (PeekChar() == 'x' || PeekChar() == 'X')) {
-        AdvanceChar(); // x
-        while (IsHexDigit(PeekChar()))
-            AdvanceChar();
-        return MakeToken(TOKEN_NUMBER);
-    }
-
-    while (IsDigit(PeekChar()))
-        AdvanceChar();
-
-    // Look for a fractional part.
-    if (PeekChar() == '.' && IsDigit(PeekNextChar())) {
-        // Consume the "."
-        AdvanceChar();
-
-        while (IsDigit(PeekChar()))
-            AdvanceChar();
-
-        return MakeToken(TOKEN_NUMBER);
-    }
-
-    return MakeToken(TOKEN_NUMBER);
-}
-Token    IdentifierToken() {
-    while (IsIdentifierBody(PeekChar()))
-        AdvanceChar();
-
-    return MakeToken(GetKeywordType());
-}
-Token    ScanToken() {
-    SkipWhitespace();
-
-    scanner.Start = scanner.Current;
-
-    if (IsEOF()) return MakeToken(TOKEN_EOF);
-
-    char c = AdvanceChar();
-
-    if (IsDigit(c)) return NumberToken();
-    if (IsIdentifierStart(c)) return IdentifierToken();
-
-    switch (c) {
-        case '<': return MakeToken(TOKEN_LEFT_BRACE);
-        case '>': return MakeToken(TOKEN_RIGHT_BRACE);
-        case '!': return MakeToken(TOKEN_BANG);
-        case '?': return MakeToken(TOKEN_QUESTION);
-        case '-': return MakeToken(TOKEN_DASH);
-        case '/': return MakeToken(TOKEN_SLASH);
-        case '=': return MakeToken(TOKEN_EQUAL);
-        // String
-        case '"': return StringToken();
-    }
-
-    return ErrorToken("Unexpected character.");
+int GetKeywordType() {
+	return TOKEN_IDENTIFIER;
 }
 
-void     AdvanceToken() {
-    parser.Previous = parser.Current;
+Token StringToken() {
+	while (PeekChar() != '"' && !IsEOF()) {
+		bool lineBreak = false;
+		switch (PeekChar()) {
+		// Line Break
+		case '\n':
+			lineBreak = true;
+			break;
+		// Escaped
+		case '\\':
+			AdvanceChar();
+			break;
+		}
 
-    while (true) {
-        parser.Current = ScanToken();
-        if (parser.Current.Type != TOKEN_ERROR)
-            break;
+		AdvanceChar();
 
-        // ErrorAtCurrent(parser.Current.Start);
-    }
-}
-Token    NextToken() {
-    AdvanceToken();
-    return parser.Previous;
-}
-Token    PeekToken() {
-    return parser.Current;
-}
-Token    PrevToken() {
-    return parser.Previous;
-}
-bool     CheckToken(int expectedType) {
-    if (parser.Current.Type == TOKEN_EOF) return false;
-    // if (parser.Current.Type != expectedType) return false;
-    // return true;
-    return parser.Current.Type == expectedType;
-}
-bool     _MatchToken(int expectedType) {
-    if (!CheckToken(expectedType)) return false;
-    AdvanceToken();
-    return true;
-}
-void     ConsumeToken(int type, const char* message) {
-    if (parser.Current.Type == type) {
-        AdvanceToken();
-        return;
-    }
+		if (lineBreak) {
+			scanner.Line++;
+			scanner.LinePos = scanner.Current;
+		}
+	}
 
-    // ErrorAtCurrent(message);
-    Log::Print(Log::LOG_ERROR, "%s\n\n%d\n\n%s\n", message, (int)(scanner.Current - scanner.SourceStart), scanner.SourceStart);
-    exit(-1);
+	if (IsEOF()) {
+		return ErrorToken("Unterminated string.");
+	}
+
+	// The closing double-quote.
+	AdvanceChar();
+	Token tok = MakeToken(TOKEN_STRING);
+	tok.Start += 1;
+	tok.Length -= 2;
+	return tok;
 }
-void     PrintToken(Token token) {
-    printf("%.*s", (int)token.Length, token.Start);
-    printf("\n");
-    // exit(-1);
+Token NumberToken() {
+	if (*scanner.Start == '0' && (PeekChar() == 'x' || PeekChar() == 'X')) {
+		AdvanceChar(); // x
+		while (IsHexDigit(PeekChar())) {
+			AdvanceChar();
+		}
+		return MakeToken(TOKEN_NUMBER);
+	}
+
+	while (IsDigit(PeekChar())) {
+		AdvanceChar();
+	}
+
+	// Look for a fractional part.
+	if (PeekChar() == '.' && IsDigit(PeekNextChar())) {
+		// Consume the "."
+		AdvanceChar();
+
+		while (IsDigit(PeekChar())) {
+			AdvanceChar();
+		}
+
+		return MakeToken(TOKEN_NUMBER);
+	}
+
+	return MakeToken(TOKEN_NUMBER);
+}
+Token IdentifierToken() {
+	while (IsIdentifierBody(PeekChar())) {
+		AdvanceChar();
+	}
+
+	return MakeToken(GetKeywordType());
+}
+Token ScanToken() {
+	SkipWhitespace();
+
+	scanner.Start = scanner.Current;
+
+	if (IsEOF()) {
+		return MakeToken(TOKEN_EOF);
+	}
+
+	char c = AdvanceChar();
+
+	if (IsDigit(c)) {
+		return NumberToken();
+	}
+	if (IsIdentifierStart(c)) {
+		return IdentifierToken();
+	}
+
+	switch (c) {
+	case '<':
+		return MakeToken(TOKEN_LEFT_BRACE);
+	case '>':
+		return MakeToken(TOKEN_RIGHT_BRACE);
+	case '!':
+		return MakeToken(TOKEN_BANG);
+	case '?':
+		return MakeToken(TOKEN_QUESTION);
+	case '-':
+		return MakeToken(TOKEN_DASH);
+	case '/':
+		return MakeToken(TOKEN_SLASH);
+	case '=':
+		return MakeToken(TOKEN_EQUAL);
+	// String
+	case '"':
+		return StringToken();
+	}
+
+	return ErrorToken("Unexpected character.");
 }
 
-void     SynchronizeToken() {
-    parser.PanicMode = false;
+void AdvanceToken() {
+	parser.Previous = parser.Current;
 
+	while (true) {
+		parser.Current = ScanToken();
+		if (parser.Current.Type != TOKEN_ERROR) {
+			break;
+		}
 
-    while (PeekToken().Type != TOKEN_EOF) {
-        // if (PrevToken().Type == TOKEN_SEMICOLON) return;
+		// ErrorAtCurrent(parser.Current.Start);
+	}
+}
+Token NextToken() {
+	AdvanceToken();
+	return parser.Previous;
+}
+Token PeekToken() {
+	return parser.Current;
+}
+Token PrevToken() {
+	return parser.Previous;
+}
+bool CheckToken(int expectedType) {
+	if (parser.Current.Type == TOKEN_EOF) {
+		return false;
+	}
+	// if (parser.Current.Type != expectedType) return false;
+	// return true;
+	return parser.Current.Type == expectedType;
+}
+bool _MatchToken(int expectedType) {
+	if (!CheckToken(expectedType)) {
+		return false;
+	}
+	AdvanceToken();
+	return true;
+}
+void ConsumeToken(int type, const char* message) {
+	if (parser.Current.Type == type) {
+		AdvanceToken();
+		return;
+	}
 
-        switch (PeekToken().Type) {
-            default:
-                break;
-        }
+	throw std::runtime_error(std::string(message));
+}
 
-        AdvanceToken();
-    }
+void SynchronizeToken() {
+	parser.PanicMode = false;
+
+	while (PeekToken().Type != TOKEN_EOF) {
+		// if (PrevToken().Type == TOKEN_SEMICOLON) return;
+
+		switch (PeekToken().Type) {
+		default:
+			break;
+		}
+
+		AdvanceToken();
+	}
 }
 
 XMLNode* XMLCurrent = NULL;
 
-void     GetAttributes() {
-    while (PeekToken().Type == TOKEN_IDENTIFIER) {
-        ConsumeToken(TOKEN_IDENTIFIER, "Invalid identifier for attribute.");
+void GetAttributes() {
+	while (PeekToken().Type == TOKEN_IDENTIFIER) {
+		ConsumeToken(TOKEN_IDENTIFIER, "Invalid identifier for attribute.");
 
-        Token name = PrevToken();
-        name.Type = TOKEN_CDATA;
+		Token name = PrevToken();
+		name.Type = TOKEN_CDATA;
 
-        bool strict_xml = true;
-        if (strict_xml) {
-            ConsumeToken(TOKEN_EQUAL, "Missing '=' after attribute name.");
-            ConsumeToken(TOKEN_STRING, "Invalid token for attribute value.");
+		bool strict_xml = true;
+		if (strict_xml) {
+			ConsumeToken(TOKEN_EQUAL, "Missing '=' after attribute name.");
+			ConsumeToken(TOKEN_STRING, "Invalid token for attribute value.");
 
-            Token value = PrevToken();
-            XMLCurrent->attributes.Put(XMLParser::TokenToString(name), value);
-        }
+			Token value = PrevToken();
+			XMLCurrent->attributes.Put(XMLParser::TokenToString(name), value);
+		}
 
-        if (PeekToken().Type != TOKEN_IDENTIFIER)
-            break;
-    }
+		if (PeekToken().Type != TOKEN_IDENTIFIER) {
+			break;
+		}
+	}
 }
-void     GetStart() {
-    XMLNode* node = new (std::nothrow) XMLNode;
-    if (!node)
-        return;
+void GetStart() {
+	XMLNode* node = new (std::nothrow) XMLNode;
+	if (!node) {
+		return;
+	}
 
-    node->parent = XMLCurrent;
-    node->base_stream = NULL;
-    XMLCurrent->children.push_back(node);
-    XMLCurrent = node;
+	node->parent = XMLCurrent;
+	node->base_stream = NULL;
+	XMLCurrent->children.push_back(node);
+	XMLCurrent = node;
 
-    // Get instruction name
-    Token name = NextToken();
-    name.Type = TOKEN_STARTTAG;
-    XMLCurrent->name = name;
+	// Get instruction name
+	Token name = NextToken();
+	name.Type = TOKEN_STARTTAG;
+	XMLCurrent->name = name;
 
-    GetAttributes();
+	GetAttributes();
 
-    if (_MatchToken(TOKEN_SLASH)) {
-        PrevToken();
-        // Token end = PrevToken();
-        // end.Type = TOKEN_ENDTAG;
-        XMLCurrent = XMLCurrent->parent;
-    }
-    ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' after start.");
+	if (_MatchToken(TOKEN_SLASH)) {
+		PrevToken();
+		// Token end = PrevToken();
+		// end.Type = TOKEN_ENDTAG;
+		XMLCurrent = XMLCurrent->parent;
+	}
+	ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' after start.");
 }
-void     GetEnd() {
-    // Get instruction name
-    NextToken();
-    // Token name = NextToken();
-    // name.Type = TOKEN_ENDTAG;
-    XMLCurrent = XMLCurrent->parent;
+void GetEnd() {
+	// Get instruction name
+	NextToken();
+	// Token name = NextToken();
+	// name.Type = TOKEN_ENDTAG;
+	XMLCurrent = XMLCurrent->parent;
 
-    ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' after end.");
+	ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' after end.");
 }
-void     GetComment() {
-    ConsumeToken(TOKEN_DASH, "Missing '-' at start of comment.");
-    while (!_MatchToken(TOKEN_DASH) && !_MatchToken(TOKEN_EOF)) {
-        AdvanceToken();
-    }
-    ConsumeToken(TOKEN_DASH, "Missing second '-' at end of comment.");
-    ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' at end of comment.");
+void GetComment() {
+	ConsumeToken(TOKEN_DASH, "Missing '-' at start of comment.");
+	while (!_MatchToken(TOKEN_DASH) && !_MatchToken(TOKEN_EOF)) {
+		AdvanceToken();
+	}
+	ConsumeToken(TOKEN_DASH, "Missing second '-' at end of comment.");
+	ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' at end of comment.");
 }
-void     GetInstruction() {
-    // Get instruction name
-    NextToken();
-    // Token name = NextToken();
-    // name.Type = TOKEN_INSTRUCTION;
+void GetInstruction() {
+	// Get instruction name
+	NextToken();
+	// Token name = NextToken();
+	// name.Type = TOKEN_INSTRUCTION;
 
-    GetAttributes();
+	GetAttributes();
 
-    ConsumeToken(TOKEN_QUESTION, "Missing '?' after instruction tokens.");
-    ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' after instruction.");
-}
-
-PUBLIC STATIC bool     XMLParser::MatchToken(Token tok, const char* string) {
-    if (tok.Length == 0)
-        return false;
-    return memcmp(string, tok.Start, tok.Length) == 0;
-}
-PUBLIC STATIC float    XMLParser::TokenToNumber(Token tok) {
-    return atof(tok.ToString().c_str());
+	ConsumeToken(TOKEN_QUESTION, "Missing '?' after instruction tokens.");
+	ConsumeToken(TOKEN_RIGHT_BRACE, "Missing '>' after instruction.");
 }
 
-PUBLIC STATIC XMLNode* XMLParser::Parse() {
-    XMLNode* XMLRoot = new (std::nothrow) XMLNode;
-    if (!XMLRoot)
-        return NULL;
+bool XMLParser::MatchToken(Token tok, const char* string) {
+	if (tok.Length == 0) {
+		return false;
+	}
 
-    XMLRoot->base_stream = NULL;
-    XMLRoot->parent = NULL;
-    XMLCurrent = XMLRoot;
+	size_t len = strlen(string);
+	if (tok.Length != len) {
+		return false;
+	}
 
-    AdvanceToken();
-    if (!_MatchToken(TOKEN_EOF)) {
-        ConsumeToken(TOKEN_LEFT_BRACE, "SXML_ERROR_XMLINVALID");
-
-        // Instruction
-        if (_MatchToken(TOKEN_QUESTION)) {
-            // parse_instruction
-            GetInstruction();
-        }
-        // Doctype
-        else if (_MatchToken(TOKEN_BANG)) {
-            // parse_doctype
-        }
-        // Start
-        else {
-            GetStart();
-        }
-    }
-
-    while (!_MatchToken(TOKEN_EOF)) {
-        if (!_MatchToken(TOKEN_LEFT_BRACE)) {
-            SkipWhitespace();
-            scanner.Start = scanner.Current;
-            if (IsEOF()) break;
-
-            while (PeekChar() != '<') {
-                if (IsEOF()) break;
-                AdvanceChar();
-            }
-
-            Token data = PeekToken();
-            data.Length = scanner.Current - data.Start;
-            data.Type = TOKEN_CDATA;
-
-            XMLNode* node = new (std::nothrow) XMLNode;
-            if (!node)
-                return NULL;
-
-            node->name = data;
-            node->parent = XMLCurrent;
-            node->base_stream = NULL;
-            XMLCurrent->children.push_back(node);
-            AdvanceToken();
-        }
-        else {
-            // Instruction
-            if (_MatchToken(TOKEN_QUESTION)) {
-                // parse_instruction
-                GetInstruction();
-            }
-            else if (_MatchToken(TOKEN_BANG)) {
-                // Comment
-                if (_MatchToken(TOKEN_DASH)) {
-                    GetComment();
-                }
-                else {
-                    // GetCData();
-                }
-            }
-            // End
-            else if (_MatchToken(TOKEN_SLASH)) {
-                GetEnd();
-            }
-            // Start
-            else {
-                GetStart();
-            }
-        }
-    }
-
-    return XMLRoot;
+	return memcmp(string, tok.Start, tok.Length) == 0;
 }
-PUBLIC STATIC XMLNode* XMLParser::ParseFromStream(MemoryStream* stream) {
-    // NOTE: This fixes the XML overread bug (unterminated string caused bad access/read)
-    stream->SeekEnd(0);
-    stream->WriteByte(0);
-    stream->Seek(0);
-
-    scanner.Line = 1;
-    scanner.Start = (char*)stream->pointer;
-    scanner.Current = (char*)stream->pointer;
-    scanner.LinePos = (char*)stream->pointer;
-    scanner.SourceStart = (char*)stream->pointer;
-
-    parser.HadError = false;
-    parser.PanicMode = false;
-
-    XMLNode* xml = XMLParser::Parse();
-    xml->base_stream = stream;
-    return xml;
-}
-PUBLIC STATIC XMLNode* XMLParser::ParseFromStream(Stream* streamSrc) {
-    MemoryStream* stream = MemoryStream::New(streamSrc);
-    if (!stream) return NULL;
-    return XMLParser::ParseFromStream(stream);
-}
-PUBLIC STATIC XMLNode* XMLParser::ParseFromResource(const char* filename) {
-    ResourceStream* res = ResourceStream::New(filename);
-    if (!res) {
-        Log::Print(Log::LOG_ERROR, "Could not open ResourceStream from \"%s\"", filename);
-        return NULL;
-    }
-
-    XMLNode* node = XMLParser::ParseFromStream(res);
-    res->Close();
-    return node;
+float XMLParser::TokenToNumber(Token tok) {
+	return atof(tok.ToString().c_str());
 }
 
-PUBLIC STATIC char*    XMLParser::TokenToString(Token tok) {
-    char* string = StringUtils::Create(tok);
-    if (!string) {
-        Log::Print(Log::LOG_ERROR, "Out of memory converting XML token to string!");
-        abort();
-    }
-    return string;
+XMLNode* XMLParser::Parse() {
+	XMLNode* XMLRoot = new (std::nothrow) XMLNode;
+	if (!XMLRoot) {
+		Log::Print(Log::LOG_ERROR, "No free memory to parse XML!");
+		return NULL;
+	}
+
+	XMLRoot->base_stream = NULL;
+	XMLRoot->parent = NULL;
+	XMLCurrent = XMLRoot;
+
+	try {
+		DoParsing();
+	} catch (const std::runtime_error& error) {
+		XMLParser::Free(XMLRoot);
+
+		Log::Print(Log::LOG_ERROR, "Error parsing XML: %s", error.what());
+
+		return NULL;
+	}
+
+	return XMLRoot;
 }
 
-PUBLIC STATIC void     XMLParser::CopyTokenToString(Token tok, char* buffer, size_t size) {
-    size_t length = tok.Length;
-    if (length >= size)
-        length = size - 1;
-    memcpy(buffer, tok.Start, length);
-    buffer[length] = '\0';
+void XMLParser::DoParsing() {
+	AdvanceToken();
+	if (!_MatchToken(TOKEN_EOF)) {
+		ConsumeToken(TOKEN_LEFT_BRACE, "Missing '<' at beginning.");
+
+		// Instruction
+		if (_MatchToken(TOKEN_QUESTION)) {
+			// parse_instruction
+			GetInstruction();
+		}
+		// Doctype
+		else if (_MatchToken(TOKEN_BANG)) {
+			// parse_doctype
+		}
+		// Start
+		else {
+			GetStart();
+		}
+	}
+
+	while (!_MatchToken(TOKEN_EOF)) {
+		if (!_MatchToken(TOKEN_LEFT_BRACE)) {
+			SkipWhitespace();
+			scanner.Start = scanner.Current;
+			if (IsEOF()) {
+				break;
+			}
+
+			while (PeekChar() != '<') {
+				if (IsEOF()) {
+					break;
+				}
+				AdvanceChar();
+			}
+
+			Token data = PeekToken();
+			if (data.Type != TOKEN_STRING) {
+				data.Length = scanner.Current - data.Start;
+			}
+			data.Type = TOKEN_CDATA;
+
+			XMLNode* node = new (std::nothrow) XMLNode;
+			if (!node) {
+				throw std::runtime_error("No free memory to allocate XML node!");
+			}
+
+			node->name = data;
+			node->parent = XMLCurrent;
+			node->base_stream = NULL;
+			XMLCurrent->children.push_back(node);
+			AdvanceToken();
+		}
+		else {
+			// Instruction
+			if (_MatchToken(TOKEN_QUESTION)) {
+				// parse_instruction
+				GetInstruction();
+			}
+			else if (_MatchToken(TOKEN_BANG)) {
+				// Comment
+				if (_MatchToken(TOKEN_DASH)) {
+					GetComment();
+				}
+				else {
+					// GetCData();
+				}
+			}
+			// End
+			else if (_MatchToken(TOKEN_SLASH)) {
+				GetEnd();
+			}
+			// Start
+			else {
+				GetStart();
+			}
+		}
+	}
+}
+XMLNode* XMLParser::ParseFromStream(TextStream* stream) {
+	scanner.Line = 1;
+	scanner.Start = (char*)stream->pointer;
+	scanner.Current = (char*)stream->pointer;
+	scanner.LinePos = (char*)stream->pointer;
+	scanner.SourceStart = (char*)stream->pointer;
+
+	parser.HadError = false;
+	parser.PanicMode = false;
+
+	XMLNode* xml = XMLParser::Parse();
+	if (xml) {
+		xml->base_stream = stream;
+	}
+	return xml;
+}
+XMLNode* XMLParser::ParseFromStream(Stream* streamSrc) {
+	TextStream* stream = TextStream::New(streamSrc);
+	if (!stream) {
+		return NULL;
+	}
+	return XMLParser::ParseFromStream(stream);
+}
+XMLNode* XMLParser::ParseFromResource(const char* filename) {
+	ResourceStream* res = ResourceStream::New(filename);
+	if (!res) {
+		return NULL;
+	}
+
+	TextStream* textStream = TextStream::New(res);
+	res->Close();
+
+	if (!textStream) {
+		return NULL;
+	}
+
+	return XMLParser::ParseFromStream(textStream);
 }
 
-PUBLIC STATIC XMLNode* XMLParser::SearchNode(XMLNode* root, const char* search) {
-    for (size_t i = 0; i < root->children.size(); i++) {
-        XMLNode* node = root->children[i];
-        if (XMLParser::MatchToken(node->name, search))
-            return node;
-    }
-    return nullptr;
+char* XMLParser::TokenToString(Token tok) {
+	char* string = StringUtils::Create(tok);
+	if (!string) {
+		Error::Fatal("Out of memory converting XML token to string!");
+	}
+	return string;
+}
+
+std::string XMLParser::TokenToStdString(Token tok) {
+	return std::string(tok.Start, tok.Length);
+}
+
+void XMLParser::CopyTokenToString(Token tok, char* buffer, size_t size) {
+	size_t length = tok.Length;
+	if (length >= size) {
+		length = size - 1;
+	}
+	memcpy(buffer, tok.Start, length);
+	buffer[length] = '\0';
+}
+
+XMLNode* XMLParser::SearchNode(XMLNode* root, const char* search) {
+	for (size_t i = 0; i < root->children.size(); i++) {
+		XMLNode* node = root->children[i];
+		if (XMLParser::MatchToken(node->name, search)) {
+			return node;
+		}
+	}
+	return nullptr;
 }
 
 void FreeNode(XMLNode* root) {
-    root->attributes.Dispose();
-    for (size_t i = 0; i < root->children.size(); i++) {
-        FreeNode(root->children[i]);
-    }
-    delete root;
+	root->attributes.Dispose();
+	for (size_t i = 0; i < root->children.size(); i++) {
+		FreeNode(root->children[i]);
+	}
+	delete root;
 }
 
-PUBLIC STATIC void     XMLParser::Free(XMLNode* root) {
-    if (root->base_stream)
-        root->base_stream->Close();
+void XMLParser::Free(XMLNode* root) {
+	if (!root) {
+		return;
+	}
 
-    FreeNode(root);
+	if (root->base_stream) {
+		root->base_stream->Close();
+	}
+
+	FreeNode(root);
 }

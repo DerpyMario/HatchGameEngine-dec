@@ -1,13 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/UI/TileCollisionTypes.h>
-
-class TileCollisionEditor {
-public:
-    static bool UnsavedChanges;
-};
-#endif
-
 #include <Engine/UI/TileCollisionEditor.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
@@ -50,18 +40,18 @@ static char  StatusText[256] = "";
 
 #define TILE_COLLISION_NONE 0xFF
 
-PRIVATE STATIC void TileCollisionEditor::SetStatus(const char* format, ...) {
+void TileCollisionEditor::SetStatus(const char* format, ...) {
     va_list args;
     va_start(args, format);
     vsnprintf(StatusText, sizeof(StatusText), format, args);
     va_end(args);
 }
 
-PUBLIC STATIC const char* TileCollisionEditor::GetStatus() {
+const char* TileCollisionEditor::GetStatus() {
     return StatusText;
 }
 
-PUBLIC STATIC bool TileCollisionEditor::IsAvailable() {
+bool TileCollisionEditor::IsAvailable() {
     return Scene::TileCfgLoaded && Scene::TileCfg.size() > 0 && Scene::TileSpriteInfos.size() > 0;
 }
 
@@ -71,7 +61,7 @@ PUBLIC STATIC bool TileCollisionEditor::IsAvailable() {
 // loader turns heights into solid spans, so this undoes that: a floor tile
 // keeps its heights in CollisionTop, and a ceiling tile has them flipped into
 // CollisionBottom.
-PRIVATE STATIC void TileCollisionEditor::ReadEntryFromScene(int plane, int tileID, TileCollisionEntry* entry) {
+void TileCollisionEditor::ReadEntryFromScene(int plane, int tileID, TileCollisionEntry* entry) {
     TileConfig* tile = &Scene::TileCfg[plane][tileID];
 
     entry->IsCeiling = tile->IsCeiling;
@@ -96,7 +86,7 @@ PRIVATE STATIC void TileCollisionEditor::ReadEntryFromScene(int plane, int tileI
     entry->Angle = tile->IsCeiling ? tile->AngleBottom : tile->AngleTop;
 }
 
-PUBLIC STATIC void TileCollisionEditor::Reload() {
+void TileCollisionEditor::Reload() {
     Planes[0].clear();
     Planes[1].clear();
     Loaded = false;
@@ -117,13 +107,13 @@ PUBLIC STATIC void TileCollisionEditor::Reload() {
     Loaded = true;
 }
 
-PUBLIC STATIC void TileCollisionEditor::Invalidate() {
+void TileCollisionEditor::Invalidate() {
     Loaded = false;
 }
 
 // Pushes one tile's edited heights back into the live scene, so the change is
 // felt by anything colliding with it straight away.
-PRIVATE STATIC void TileCollisionEditor::ApplyToScene(int plane, int tileID) {
+void TileCollisionEditor::ApplyToScene(int plane, int tileID) {
     if (plane >= (int)Scene::TileCfg.size() || tileID >= (int)Scene::TileSpriteInfos.size())
         return;
 
@@ -144,7 +134,7 @@ PRIVATE STATIC void TileCollisionEditor::ApplyToScene(int plane, int tileID) {
     TileCollisionEditor::UnsavedChanges = true;
 }
 
-PRIVATE STATIC void TileCollisionEditor::RefreshHasCollision(TileCollisionEntry* entry) {
+void TileCollisionEditor::RefreshHasCollision(TileCollisionEntry* entry) {
     entry->HasCollision = false;
 
     for (int i = 0; i < 16; i++) {
@@ -157,7 +147,7 @@ PRIVATE STATIC void TileCollisionEditor::RefreshHasCollision(TileCollisionEntry*
 
 // Gives one column its surface, or takes the surface away again if the stroke
 // started on a column that already reached that far.
-PRIVATE STATIC void TileCollisionEditor::PaintColumn(TileCollisionEntry* entry, int column, int row) {
+void TileCollisionEditor::PaintColumn(TileCollisionEntry* entry, int column, int row) {
     entry->Heights[column] = PaintingClears ? TILE_COLLISION_NONE
         : (Uint8)(entry->IsCeiling ? 15 - row : row);
 
@@ -167,19 +157,20 @@ PRIVATE STATIC void TileCollisionEditor::PaintColumn(TileCollisionEntry* entry, 
 
 // ------------------------------------------------------------------ save ---
 
-PUBLIC STATIC bool TileCollisionEditor::GetCollisionPath(char* out, size_t outSize) {
+bool TileCollisionEditor::GetCollisionPath(char* out, size_t outSize) {
     if (!ResourceManager::UsingDataFolder)
         return false;
-    if (!SceneInfo::IsEntryValid(Scene::CurrentSceneInList))
+    if (!SceneInfo::IsEntryValid(Scene::ActiveCategory, Scene::CurrentSceneInList))
         return false;
 
-    std::string filename = SceneInfo::GetTileConfigFilename(Scene::CurrentSceneInList);
+    std::string filename =
+        SceneInfo::GetTileConfigFilename(Scene::ActiveCategory, Scene::CurrentSceneInList);
     snprintf(out, outSize, "Resources/%s", filename.c_str());
 
     return true;
 }
 
-PUBLIC STATIC bool TileCollisionEditor::CanSave() {
+bool TileCollisionEditor::CanSave() {
     char path[1024];
     return Loaded && TileCollisionEditor::GetCollisionPath(path, sizeof(path));
 }
@@ -187,7 +178,7 @@ PUBLIC STATIC bool TileCollisionEditor::CanSave() {
 // Writes the collision file back in the format the engine's HCOL reader
 // expects: a short header, then a ceiling flag, an angle, a collision flag and
 // sixteen column heights for every tile.
-PUBLIC STATIC bool TileCollisionEditor::Save() {
+bool TileCollisionEditor::Save() {
     char path[1024];
     if (!TileCollisionEditor::GetCollisionPath(path, sizeof(path))) {
         TileCollisionEditor::SetStatus("This scene has nowhere to write tile collision to.");
@@ -241,7 +232,7 @@ PUBLIC STATIC bool TileCollisionEditor::Save() {
 
 // The magnified tile. Each of the sixteen columns is drawn as a solid bar down
 // from the height it was given, or up from the bottom for a ceiling tile.
-PRIVATE STATIC void TileCollisionEditor::DrawTileCanvas(float width) {
+void TileCollisionEditor::DrawTileCanvas(float width) {
     if (SelectedTile < 0 || SelectedTile >= (int)Planes[CurrentPlane].size())
         return;
 
@@ -337,7 +328,7 @@ PRIVATE STATIC void TileCollisionEditor::DrawTileCanvas(float width) {
 }
 
 // The tile picker, so a tile can be chosen without leaving the panel.
-PRIVATE STATIC void TileCollisionEditor::DrawTilePicker(float width) {
+void TileCollisionEditor::DrawTilePicker(float width) {
     size_t tileCount = Scene::TileSpriteInfos.size();
 
     float cell = 18.0f * UIDraw::Scale;
@@ -389,7 +380,7 @@ PRIVATE STATIC void TileCollisionEditor::DrawTilePicker(float width) {
     }
 }
 
-PUBLIC STATIC void TileCollisionEditor::Draw(float x, float y, float width, float height, bool split) {
+void TileCollisionEditor::Draw(float x, float y, float width, float height, bool split) {
     if (!Loaded)
         TileCollisionEditor::Reload();
 

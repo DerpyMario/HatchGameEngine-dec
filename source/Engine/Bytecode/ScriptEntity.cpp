@@ -1,1692 +1,1142 @@
-#if INTERFACE
-#include <Engine/Types/Entity.h>
-#include <Engine/Bytecode/ScriptManager.h>
-
-class ScriptEntity : public Entity {
-public:
-    static bool DisableAutoAnimate;
-
-    ObjInstance* Instance = NULL;
-    HashMap<VMValue>* Properties;
-};
-#endif
-
-#include <Engine/Bytecode/ScriptEntity.h>
+#include <Engine/Application.h>
 #include <Engine/Bytecode/Compiler.h>
-#include <Engine/Bytecode/StandardLibrary.h>
+#include <Engine/Bytecode/GarbageCollector.h>
+#include <Engine/Bytecode/ScriptEntity.h>
+#include <Engine/Bytecode/TypeImpl/EntityImpl.h>
+#include <Engine/Bytecode/Value.h>
+#include <Engine/Diagnostics/Log.h>
 #include <Engine/Scene.h>
 
-bool ScriptEntity::DisableAutoAnimate = false;
+Uint32 ScriptEntity::FixedUpdateEarlyHash = 0;
+Uint32 ScriptEntity::FixedUpdateHash = 0;
+Uint32 ScriptEntity::FixedUpdateLateHash = 0;
 
-#define LINK_INT(VAR) Instance->Fields->Put(#VAR, INTEGER_LINK_VAL(&VAR))
-#define LINK_DEC(VAR) Instance->Fields->Put(#VAR, DECIMAL_LINK_VAL(&VAR))
-#define LINK_BOOL(VAR) Instance->Fields->Put(#VAR, INTEGER_LINK_VAL(&VAR))
+#define LINK_INT(VAR) Instance->InstanceObj.Fields->Put(#VAR, INTEGER_LINK_VAL(&VAR))
+#define LINK_DEC(VAR) Instance->InstanceObj.Fields->Put(#VAR, DECIMAL_LINK_VAL(&VAR))
+#define LINK_BOOL(VAR) Instance->InstanceObj.Fields->Put(#VAR, INTEGER_LINK_VAL(&VAR))
 
-bool   SavedHashes = false;
-Uint32 Hash_Create = 0;
-Uint32 Hash_PostCreate = 0;
-Uint32 Hash_Update = 0;
-Uint32 Hash_UpdateLate = 0;
-Uint32 Hash_UpdateEarly = 0;
-Uint32 Hash_RenderEarly = 0;
-Uint32 Hash_Render = 0;
-Uint32 Hash_RenderLate = 0;
-Uint32 Hash_OnAnimationFinish = 0;
-Uint32 Hash_OnSceneLoad = 0;
-Uint32 Hash_OnSceneRestart = 0;
-Uint32 Hash_GameStart = 0;
-Uint32 Hash_Dispose = 0;
-Uint32 Hash_HitboxLeft = 0;
-Uint32 Hash_HitboxTop = 0;
-Uint32 Hash_HitboxRight = 0;
-Uint32 Hash_HitboxBottom = 0;
+#define ENTITY_FIELD(name) Uint32 ScriptEntity::Hash_##name = 0;
+ENTITY_FIELDS_LIST
+#undef ENTITY_FIELD
 
-PUBLIC void ScriptEntity::Link(ObjInstance* instance) {
-    Instance = instance;
-    Instance->EntityPtr = this;
-    Properties = new HashMap<VMValue>(NULL, 4);
+Entity* ScriptEntity::Spawn() {
+	throw std::runtime_error("Cannot directly spawn ScriptEntity!");
+}
+Entity* ScriptEntity::SpawnNamed(const char* objectName) {
+	// If this class is implemented natively, we can use Entity::SpawnNamed.
+	// This works because all native entities descend from ScriptEntity.
+	// Otherwise, this must be a script-side class, so we spawn a regular ScriptEntity.
+	Entity* object = Entity::SpawnNamed(objectName);
+	if (object) {
+		return object;
+	}
 
-    if (!SavedHashes) {
-        Hash_Create = Murmur::EncryptString("Create");
-        Hash_PostCreate = Murmur::EncryptString("PostCreate");
-        Hash_Update = Murmur::EncryptString("Update");
-        Hash_UpdateLate = Murmur::EncryptString("UpdateLate");
-        Hash_UpdateEarly = Murmur::EncryptString("UpdateEarly");
-        Hash_RenderEarly = Murmur::EncryptString("RenderEarly");
-        Hash_Render = Murmur::EncryptString("Render");
-        Hash_RenderLate = Murmur::EncryptString("RenderLate");
-        Hash_OnAnimationFinish = Murmur::EncryptString("OnAnimationFinish");
-        Hash_OnSceneLoad = Murmur::EncryptString("OnSceneLoad");
-        Hash_OnSceneRestart = Murmur::EncryptString("OnSceneRestart");
-        Hash_GameStart = Murmur::EncryptString("GameStart");
-        Hash_Dispose = Murmur::EncryptString("Dispose");
-        Hash_HitboxLeft = Murmur::EncryptString("HitboxLeft");
-        Hash_HitboxTop = Murmur::EncryptString("HitboxTop");
-        Hash_HitboxRight = Murmur::EncryptString("HitboxRight");
-        Hash_HitboxBottom = Murmur::EncryptString("HitboxBottom");
+	if (!ScriptManager::IsClassLoaded(objectName)) {
+		Log::Print(Log::LOG_ERROR, "Could not find class of %s!", objectName);
+		return nullptr;
+	}
 
-        SavedHashes = true;
-    }
+	ScriptEntity* scriptEntity = new ScriptEntity;
+	if (!ScriptEntity::SpawnForClass(scriptEntity, objectName)) {
+		Log::Print(Log::LOG_ERROR, "Could not find class of %s!", objectName);
+		delete scriptEntity;
+		return nullptr;
+	}
 
-    instance->PropertyGet = VM_Getter;
-    instance->PropertySet = VM_Setter;
+	return (Entity*)scriptEntity;
+}
+bool ScriptEntity::SpawnForClass(ScriptEntity* entity, const char* objectName) {
+	ObjClass* klass = ScriptManager::GetClass(objectName);
+	if (!klass) {
+		return false;
+	}
 
-    LinkFields();
+	entity->Link(NewEntity(klass));
+
+	return true;
 }
 
-PUBLIC void ScriptEntity::LinkFields() {
-    /***
+void ScriptEntity::Init() {
+#define ENTITY_FIELD(name) ScriptEntity::Hash_##name = Murmur::EncryptString(#name);
+	ENTITY_FIELDS_LIST
+#undef ENTITY_FIELD
+
+	SetUseFixedTimestep(Application::UseFixedTimestep);
+}
+
+void ScriptEntity::Link(ObjEntity* entity) {
+	Instance = entity;
+	Instance->EntityPtr = this;
+
+	LinkFields();
+	AddEntityClassMethods();
+}
+
+void ScriptEntity::LinkFields() {
+	/***
     * \field X
-    * \type Decimal
-    * \ns Instance
+    * \type decimal
+    * \default 0.0
+    * \ns Entity
     * \desc The X position of the entity.
     */
-    LINK_DEC(X);
-    /***
+	LINK_DEC(X);
+	/***
     * \field Y
-    * \type Decimal
-    * \ns Instance
+    * \type decimal
+    * \default 0.0
+    * \ns Entity
     * \desc The Y position of the entity.
     */
-    LINK_DEC(Y);
-    /***
+	LINK_DEC(Y);
+	/***
     * \field Z
-    * \type Decimal
-    * \ns Instance
+    * \type decimal
+    * \default 0.0
+    * \ns Entity
     * \desc The Z position of the entity.
     */
-    LINK_DEC(Z);
-    /***
-    * \field XSpeed
-    * \type Decimal
+	LINK_DEC(Z);
+	/***
+    * \field SpeedX
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The horizontal velocity of the entity.
     */
-    LINK_DEC(XSpeed);
-    /***
-    * \field YSpeed
-    * \type Decimal
+	LINK_DEC(SpeedX);
+	/***
+    * \field SpeedY
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The vertical velocity of the entity.
     */
-    LINK_DEC(YSpeed);
-    /***
+	LINK_DEC(SpeedY);
+	/***
+	* \field XSpeed
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc Alias for <ref Entity.SpeedX>.
+	*/
+	Instance->InstanceObj.Fields->Put("XSpeed", DECIMAL_LINK_VAL(&SpeedX));
+	/***
+	* \field YSpeed
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc Alias for <ref Entity.SpeedY>.
+	*/
+	Instance->InstanceObj.Fields->Put("YSpeed", DECIMAL_LINK_VAL(&SpeedY));
+	/***
     * \field GroundSpeed
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The speed of the entity on the ground.
     */
-    LINK_DEC(GroundSpeed);
-    /***
-    * \field Gravity
-    * \type Decimal
+	LINK_DEC(GroundSpeed);
+	/***
+    * \field GravitySpeed
+    * \type decimal
     * \default 0.0
-    * \ns Instance
-    * \desc The gravity of the entity.
+    * \ns Entity
+    * \desc The gravity rate of the entity.
     */
-    LINK_DEC(Gravity);
-    /***
+	LINK_DEC(GravitySpeed);
+	/***
+	* \field Gravity
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc Alias for <ref Entity.GravitySpeed>.
+	*/
+	Instance->InstanceObj.Fields->Put("Gravity", DECIMAL_LINK_VAL(&GravitySpeed));
+	/***
     * \field AutoPhysics
-    * \type Boolean
+    * \type boolean
     * \default false
-    * \ns Instance
-    * \desc Whether <linkto ref="instance.ApplyMotion"></linkto> is automatically called for this entity.
+    * \ns Entity
+    * \desc Whether <ref Entity.ApplyMotion> is automatically called for this entity.
     */
-    LINK_INT(AutoPhysics);
-    /***
+	LINK_INT(AutoPhysics);
+	/***
     * \field Angle
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
-    * \desc The angle of the entity on the ground, within the range of <code>0x00</code> - <code>0xFF</code>.
+    * \ns Entity
+    * \desc The angle of the entity on the ground, within the range of `0x00` - `0xFF`.
     */
-    LINK_INT(Angle);
-    /***
+	LINK_INT(Angle);
+	/***
     * \field AngleMode
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
-    * \desc The angle mode of the entity on the ground, within the range of <code>0</code> - <code>3</code>.
+    * \ns Entity
+    * \desc The angle mode of the entity on the ground, within the range of `0` - `3`.
     */
-    LINK_INT(AngleMode);
-    /***
-    * \field Ground
-    * \type Boolean
+	LINK_INT(AngleMode);
+	/***
+    * \field OnGround
+    * \type boolean
     * \default false
-    * \ns Instance
+    * \ns Entity
     * \desc Whether the entity is on the ground.
     */
-    LINK_INT(Ground);
+	LINK_INT(OnGround);
+	/***
+	* \field Ground
+	* \type boolean
+	* \default false
+	* \ns Entity
+	* \desc Alias for <ref Entity.OnGround>.
+	*/
+	Instance->InstanceObj.Fields->Put("Ground", INTEGER_LINK_VAL(&OnGround));
 
-    /***
+	/***
     * \field ScaleX
-    * \type Decimal
+    * \type decimal
     * \default 1.0
-    * \ns Instance
-    * \desc A field that may be used in <linkto ref="instance.Render"></linkto> for scaling a sprite horizontally.
+    * \ns Entity
+    * \desc Used by <ref Draw.SpriteBasic> for scaling the entity's sprite horizontally.
     */
-    LINK_DEC(ScaleX);
-    /***
+	LINK_DEC(ScaleX);
+	/***
     * \field ScaleY
-    * \type Decimal
+    * \type decimal
     * \default 1.0
-    * \ns Instance
-    * \desc A field that may be used in <linkto ref="instance.Render"></linkto> for scaling a sprite vertically.
+    * \ns Entity
+    * \desc Used by <ref Draw.SpriteBasic> for scaling the entity's sprite vertically.
     */
-    LINK_DEC(ScaleY);
-    /***
+	LINK_DEC(ScaleY);
+	/***
     * \field Rotation
-    * \type Decimal (radians)
+    * \type decimal
     * \default 0.0
-    * \ns Instance
-    * \desc A field that may be used in <linkto ref="instance.Render"></linkto> for rotating a sprite.
+    * \ns Entity
+    * \desc Used by <ref Draw.SpriteBasic> for rotating the entity's sprite. See <ref Entity.RotationStyle>.
     */
-    LINK_DEC(Rotation);
-    /***
+	LINK_DEC(Rotation);
+	/***
     * \field Alpha
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
-    * \desc A field that may be used in <linkto ref="instance.Render"></linkto> for changing the opacity of a sprite.
+    * \ns Entity
+    * \desc A field that may be used in <ref Entity.Render> for changing the opacity of a sprite.
     */
-    LINK_DEC(Alpha);
-    /***
+	LINK_DEC(Alpha);
+	/***
+	* \field BlendMode
+	* \type integer
+	* \default BlendMode_NORMAL
+	* \ns Entity
+	* \desc A field that may be used in <ref Entity.Render> for changing the BlendMode of a sprite.
+	*/
+	LINK_INT(BlendMode);
+	/***
     * \field Priority
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
+    * \ns Entity
     * \desc The priority, or draw group, where this entity is located.
     */
-    LINK_INT(Priority);
-    /***
+	LINK_INT(Priority);
+	/***
     * \field Depth
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The depth of the entity. Used for sorting entity draw order.
     */
-    LINK_DEC(Depth);
+	LINK_DEC(Depth);
 
-    /***
+	/***
     * \field Sprite
-    * \type Integer (Resource)
+    * \type integer
     * \default -1
-    * \ns Instance
+    * \ns Entity
     * \desc The sprite index of the entity.
     */
-    LINK_INT(Sprite);
-    /***
+	LINK_INT(Sprite);
+	/***
     * \field CurrentAnimation
-    * \type Integer
+    * \type integer
     * \default -1
-    * \ns Instance
-    * \desc The current sprite  animation index of the entity.
+    * \ns Entity
+    * \desc The current sprite animation index of the entity.
     */
-    LINK_INT(CurrentAnimation);
-    /***
+	LINK_INT(CurrentAnimation);
+	/***
     * \field CurrentFrame
-    * \type Integer
+    * \type integer
     * \default -1
-    * \ns Instance
+    * \ns Entity
     * \desc The current frame index of the entity's current animation.
     */
-    LINK_INT(CurrentFrame);
-    /***
+	LINK_INT(CurrentFrame);
+	/***
     * \field CurrentFrameCount
-    * \type Integer
+    * \type integer
     * \default -1
-    * \ns Instance
+    * \ns Entity
     * \desc The frame count of the entity's current animation.
     */
-    LINK_INT(CurrentFrameCount);
-    /***
+	LINK_INT(CurrentFrameCount);
+	/***
     * \field AnimationSpeed
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The animation speed of the entity's animation.
     */
-    LINK_DEC(AnimationSpeed);
-    /***
+	LINK_DEC(AnimationSpeed);
+	/***
     * \field AnimationTimer
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The animation timer of the entity's animation.
     */
-    LINK_DEC(AnimationTimer);
-    /***
+	LINK_DEC(AnimationTimer);
+	/***
     * \field AnimationFrameDuration
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
+    * \ns Entity
     * \desc The duration of the entity's current animation frame.
     */
-    LINK_INT(AnimationFrameDuration);
-    /***
+	LINK_INT(AnimationFrameDuration);
+	/***
     * \field AnimationLoopIndex
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
+    * \ns Entity
     * \desc The loop index of entity's current animation.
     */
-    LINK_INT(AnimationLoopIndex);
-    /***
+	LINK_INT(AnimationLoopIndex);
+	/***
+	* \field RotationStyle
+	* \type <ref ROTSTYLE_*>
+	* \default ROTSTYLE_NONE
+	* \ns Entity
+	* \desc The rotation style to use when this entity's sprite is drawn by <ref Draw.SpriteBasic>.
+	*/
+	LINK_INT(RotationStyle);
+	/***
     * \field AnimationSpeedMult
-    * \type Decimal
+    * \type decimal
     * \default 1.0
-    * \ns Instance
+    * \ns Entity
     * \desc The animation speed multiplier of the entity.
     */
-    LINK_DEC(AnimationSpeedMult);
-    /***
+	LINK_DEC(AnimationSpeedMult);
+	/***
     * \field AnimationSpeedAdd
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
-    * \desc This value is added to the result of <linkto ref="instance.AnimationSpeed"></linkto> * <linkto ref="instance.AnimationSpeedMult"></linkto> when the entity is being animated.
+    * \ns Entity
+    * \desc This value is added to the result of <ref Entity.AnimationSpeed> * <ref Entity.AnimationSpeedMult> when the entity is being animated.
     */
-    LINK_INT(AnimationSpeedAdd);
-    /***
+	LINK_INT(AnimationSpeedAdd);
+	/***
+    * \field PrevAnimation
+    * \type integer
+    * \default -1
+    * \ns Entity
+    * \desc The previous sprite animation index of the entity, if it was changed.
+    */
+	LINK_INT(PrevAnimation);
+	/***
     * \field AutoAnimate
-    * \type Boolean
+    * \type boolean
     * \default true
-    * \ns Instance
-    * \desc Whether <linkto ref="instance.Animate"></linkto> is automatically called for this entity.
+    * \ns Entity
+    * \desc Whether <ref Entity.Animate> is automatically called for this entity.
     */
-    LINK_INT(AutoAnimate);
+	LINK_INT(AutoAnimate);
+	/***
+	* \field AnimationFrameSkip
+	* \type boolean
+	* \default true
+	* \ns Entity
+	* \desc Whether <ref Entity.Animate> has skip-capable animating. Entities with this on can skip animation frames if <ref Entity.AnimationSpeed> passes multiples of <ref Entity.AnimationFrameDuration>.
+	*/
+	LINK_INT(AnimationFrameSkip);
 
-    /***
+	/***
     * \field OnScreen
-    * \type Boolean
+    * \type boolean
     * \default true
-    * \ns Instance
-    * \desc See <linkto ref="instance.InRange"></linkto>.
+    * \ns Entity
+    * \desc Alias for <ref Entity.InRange>.
     */
-    LINK_INT(OnScreen);
-    /***
+    Instance->InstanceObj.Fields->Put("OnScreen", INTEGER_LINK_VAL(&InRange));
+	/***
     * \field WasOffScreen
-    * \type Boolean
+    * \type boolean
     * \default false
-    * \ns Instance
+    * \ns Entity
     * \desc Indicates if the entity was previously off-screen.
     */
-    LINK_INT(WasOffScreen);
-    /***
-    * \field OnScreenHitboxW
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc Alias for <linkto ref="instance.UpdateRegionW"></linkto>.
+	LINK_INT(WasOffScreen);
+	/***
+	* \field UpdateRegionW
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The horizontal on-screen range where the entity can update. If this is set to `0.0`, the entity will update regardless of the camera's horizontal position.
+	*/
+	Instance->InstanceObj.Fields->Put("UpdateRegionW", DECIMAL_LINK_VAL(&OnScreenHitboxW));
+	/***
+	* \field UpdateRegionH
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The vertical on-screen range where the entity can update. If this is set to `0.0`, the entity will update regardless of the camera's vertical position.
+	*/
+	Instance->InstanceObj.Fields->Put("UpdateRegionH", DECIMAL_LINK_VAL(&OnScreenHitboxH));
+	/***
+	* \field UpdateRegionTop
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The top on-screen range where the entity can update. If set to `0.0`, the entity will use its <ref Entity.UpdateRegionH> instead.
+	*/
+	Instance->InstanceObj.Fields->Put("UpdateRegionTop", DECIMAL_LINK_VAL(&OnScreenRegionTop));
+	/***
+	* \field UpdateRegionLeft
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The left on-screen range where the entity can update. If set to `0.0`, the entity will use its <ref Entity.UpdateRegionW> instead.
+	*/
+	Instance->InstanceObj.Fields->Put(
+		"UpdateRegionLeft", DECIMAL_LINK_VAL(&OnScreenRegionLeft));
+	/***
+	* \field UpdateRegionRight
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The left on-screen range where the entity can update. If set to `0.0`, the entity will use its <ref Entity.UpdateRegionW> instead.
+	*/
+	Instance->InstanceObj.Fields->Put(
+		"UpdateRegionRight", DECIMAL_LINK_VAL(&OnScreenRegionRight));
+	/***
+	* \field UpdateRegionBottom
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The bottom on-screen range where the entity can update. If set to `0.0`, the entity will use its <ref Entity.UpdateRegionH> instead.
+	*/
+	Instance->InstanceObj.Fields->Put(
+		"UpdateRegionBottom", DECIMAL_LINK_VAL(&OnScreenRegionBottom));
+	/***
+	* \field OnScreenHitboxW
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc Alias for <ref Entity.UpdateRegionW>.
+	*/
+	LINK_DEC(OnScreenHitboxW);
+	/***
+	* \field OnScreenHitboxH
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc Alias for <ref Entity.UpdateRegionH>.
+	*/
+	LINK_DEC(OnScreenHitboxH);
+	/***
+	* \field RenderRegionW
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The horizontal on-screen range where the entity can render. If set to `0.0`, the entity will render regardless of the camera's horizontal position.
+	*/
+	LINK_DEC(RenderRegionW);
+	/***
+	* \field RenderRegionH
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The vertical on-screen range where the entity can render. If set to `0.0`, the entity will render regardless of the camera's vertical position.
+	*/
+	LINK_DEC(RenderRegionH);
+	/***
+	* \field RenderRegionTop
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The top on-screen range where the entity can render. If set to `0.0`, the entity will use its <ref Entity.RenderRegionH> instead.
+	*/
+	LINK_DEC(RenderRegionTop);
+	/***
+	* \field RenderRegionLeft
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The left on-screen range where the entity can render. If this and <ref Entity.RenderRegionRight> are set to `0.0`, the entity will use its <ref Entity.RenderRegionW> instead.
+	*/
+	LINK_DEC(RenderRegionLeft);
+	/***
+	* \field RenderRegionRight
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The right on-screen range where the entity can render. If this and <ref Entity.RenderRegionLeft> are set to `0.0`, the entity will use its <ref Entity.RenderRegionW> instead.
+	*/
+	LINK_DEC(RenderRegionRight);
+	/***
+	* \field RenderRegionBottom
+	* \type decimal
+	* \default 0.0
+	* \ns Entity
+	* \desc The bottom on-screen range where the entity can render. If set to `0.0`, the entity will use its <ref Entity.RenderRegionH> instead.
+	*/
+	LINK_DEC(RenderRegionBottom);
+	/***
+    * \field Visible
+    * \type boolean
+    * \default true
+    * \ns Entity
+    * \desc Whether the entity is visible.
     */
-    LINK_DEC(OnScreenHitboxW);
-    /***
-    * \field OnScreenHitboxH
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc Alias for <linkto ref="instance.UpdateRegionH"></linkto>.
-    */
-    LINK_DEC(OnScreenHitboxH);
-    /***
+	LINK_INT(Visible);
+	/***
     * \field ViewRenderFlag
-    * \type Integer
-    * \default ~0
-    * \ns Instance
-    * \desc A bitfield that indicates in which views the entity renders. By default, this is on for every view.
+    * \type bitfield
+    * \default 0xFFFFFFFF
+    * \ns Entity
+    * \desc Which views the entity can render on. By default, this is on for every view.
     */
-    LINK_INT(ViewRenderFlag);
-    /***
+	LINK_INT(ViewRenderFlag);
+	/***
     * \field ViewOverrideFlag
-    * \type Integer
+    * \type bitfield
     * \default 0
-    * \ns Instance
-    * \desc A bitfield similar to <linkto ref="instance.ViewRenderFlag"></linkto>. Bypasses each view's entity rendering toggle set by <linkto ref="Scene.SetObjectViewRender"></linkto>.
+    * \ns Entity
+    * \desc Bypasses each view's entity rendering toggle set by <ref Scene.SetObjectViewRender>.
     */
-    LINK_INT(ViewOverrideFlag);
+	LINK_INT(ViewOverrideFlag);
 
-    /***
-    * \field UpdateRegionW
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The horizontal on-screen range where the entity can update. If this is set to <code>0.0</code>, the entity will update regardless of the camera's horizontal position.
-    */
-    Instance->Fields->Put("UpdateRegionW", DECIMAL_LINK_VAL(&OnScreenHitboxW));
-    /***
-    * \field UpdateRegionH
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The vertical on-screen range where the entity can update. If this is set to <code>0.0</code>, the entity will update regardless of the camera's vertical position.
-    */
-    Instance->Fields->Put("UpdateRegionH", DECIMAL_LINK_VAL(&OnScreenHitboxH));
-    /***
-    * \field UpdateRegionTop
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The top on-screen range where the entity can update. If set to <code>0.0</code>, the entity will use its <linkto ref="instance.UpdateRegionH">UpdateRegionH</linkto> instead.
-    */
-    Instance->Fields->Put("UpdateRegionTop", DECIMAL_LINK_VAL(&OnScreenRegionTop));
-    /***
-    * \field UpdateRegionLeft
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The left on-screen range where the entity can update. If set to <code>0.0</code>, the entity will use its <linkto ref="instance.UpdateRegionW">UpdateRegionW</linkto> instead.
-    */
-    Instance->Fields->Put("UpdateRegionLeft", DECIMAL_LINK_VAL(&OnScreenRegionLeft));
-    /***
-    * \field UpdateRegionRight
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The left on-screen range where the entity can update. If set to <code>0.0</code>, the entity will use its <linkto ref="instance.UpdateRegionW">UpdateRegionW</linkto> instead.
-    */
-    Instance->Fields->Put("UpdateRegionRight", DECIMAL_LINK_VAL(&OnScreenRegionRight));
-    /***
-    * \field UpdateRegionBottom
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The bottom on-screen range where the entity can update. If set to <code>0.0</code>, the entity will use its <linkto ref="instance.UpdateRegionH">UpdateRegionH</linkto> instead.
-    */
-    Instance->Fields->Put("UpdateRegionBottom", DECIMAL_LINK_VAL(&OnScreenRegionBottom));
-    /***
-    * \field RenderRegionW
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The horizontal on-screen range where the entity can render. If set to <code>0.0</code>, the entity will render regardless of the camera's horizontal position.
-    */
-    LINK_DEC(RenderRegionW);
-    /***
-    * \field RenderRegionH
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The vertical on-screen range where the entity can render. If set to <code>0.0</code>, the entity will render regardless of the camera's vertical position.
-    */
-    LINK_DEC(RenderRegionH);
-    /***
-    * \field RenderRegionTop
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The top on-screen range where the entity can render. If set to <code>0.0</code>, the entity will use its <linkto ref="instance.RenderRegionH">RenderRegionH</linkto> instead.
-    */
-    LINK_DEC(RenderRegionTop);
-    /***
-    * \field RenderRegionLeft
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The left on-screen range where the entity can render. If this and <linkto ref="instance.RenderRegionRight"></linkto> are set to <code>0.0</code>, the entity will use its <linkto ref="instance.RenderRegionW">RenderRegionW</linkto> instead.
-    */
-    LINK_DEC(RenderRegionLeft);
-    /***
-    * \field RenderRegionRight
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The left on-screen range where the entity can render. If this and <linkto ref="instance.RenderRegionLeft"></linkto> are set to <code>0.0</code>, the entity will use its <linkto ref="instance.RenderRegionW">RenderRegionW</linkto> instead.
-    */
-    LINK_DEC(RenderRegionRight);
-    /***
-    * \field RenderRegionBottom
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc The bottom on-screen range where the entity can render. If set to <code>0.0</code>, the entity will use its <linkto ref="instance.RenderRegionH">RenderRegionH</linkto> instead.
-    */
-    LINK_DEC(RenderRegionBottom);
-
-    /***
+	/***
     * \field HitboxW
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The width of the hitbox.
     */
-    Instance->Fields->Put("HitboxW", DECIMAL_LINK_VAL(&Hitbox.Width));
-    /***
+	Instance->InstanceObj.Fields->Put("HitboxW", DECIMAL_LINK_VAL(&Hitbox.Width));
+	/***
     * \field HitboxH
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The height of the hitbox.
     */
-    Instance->Fields->Put("HitboxH", DECIMAL_LINK_VAL(&Hitbox.Height));
-    /***
+	Instance->InstanceObj.Fields->Put("HitboxH", DECIMAL_LINK_VAL(&Hitbox.Height));
+	/***
     * \field HitboxOffX
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The horizontal offset of the hitbox.
     */
-    Instance->Fields->Put("HitboxOffX", DECIMAL_LINK_VAL(&Hitbox.OffsetX));
-    /***
+	Instance->InstanceObj.Fields->Put("HitboxOffX", DECIMAL_LINK_VAL(&Hitbox.OffsetX));
+	/***
     * \field HitboxOffY
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The vertical offset of the hitbox.
     */
-    Instance->Fields->Put("HitboxOffY", DECIMAL_LINK_VAL(&Hitbox.OffsetY));
+	Instance->InstanceObj.Fields->Put("HitboxOffY", DECIMAL_LINK_VAL(&Hitbox.OffsetY));
 
-    /***
+	/***
     * \field HitboxLeft
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The left extent of the hitbox.
     */
-    // See ScriptEntity::VM_Getter and ScriptEntity::VM_Setter
-    /***
+	// See EntityImpl::VM_PropertyGet and EntityImpl::VM_PropertySet
+	/***
     * \field HitboxTop
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The top extent of the hitbox.
     */
-    // See ScriptEntity::VM_Getter and ScriptEntity::VM_Setter
-    /***
+	// See EntityImpl::VM_PropertyGet and EntityImpl::VM_PropertySet
+	/***
     * \field HitboxRight
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The right extent of the hitbox.
     */
-    // See ScriptEntity::VM_Getter and ScriptEntity::VM_Setter
-    /***
+	// See EntityImpl::VM_PropertyGet and EntityImpl::VM_PropertySet
+	/***
     * \field HitboxBottom
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
+    * \ns Entity
     * \desc The bottom extent of the hitbox.
     */
-    // See ScriptEntity::VM_Getter and ScriptEntity::VM_Setter
+	// See EntityImpl::VM_PropertyGet and EntityImpl::VM_PropertySet
 
-    /***
-    * \field FlipFlag
-    * \type Integer
-    * \default 0
-    * \ns Instance
-    * \desc Bitfield that indicates whether the entity is X/Y flipped.
-    */
-    LINK_INT(FlipFlag);
-
-    /***
-    * \field VelocityX
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc Similar to <linkto ref="instance.XSpeed"></linkto>.
-    */
-    LINK_DEC(VelocityX);
-    /***
-    * \field VelocityX
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc Similar to <linkto ref="instance.YSpeed"></linkto>.
-    */
-    LINK_DEC(VelocityY);
-    /***
-    * \field GroundVel
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    * \desc Similar to <linkto ref="instance.GroundSpeed"></linkto>.
-    */
-    LINK_DEC(GroundVel);
-    /***
+	/***
     * \field Direction
-    * \type Integer
-    * \default 0
-    * \ns Instance
-    * \desc Similar to <linkto ref="instance.FlipFlag"></linkto>.
+    * \type <ref FLIP_*>
+    * \default FLIP_NONE
+    * \ns Entity
+    * \desc Indicates whether the entity is X/Y flipped.
     */
-    LINK_INT(Direction);
-    /***
-    * \field OnGround
-    * \type Boolean
-    * \default false
-    * \ns Instance
-    * \desc Similar to <linkto ref="instance.Ground"></linkto>.
-    */
-    LINK_INT(OnGround);
+	LINK_INT(Direction);
+	/***
+	* \field FlipFlag
+	* \type <ref FLIP_*>
+	* \default FLIP_NONE
+	* \ns Entity
+	* \desc Alias for <ref Entity.Direction>.
+	*/
+	Instance->InstanceObj.Fields->Put("FlipFlag", INTEGER_LINK_VAL(&Direction));
 
-    /***
+	/***
     * \field SlotID
-    * \type Integer
+    * \type integer
     * \default -1
-    * \ns Instance
-    * \desc If this entity was spawned from a scene file, this field contains the slot ID in which it was placed. If not, this field contains the default value of <code>-1</code>.
+    * \ns Entity
+    * \desc If this entity was spawned from a scene file, this field contains the slot ID in which it was placed. If not, this field contains the default value of `-1`.
     */
-    LINK_INT(SlotID);
+	LINK_INT(SlotID);
 
-    /***
-    * \field ZDepth
-    * \type Decimal
-    * \default 0.0
-    * \ns Instance
-    */
-    LINK_DEC(ZDepth);
+	/***
+	* \field Filter
+	* \type integer
+	* \default 0xFF
+	* \ns Entity
+	* \desc If there is a scene list loaded, this checks to see whether the entity would spawn based on the scene's filter. See <ref Scene_Filter>.
+	*/
+	LINK_INT(Filter);
 
-    /***
+	/***
     * \field CollisionLayers
-    * \type Integer
+    * \type bitfield
     * \default 0
-    * \ns Instance
-    * \desc A bitfield containing which layers an entity is able to collide with.
+    * \ns Entity
+    * \desc Which layers the entity is able to collide with.
     */
-    LINK_INT(CollisionLayers);
-    /***
+	LINK_INT(CollisionLayers);
+	/***
     * \field CollisionPlane
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
+    * \ns Entity
+    * \desc The collision plane of the entity.
     */
-    LINK_INT(CollisionPlane);
-    /***
+	LINK_INT(CollisionPlane);
+	/***
     * \field CollisionMode
-    * \type Integer
-    * \default 0
-    * \ns Instance
+    * \type <ref CMODE_*>
+    * \default CMODE_FLOOR
+    * \ns Entity
+    * \desc The tile collision mode of the entity.
     */
-    LINK_INT(CollisionMode);
-     /***
+	LINK_INT(CollisionMode);
+	/***
     * \field TileCollisions
-    * \type Integer
-    * \default 0
-    * \ns Instance
+    * \type <ref TILECOLLISION_*>
+    * \default TILECOLLISION_NONE
+    * \ns Entity
+    * \desc The direction of tile collisions for this entity.
     */
-    LINK_INT(TileCollisions);
+	LINK_INT(TileCollisions);
 
-    /***
+	/***
     * \field Activity
-    * \type Enumeration
+    * \type <ref ACTIVE_*>
     * \default ACTIVE_BOUNDS
-    * \ns Instance
+    * \ns Entity
     * \desc The active status for this entity.
     */
-    LINK_INT(Activity);
-    /***
+	LINK_INT(Activity);
+	/***
     * \field InRange
-    * \type Boolean
+    * \type boolean
     * \default false
-    * \ns Instance
-    * \desc Whether this entity is within active range; see <linkto ref="instance.Activity"></linkto>.
+    * \ns Entity
+    * \desc Whether this entity is within active range; see <ref Entity.Activity>.
     */
-    LINK_INT(InRange);
+	LINK_INT(InRange);
 
-    /***
+	/***
     * \field SensorX
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
-    * \desc After a successful call to <linkto ref="TileCollision.Line"></linkto>, this value will contain the horizontal position of where the entity collided.
+    * \ns Entity
+    * \desc After a successful call to <ref TileCollision.Line>, this value will contain the horizontal position of where the entity collided.
     */
-    LINK_DEC(SensorX);
-    /***
+	LINK_DEC(SensorX);
+	/***
     * \field SensorY
-    * \type Decimal
+    * \type decimal
     * \default 0.0
-    * \ns Instance
-    * \desc After a successful call to <linkto ref="TileCollision.Line"></linkto>, this value will contain the vertical position of where the entity collided.
+    * \ns Entity
+    * \desc After a successful call to <ref TileCollision.Line>, this value will contain the vertical position of where the entity collided.
     */
-    LINK_DEC(SensorY);
-    /***
-    * \field SensorAngle
-    * \type Boolean
+	LINK_DEC(SensorY);
+	/***
+    * \field SensorCollided
+    * \type boolean
     * \default 0
-    * \ns Instance
-    * \desc After a successful call to <linkto ref="TileCollision.Line"></linkto>, this value will be <code>true</code> if the entity collided with a tile, <code>false</code> otherwise.
+    * \ns Entity
+    * \desc After a successful call to <ref TileCollision.Line>, this value will be `true` if the entity collided with a tile, `false` otherwise.
     */
-    LINK_INT(SensorCollided);
-    /***
+	LINK_INT(SensorCollided);
+	/***
     * \field SensorAngle
-    * \type Integer
+    * \type integer
     * \default 0
-    * \ns Instance
-    * \desc After a successful call to <linkto ref="TileCollision.Line"></linkto>, this value will contain the angle of the tile within the range of <code>0x00</code> - <code>0xFF</code>.
+    * \ns Entity
+    * \desc After a successful call to <ref TileCollision.Line>, this value will contain the angle of the tile within the range of `0x00` - `0xFF`.
     */
-    LINK_INT(SensorAngle);
+	LINK_INT(SensorAngle);
 
-    /***
+	/***
     * \field Active
-    * \type Boolean
+    * \type boolean
     * \default true
-    * \ns Instance
+    * \ns Entity
     * \desc Whether the entity is active. If set to false, the entity is removed at the end of the frame.
     */
-    LINK_BOOL(Active);
-    /***
+	LINK_BOOL(Active);
+	/***
     * \field Pauseable
-    * \type Boolean
+    * \type boolean
     * \default true
-    * \ns Instance
+    * \ns Entity
     * \desc Whether the entity stops updating when the scene is paused.
     */
-    LINK_BOOL(Pauseable);
-    /***
+	LINK_BOOL(Pauseable);
+	/***
     * \field Persistent
-    * \type Boolean
+    * \type boolean
     * \default false
-    * \ns Instance
-    * \desc See <linkto ref="instance.Persistence"></linkto> instead.
+    * \ns Entity
+    * \deprecated See <ref Entity.Persistence> instead.
     */
-    Instance->Fields->Put("Persistent", INTEGER_LINK_VAL(&Persistence));
-    /***
+	Instance->InstanceObj.Fields->Put("Persistent", INTEGER_LINK_VAL(&Persistence));
+	/***
     * \field Interactable
-    * \type Boolean
+    * \type boolean
     * \default true
-    * \ns Instance
-    * \desc Whether the entity can be interacted with. If set to <code>false</code>, the entity will not be included in <code>with</code> iterations.
+    * \ns Entity
+    * \desc Whether the entity can be interacted with. If set to `false`, the entity will not be included in `with` iterations.
     */
-    LINK_BOOL(Interactable);
-    /***
+	LINK_BOOL(Interactable);
+	/***
     * \field Persistence
-    * \type Integer
+    * \type <ref Persistence_*>
     * \default Persistence_NONE
-    * \ns Instance
+    * \ns Entity
     * \desc Whether the entity persists between scenes.
     */
-    LINK_INT(Persistence);
+	LINK_INT(Persistence);
 }
 
 #undef LINK_INT
 #undef LINK_DEC
 #undef LINK_BOOL
 
-PRIVATE bool ScriptEntity::GetCallableValue(Uint32 hash, VMValue& value) {
-    // First look for a field which may shadow a method.
-    VMValue result;
-    if (Instance->Fields->GetIfExists(hash, &result)) {
-        value = result;
-        return true;
-    }
+// This copies Entity's methods into the instance's fields.
+// If there is a method in the class with the same name, it's not copied.
+void ScriptEntity::AddEntityClassMethods() {
+	HashMap<VMValue>* srcMethods = EntityImpl::Class->Methods;
 
-    ObjClass* klass = Instance->Object.Class;
-    if (klass->Methods->GetIfExists(hash, &result)) {
-        value = result;
-        return true;
-    }
-    else {
-        value = ScriptManager::GetClassMethod(klass, hash);
-        if (!IS_NULL(value))
-            return true;
-    }
-
-    return false;
-}
-PRIVATE ObjFunction* ScriptEntity::GetCallableFunction(Uint32 hash) {
-    ObjClass* klass = Instance->Object.Class;
-    VMValue result;
-    if (klass->Methods->GetIfExists(hash, &result))
-        return AS_FUNCTION(result);
-    return NULL;
-}
-PUBLIC bool ScriptEntity::RunFunction(Uint32 hash) {
-    if (!Instance)
-        return false;
-
-    // NOTE:
-    // If the function doesn't exist, this is not an error VM side,
-    // treat whatever we call from C++ as a virtual-like function.
-    VMValue value;
-    if (!ScriptEntity::GetCallableValue(hash, value))
-        return true;
-
-    VMThread* thread = ScriptManager::Threads + 0;
-
-    VMValue* stackTop = thread->StackTop;
-
-    thread->Push(OBJECT_VAL(Instance));
-    thread->InvokeForEntity(value, 0);
-
-    thread->StackTop = stackTop;
-
-    return true;
-}
-PUBLIC bool ScriptEntity::RunCreateFunction(VMValue flag) {
-    // NOTE:
-    // If the function doesn't exist, this is not an error VM side,
-    // treat whatever we call from C++ as a virtual-like function.
-    ObjFunction* func = ScriptEntity::GetCallableFunction(Hash_Create);
-    if (!func)
-        return true;
-
-    VMThread* thread = ScriptManager::Threads + 0;
-
-    VMValue* stackTop = thread->StackTop;
-
-    thread->Push(OBJECT_VAL(Instance));
-
-    if (func->Arity == 0) {
-        thread->RunEntityFunction(func, 0);
-    }
-    else {
-        thread->Push(flag);
-        thread->RunEntityFunction(func, 1);
-    }
-
-    thread->StackTop = stackTop;
-
-    return false;
-}
-PUBLIC bool ScriptEntity::RunInitializer() {
-    if (!HasInitializer(Instance->Object.Class))
-        return true;
-
-    VMThread* thread = ScriptManager::Threads + 0;
-
-    VMValue* stackTop = thread->StackTop;
-
-    thread->Push(OBJECT_VAL(Instance)); // Pushes this instance into the stack so that 'this' can work
-    thread->CallInitializer(Instance->Object.Class->Initializer);
-    thread->Pop(); // Pops it
-
-    thread->StackTop = stackTop;
-
-    return true;
+	srcMethods->WithAll([this](Uint32 methodHash, VMValue value) -> void {
+		if (!ScriptManager::ClassHasMethod(Instance->Object.Class, methodHash)) {
+			Instance->InstanceObj.Fields->Put(methodHash, value);
+		}
+	});
 }
 
-PUBLIC bool ScriptEntity::ChangeClass(const char* className) {
-    if (!ScriptManager::ClassExists(className))
-        return false;
-
-    if (!ScriptManager::Classes->Exists(className) && !ScriptManager::LoadObjectClass(className, true))
-        return false;
-
-    ObjClass* newClass = ScriptManager::GetObjectClass(className);
-    if (!newClass)
-        return false;
-
-    ObjectList* objectList = Scene::GetObjectList(className);
-    if (!objectList)
-        return false;
-
-    // Remove from the old list
-    List->Remove(this);
-
-    // Add to the new list
-    List = objectList;
-    List->Add(this);
-
-    // Change the script-side class proper
-    Instance->Object.Class = newClass;
-
-    return true;
+void ScriptEntity::SetUseFixedTimestep(bool useFixedTimestep) {
+	if (useFixedTimestep) {
+		FixedUpdateEarlyHash = Hash_UpdateEarly;
+		FixedUpdateHash = Hash_Update;
+		FixedUpdateLateHash = Hash_UpdateLate;
+	}
+	else {
+		FixedUpdateEarlyHash = Hash_FixedUpdateEarly;
+		FixedUpdateHash = Hash_FixedUpdate;
+		FixedUpdateLateHash = Hash_FixedUpdateLate;
+	}
 }
 
-PUBLIC void ScriptEntity::Copy(ScriptEntity* other, bool copyClass) {
-    CopyFields(other);
+bool ScriptEntity::GetCallableValue(Uint32 hash, VMValue& value) {
+	VMValue result;
 
-    if (copyClass)
-        other->ChangeClass(List->ObjectName);
+	// Look for a field in the instance which may shadow a method.
+	if (Instance->InstanceObj.Fields->GetIfExists(hash, &result)) {
+		value = result;
+		return true;
+	}
 
-    // Copy properties
-    HashMap<VMValue>* srcProperties = Properties;
-    HashMap<VMValue>* destProperties = other->Properties;
+	ObjClass* klass = Instance->Object.Class;
+	if (ScriptManager::GetClassMethod((Obj*)Instance, klass, hash, &result)) {
+		value = result;
+		return true;
+	}
 
-    destProperties->Clear();
+	return false;
+}
+bool ScriptEntity::RunFunction(Uint32 hash) {
+	if (!Instance) {
+		return false;
+	}
 
-    srcProperties->WithAll([destProperties](Uint32 key, VMValue value) -> void {
-        destProperties->Put(key, value);
-    });
+	// NOTE:
+	// If the function doesn't exist, this is not an error VM side,
+	// treat whatever we call from C++ as a virtual-like function.
+	VMValue callable;
+	if (!GetCallableValue(hash, callable)) {
+		return false;
+	}
+
+	VMThread* thread = ScriptManager::Threads + 0;
+	VMValue* stackTop = thread->StackTop;
+
+	thread->Push(OBJECT_VAL(Instance));
+	thread->InvokeForEntity(callable, 0);
+
+	thread->StackTop = stackTop;
+
+	return true;
+}
+bool ScriptEntity::RunCreateFunction(VMValue flag) {
+	VMValue callable;
+	if (!GetCallableValue(Hash_Create, callable)) {
+		return false;
+	}
+
+	VMThread* thread = ScriptManager::Threads + 0;
+	VMValue* stackTop = thread->StackTop;
+	thread->Push(OBJECT_VAL(Instance));
+
+	// Create cannot be a native currently, but when it can, this IS_FUNCTION check will be needed.
+	if (IS_FUNCTION(callable) && AS_FUNCTION(callable)->Arity == 0) {
+		thread->InvokeForEntity(callable, 0);
+	}
+	else {
+		thread->Push(flag);
+		thread->InvokeForEntity(callable, 1);
+	}
+
+	thread->StackTop = stackTop;
+
+	return false;
+}
+bool ScriptEntity::RunInitializer() {
+	if (!Instance || !HasInitializer(Instance->Object.Class)) {
+		return false;
+	}
+
+	VMThread* thread = ScriptManager::Threads + 0;
+
+	VMValue* stackTop = thread->StackTop;
+
+	// Pushes this instance into the stack so that 'this' can work
+	thread->Push(OBJECT_VAL(Instance));
+	thread->CallInitializer(Instance->Object.Class->Initializer);
+	thread->Pop(); // Pops it
+
+	thread->StackTop = stackTop;
+
+	return true;
 }
 
-PUBLIC void ScriptEntity::CopyFields(ScriptEntity* other) {
-    Entity::CopyFields(other);
+bool ScriptEntity::ChangeClass(const char* className) {
+	if (!ScriptManager::ClassExists(className)) {
+		return false;
+	}
 
-    CopyVMFields(other);
+	if (!ScriptManager::LoadObjectClass(className)) {
+		return false;
+	}
+
+	ObjClass* newClass = ScriptManager::GetClass(className);
+	if (!newClass) {
+		return false;
+	}
+
+	ObjectList* objectList = Scene::GetObjectList(className);
+	if (!objectList) {
+		return false;
+	}
+
+	// Remove from the old list
+	List->Remove(this);
+
+	// Add to the new list
+	List = objectList;
+	List->Add(this);
+
+	// Change the script-side class proper
+	Instance->Object.Class = newClass;
+
+	return true;
 }
 
-PUBLIC void ScriptEntity::CopyVMFields(ScriptEntity* other) {
-    Table* srcFields = Instance->Fields;
-    Table* destFields = other->Instance->Fields;
+void ScriptEntity::Copy(ScriptEntity* other, bool copyClass) {
+	CopyFields(other);
 
-    destFields->Clear();
+	if (copyClass) {
+		other->ChangeClass(List->ObjectName);
+	}
 
-    srcFields->WithAll([destFields](Uint32 key, VMValue value) -> void {
-        // Don't copy linked fields, because they point to this entity's built-in fields
-        if (value.Type != VAL_LINKED_INTEGER && value.Type != VAL_LINKED_DECIMAL)
-            destFields->Put(key, value);
-    });
+	// Copy properties
+	if (other->Properties) {
+		other->Properties->WithAll([](Uint32 key, Property value) -> void {
+			Property::Delete(value);
+		});
+		other->Properties->Clear();
+	}
 
-    // Link the built-in fields again, since they have been removed
-    other->LinkFields();
+	if (Properties) {
+		other->InitProperties();
+
+		Properties->WithAll([other](Uint32 key, Property value) -> void {
+			other->Properties->Put(key, value);
+		});
+	}
 }
+
+void ScriptEntity::CopyFields(ScriptEntity* other) {
+	Entity::CopyFields(other);
+
+	CopyVMFields(other);
+}
+
+void ScriptEntity::CopyVMFields(ScriptEntity* other) {
+	Table* srcFields = Instance->InstanceObj.Fields;
+	Table* destFields = other->Instance->InstanceObj.Fields;
+
+	destFields->Clear();
+
+	srcFields->WithAll([destFields](Uint32 key, VMValue value) -> void {
+		// Don't copy linked fields, because they point to this entity's built-in fields
+		if (value.Type != VAL_LINKED_INTEGER && value.Type != VAL_LINKED_DECIMAL) {
+			destFields->Put(key, value);
+		}
+	});
+
+	// Link the built-in fields again, since they have been removed
+	other->LinkFields();
+
+	// Also re-add Entity's methods
+	other->AddEntityClassMethods();
+}
+
+void ScriptEntity::MarkForGarbageCollection() {}
 
 // Events called from C++
-PUBLIC void ScriptEntity::Initialize() {
-    if (!Instance) return;
+void ScriptEntity::Initialize() {
+	Entity::Initialize();
 
-    // Set defaults
-    Active = true;
-    Pauseable = true;
-    Activity = ACTIVE_BOUNDS;
-    InRange = false;
+	Instance->InstanceObj.Fields->Clear();
+	AddEntityClassMethods();
+	LinkFields();
 
-    XSpeed = 0.0f;
-    YSpeed = 0.0f;
-    GroundSpeed = 0.0f;
-    Gravity = 0.0f;
-    Ground = false;
-
-    WasOffScreen = false;
-    OnScreen = true;
-    OnScreenHitboxW = 0.0f;
-    OnScreenHitboxH = 0.0f;
-    OnScreenRegionTop = 0.0f;
-    OnScreenRegionLeft = 0.0f;
-    OnScreenRegionRight = 0.0f;
-    OnScreenRegionBottom = 0.0f;
-    ViewRenderFlag = 0xFFFFFFFF;
-    ViewOverrideFlag = 0;
-    RenderRegionW = 0.0f;
-    RenderRegionH = 0.0f;
-    RenderRegionTop = 0.0f;
-    RenderRegionLeft = 0.0f;
-    RenderRegionRight = 0.0f;
-    RenderRegionBottom = 0.0f;
-
-    Angle = 0;
-    AngleMode = 0;
-    Rotation = 0.0;
-    AutoPhysics = false;
-
-    Priority = 0;
-    PriorityListIndex = -1;
-    PriorityOld = -1;
-
-    Sprite = -1;
-    CurrentAnimation = -1;
-    CurrentFrame = -1;
-    CurrentFrameCount = 0;
-    AnimationSpeedMult = 1.0;
-    AnimationSpeedAdd = 0;
-    AutoAnimate = ScriptEntity::DisableAutoAnimate ? false : true;
-    AnimationSpeed = 0;
-    AnimationTimer = 0.0;
-    AnimationFrameDuration = 0;
-    AnimationLoopIndex = 0;
-
-    Hitbox.Clear();
-    FlipFlag = 0;
-
-    VelocityX = 0.0f;
-    VelocityY = 0.0f;
-    GroundVel = 0.0f;
-    GravityStrength = 0.0f;
-    OnGround = false;
-    Direction = 0;
-
-    Persistence = Persistence_NONE;
-    Interactable = true;
-
-    RunInitializer();
+	RunInitializer();
 }
-PUBLIC void ScriptEntity::Create(VMValue flag) {
-    if (!Instance) return;
+void ScriptEntity::Create(VMValue flag) {
+	if (!Instance || !Active) {
+		return;
+	}
 
-    Created = true;
+	Created = true;
 
-    RunCreateFunction(flag);
-    if (Sprite >= 0 && CurrentAnimation < 0) {
-        SetAnimation(0, 0);
-    }
+	RunCreateFunction(flag);
+	if (Sprite >= 0 && CurrentAnimation < 0) {
+		SetAnimation(0, 0);
+	}
 }
-PUBLIC void ScriptEntity::Create() {
-    Create(INTEGER_VAL(0));
+void ScriptEntity::Create() {
+	Create(INTEGER_VAL(0));
 }
-PUBLIC void ScriptEntity::PostCreate() {
-    if (!Instance) return;
+void ScriptEntity::PostCreate() {
+	if (!Instance || !Active) {
+		return;
+	}
 
-    PostCreated = true;
+	PostCreated = true;
 
-    RunFunction(Hash_PostCreate);
+	RunFunction(Hash_PostCreate);
 }
-PUBLIC void ScriptEntity::UpdateEarly() {
-    if (!Active) return;
+void ScriptEntity::UpdateEarly() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_UpdateEarly);
+	RunFunction(Hash_UpdateEarly);
 }
-PUBLIC void ScriptEntity::Update() {
-    if (!Active) return;
+void ScriptEntity::Update() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_Update);
+	RunFunction(Hash_Update);
 }
-PUBLIC void ScriptEntity::UpdateLate() {
-    if (!Active) return;
+void ScriptEntity::UpdateLate() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_UpdateLate);
-
-    if (AutoAnimate)
-        Animate();
-    if (AutoPhysics)
-        ApplyMotion();
+	RunFunction(Hash_UpdateLate);
 }
-PUBLIC void ScriptEntity::RenderEarly() {
-    if (!Active) return;
+void ScriptEntity::FixedUpdateEarly() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_RenderEarly);
+	RunFunction(FixedUpdateEarlyHash);
 }
-PUBLIC void ScriptEntity::Render(int CamX, int CamY) {
-    if (!Active) return;
+void ScriptEntity::FixedUpdate() {
+	if (!Active) {
+		return;
+	}
 
-    if (RunFunction(Hash_Render)) {
-        // Default render
-    }
+	RunFunction(FixedUpdateHash);
 }
-PUBLIC void ScriptEntity::RenderLate() {
-    if (!Active) return;
+void ScriptEntity::FixedUpdateLate() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_RenderLate);
+	RunFunction(FixedUpdateLateHash);
+
+	Entity::FixedUpdateLate();
 }
-PUBLIC void ScriptEntity::OnAnimationFinish() {
-    RunFunction(Hash_OnAnimationFinish);
+void ScriptEntity::RenderEarly() {
+	if (!Active) {
+		return;
+	}
+
+	RunFunction(Hash_RenderEarly);
 }
-PUBLIC void ScriptEntity::OnSceneLoad() {
-    if (!Active) return;
+void ScriptEntity::Render() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_OnSceneLoad);
+	RunFunction(Hash_Render);
 }
-PUBLIC void ScriptEntity::OnSceneRestart() {
-    if (!Active) return;
+void ScriptEntity::RenderLate() {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_OnSceneRestart);
+	RunFunction(Hash_RenderLate);
 }
-PUBLIC void ScriptEntity::GameStart() {
-    RunFunction(Hash_GameStart);
+#define CAN_CALL_ENTITY_IMPL(fnName) \
+	(!GetCallableValue(Hash_##fnName, callable) || \
+		(IS_NATIVE_FUNCTION(callable) && \
+			AS_NATIVE_FUNCTION(callable) == EntityImpl::VM_##fnName))
+void ScriptEntity::SetAnimation(int animation, int frame) {
+	if (!Active) {
+		return;
+	}
+
+	VMValue callable;
+	if (CAN_CALL_ENTITY_IMPL(SetAnimation)) {
+		Entity::SetAnimation(animation, frame);
+		return;
+	}
+
+	VMThread* thread = ScriptManager::Threads + 0;
+	VMValue* stackTop = thread->StackTop;
+	thread->Push(OBJECT_VAL(Instance));
+	thread->Push(INTEGER_VAL(animation));
+	thread->Push(INTEGER_VAL(frame));
+	thread->InvokeForEntity(callable, 2);
+	thread->StackTop = stackTop;
 }
-PUBLIC void ScriptEntity::Remove() {
-    if (Removed) return;
-    if (!Instance) return;
+void ScriptEntity::ResetAnimation(int animation, int frame) {
+	if (!Active) {
+		return;
+	}
 
-    RunFunction(Hash_Dispose);
+	VMValue callable;
+	if (CAN_CALL_ENTITY_IMPL(ResetAnimation)) {
+		Entity::ResetAnimation(animation, frame);
+		return;
+	}
 
-    Active = false;
-    Removed = true;
+	VMThread* thread = ScriptManager::Threads + 0;
+	VMValue* stackTop = thread->StackTop;
+	thread->Push(OBJECT_VAL(Instance));
+	thread->Push(INTEGER_VAL(animation));
+	thread->Push(INTEGER_VAL(frame));
+	thread->InvokeForEntity(callable, 2);
+	thread->StackTop = stackTop;
 }
-PUBLIC void ScriptEntity::Dispose() {
-    Entity::Dispose();
-    if (Properties) {
-        delete Properties;
-    }
-    if (Instance) {
-        Instance = NULL;
-    }
+#undef CAN_CALL_ENTITY_IMPL
+void ScriptEntity::OnAnimationFinish() {
+	if (!Active) {
+		return;
+	}
+
+	RunFunction(Hash_OnAnimationFinish);
 }
+void ScriptEntity::OnSceneLoad() {
+	if (!Active) {
+		return;
+	}
 
-// Events/methods called from VM
-#define GET_ARG(argIndex, argFunction) (StandardLibrary::argFunction(args, argIndex, threadID))
-#define GET_ARG_OPT(argIndex, argFunction, argDefault) (argIndex < argCount ? GET_ARG(argIndex, StandardLibrary::argFunction) : argDefault)
-#define GET_ENTITY(argIndex) (GetScriptEntity(args, argIndex, threadID))
-ScriptEntity* GetScriptEntity(Obj* object) {
-    ObjInstance* entity = (ObjInstance*)object;
-    if (!entity->EntityPtr)
-        return nullptr;
-    return (ScriptEntity*)entity->EntityPtr;
+	RunFunction(Hash_OnSceneLoad);
 }
-ScriptEntity* GetScriptEntity(VMValue* args, int index, Uint32 threadID) {
-    ObjInstance* entity = GET_ARG(index, GetInstance);
-    if (!entity->EntityPtr)
-        return nullptr;
-    return (ScriptEntity*)entity->EntityPtr;
+void ScriptEntity::OnSceneRestart() {
+	if (!Active) {
+		return;
+	}
+
+	RunFunction(Hash_OnSceneRestart);
 }
-bool TestEntityCollision(ScriptEntity* other, ScriptEntity* self) {
-    if (!other->Active || other->Removed)
-        return false;
-
-    return self->CollideWithObject(other);
+void ScriptEntity::GameStart() {
+	// NOTE: Intentionally no Active check here
+	RunFunction(Hash_GameStart);
 }
-PUBLIC STATIC bool ScriptEntity::VM_Getter(Obj* object, Uint32 hash, VMValue* result, Uint32 threadID) {
-    Entity* self = GetScriptEntity(object);
+void ScriptEntity::Remove() {
+	if (Removed) {
+		return;
+	}
 
-    if (hash == Hash_HitboxLeft) {
-        if (result)
-            *result = DECIMAL_VAL(self->Hitbox.GetLeft());
-        return true;
-    }
-    else if (hash == Hash_HitboxTop) {
-        if (result)
-            *result = DECIMAL_VAL(self->Hitbox.GetTop());
-        return true;
-    }
-    else if (hash == Hash_HitboxRight) {
-        if (result)
-            *result = DECIMAL_VAL(self->Hitbox.GetRight());
-        return true;
-    }
-    else if (hash == Hash_HitboxBottom) {
-        if (result)
-            *result = DECIMAL_VAL(self->Hitbox.GetBottom());
-        return true;
-    }
+	if (Instance && Created) {
+		RunFunction(Hash_Dispose);
+	}
 
-    return false;
+	Unlink();
+
+	Entity::Remove();
 }
-PUBLIC STATIC bool ScriptEntity::VM_Setter(Obj* object, Uint32 hash, VMValue value, Uint32 threadID) {
-    Entity* self = GetScriptEntity(object);
+void ScriptEntity::Unlink() {
+	if (Instance) {
+		Table* fields = Instance->InstanceObj.Fields;
+		fields->WithAll([fields](Uint32 key, VMValue value) -> void {
+			if (IS_LINKED_INTEGER(value) || IS_LINKED_DECIMAL(value)) {
+				fields->Put(key, Value::Delink(value));
+			}
+		});
 
-    if (hash == Hash_HitboxLeft) {
-        if (ScriptManager::DoDecimalConversion(value, threadID))
-            self->Hitbox.SetLeft(AS_DECIMAL(value));
-        return true;
-    }
-    else if (hash == Hash_HitboxTop) {
-        if (ScriptManager::DoDecimalConversion(value, threadID))
-            self->Hitbox.SetTop(AS_DECIMAL(value));
-        return true;
-    }
-    else if (hash == Hash_HitboxRight) {
-        if (ScriptManager::DoDecimalConversion(value, threadID))
-            self->Hitbox.SetRight(AS_DECIMAL(value));
-        return true;
-    }
-    else if (hash == Hash_HitboxBottom) {
-        if (ScriptManager::DoDecimalConversion(value, threadID))
-            self->Hitbox.SetBottom(AS_DECIMAL(value));
-        return true;
-    }
-
-    return false;
+		Instance->EntityPtr = NULL;
+		Instance = NULL;
+	}
 }
-/***
- * \method SetAnimation
- * \desc Changes the current animation of the entity, if the animation index differs from the entity's current animation index.
- * \param animation (Integer): The animation index.
- * \param frame (Integer): The frame index.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_SetAnimation(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 3);
-    Entity* self = GET_ENTITY(0);
-    int animation = GET_ARG(1, GetInteger);
-    int frame = GET_ARG(2, GetInteger);
-
-    if (!self)
-        return NULL_VAL;
-
-    ISprite* sprite = Scene::GetSpriteResource(self->Sprite);
-    if (!sprite) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Sprite is not set!", animation);
-        return NULL_VAL;
-    }
-
-    if (!(animation >= 0 && (size_t)animation < sprite->Animations.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Animation %d is not in bounds of sprite.", animation);
-        return NULL_VAL;
-    }
-    if (!(frame >= 0 && (size_t)frame < sprite->Animations[animation].Frames.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Frame %d is not in bounds of animation %d.", frame, animation);
-        return NULL_VAL;
-    }
-
-    self->SetAnimation(animation, frame);
-    return NULL_VAL;
+void ScriptEntity::Dispose() {
+	Entity::Dispose();
 }
-/***
- * \method ResetAnimation
- * \desc Changes the current animation of the entity.
- * \param animation (Integer): The animation index.
- * \param frame (Integer): The frame index.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_ResetAnimation(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 3);
-    Entity* self = GET_ENTITY(0);
-    int animation = GET_ARG(1, GetInteger);
-    int frame = GET_ARG(2, GetInteger);
-
-    if (!self)
-        return NULL_VAL;
-
-    int spriteIns = self->Sprite;
-    ISprite* sprite = Scene::GetSpriteResource(spriteIns);
-    if (!sprite) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Sprite %d does not exist!", spriteIns);
-        return NULL_VAL;
-    }
-
-    if (!(animation >= 0 && (Uint32)animation < sprite->Animations.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Animation %d is not in bounds of sprite.", animation);
-        return NULL_VAL;
-    }
-    if (!(frame >= 0 && (Uint32)frame < sprite->Animations[animation].Frames.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Frame %d is not in bounds of animation %d.", frame, animation);
-        return NULL_VAL;
-    }
-
-    self->ResetAnimation(animation, frame);
-    return NULL_VAL;
-}
-/***
- * \method Animate
- * \desc Animates the entity.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_Animate(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 1);
-    Entity* self = GET_ENTITY(0);
-    if (self)
-        self->Animate();
-    return NULL_VAL;
-}
-
-/***
- * \method GetIDWithinClass
- * \desc Gets the ordered ID of the entity amongst other entities of the same type.
- * \return Returns an Integer value.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_GetIDWithinClass(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 1);
-    Entity* self = GET_ENTITY(0);
-    if (!self || !self->List)
-        return NULL_VAL;
-
-    Entity* other = self->List->EntityFirst;
-    int num = 0;
-
-    while (other) {
-        if (self == other)
-            break;
-
-        num++;
-        other = other->NextEntityInList;
-    }
-
-    return INTEGER_VAL(num);
-}
-
-/***
- * \method AddToRegistry
- * \desc Adds the entity to a registry.
- * \param registry (String): The registry name.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_AddToRegistry(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    Entity* self = GET_ENTITY(0);
-    char*   registry = GET_ARG(1, GetString);
-
-    if (!self)
-        return NULL_VAL;
-
-    ObjectRegistry* objectRegistry;
-    if (!Scene::ObjectRegistries->Exists(registry)) {
-        objectRegistry = new ObjectRegistry();
-        Scene::ObjectRegistries->Put(registry, objectRegistry);
-    }
-    else {
-        objectRegistry = Scene::ObjectRegistries->Get(registry);
-    }
-
-    objectRegistry->Add(self);
-
-    return NULL_VAL;
-}
-/***
- * \method RemoveFromRegistry
- * \desc Removes the entity from a registry.
- * \param registry (String): The registry name.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_RemoveFromRegistry(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    Entity* self = GET_ENTITY(0);
-    char*   registry = GET_ARG(1, GetString);
-
-    if (!self)
-        return NULL_VAL;
-
-    ObjectRegistry* objectRegistry;
-    if (!Scene::ObjectRegistries->Exists(registry)) {
-        return NULL_VAL;
-    }
-    objectRegistry = Scene::ObjectRegistries->Get(registry);
-
-    objectRegistry->Remove(self);
-
-    return NULL_VAL;
-}
-/***
- * \method ApplyMotion
- * \desc Applies gravity and velocities to the entity.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_ApplyMotion(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 1);
-    Entity* self = GET_ENTITY(0);
-    if (self)
-        self->ApplyMotion();
-    return NULL_VAL;
-}
-/***
- * \method InView
- * \desc Checks if the specified positions and ranges are within the specified view.
- * \param viewIndex (Integer): The view index.
- * \param x (Decimal): The X position.
- * \param y (Decimal): The Y position.
- * \param w (Decimal): The width.
- * \param h (Decimal): The height.
- * \return Returns <code>true</code> if the specified positions and ranges are within the specified view, <code>false</code> if otherwise.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_InView(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 6);
-    // Entity* self = (Entity*)AS_INSTANCE(args[0])->EntityPtr;
-    int   view   = GET_ARG(1, GetInteger);
-    float x      = GET_ARG(2, GetDecimal);
-    float y      = GET_ARG(3, GetDecimal);
-    float w      = GET_ARG(4, GetDecimal);
-    float h      = GET_ARG(5, GetDecimal);
-
-    if (x + w >= Scene::Views[view].X &&
-        y + h >= Scene::Views[view].Y &&
-        x      < Scene::Views[view].X + Scene::Views[view].Width &&
-        y      < Scene::Views[view].Y + Scene::Views[view].Height)
-        return INTEGER_VAL(true);
-
-    return INTEGER_VAL(false);
-}
-/***
- * \method CollidedWithObject
- * \desc Checks if the entity collided with another entity, or any entity of the specified class name.
- * \param other (Instance/String): The entity or class to collide with.
- * \return Returns the entity that was collided with, or <code>null</code> if it did not collide with any entity.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_CollidedWithObject(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-
-    ScriptEntity* self = GET_ENTITY(0);
-    if (!self)
-        return NULL_VAL;
-
-    if (IS_INSTANCE(args[1])) {
-        ScriptEntity* other = GET_ENTITY(1);
-        if (!other)
-            return NULL_VAL;
-        if (TestEntityCollision(other, self))
-            return OBJECT_VAL(other->Instance);
-        return NULL_VAL;
-    }
-
-    if (!Scene::ObjectLists) return NULL_VAL;
-    if (!Scene::ObjectRegistries) return NULL_VAL;
-
-    char* object = GET_ARG(1, GetString);
-    if (!Scene::ObjectRegistries->Exists(object)) {
-        if (!Scene::ObjectLists->Exists(object))
-            return NULL_VAL;
-    }
-
-    if (self->Hitbox.Width == 0.0f || self->Hitbox.Height == 0.0f)
-        return NULL_VAL;
-
-    ScriptEntity* other = NULL;
-    ObjectList* objectList = Scene::ObjectLists->Get(object);
-
-    other = (ScriptEntity*)objectList->EntityFirst;
-    for (Entity* next; other; other = (ScriptEntity*)next) {
-        next = other->NextEntityInList;
-        if (TestEntityCollision(other, self))
-            return OBJECT_VAL(other->Instance);
-    }
-
-    return NULL_VAL;
-}
-/***
- * \method GetHitboxFromSprite
- * \desc Updates the entity's hitbox with the hitbox in the specified sprite's animation, frame and hitbox ID.
- * \param sprite (Sprite): The sprite.
- * \param animation (Integer): The animation index.
- * \param frame (Integer): The frame index.
- * \param hitbox (Integer): The hitbox ID.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_GetHitboxFromSprite(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 5);
-    ScriptEntity* self = GET_ENTITY(0);
-    ISprite* sprite = GET_ARG(1, GetSprite);
-    int animation   = GET_ARG(2, GetInteger);
-    int frame       = GET_ARG(3, GetInteger);
-    int hitbox      = GET_ARG(4, GetInteger);
-
-    if (!self || !sprite)
-        return NULL_VAL;
-
-    if (!(animation > -1 && (size_t)animation < sprite->Animations.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Animation %d is not in bounds of sprite.", animation);
-        return NULL_VAL;
-    }
-    if (!(frame > -1 && (size_t)frame < sprite->Animations[animation].Frames.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Frame %d is not in bounds of animation %d.", frame, animation);
-        return NULL_VAL;
-    }
-
-    AnimFrame frameO = sprite->Animations[animation].Frames[frame];
-
-    if (!(hitbox > -1 && hitbox < frameO.BoxCount)) {
-        // ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Hitbox %d is not in bounds of frame %d.", hitbox, frame);
-        self->Hitbox.Clear();
-    }
-    else {
-        self->Hitbox.Set(frameO.Boxes[hitbox]);
-    }
-
-    return NULL_VAL;
-}
-/***
- * \method ReturnHitboxFromSprite
- * \desc Gets the hitbox in the specified sprite's animation, frame and hitbox ID.
- * \param sprite (Sprite): The sprite.
- * \param animation (Integer): The animation index.
- * \param frame (Integer): The frame index.
- * \param hitbox (Integer): The hitbox ID.
- * \return Returns an array containing the hitbox top, left, right and bottom sides in that order. 
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_ReturnHitboxFromSprite(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 5);
-    ScriptEntity* self    = GET_ENTITY(0);
-    ISprite* sprite         = GET_ARG(1, GetSprite);
-    int animation           = GET_ARG(2, GetInteger);
-    int frame               = GET_ARG(3, GetInteger);
-    int hitbox              = GET_ARG(4, GetInteger);
-
-    if (!self || !sprite)
-        return NULL_VAL;
-
-    if (!(animation > -1 && (size_t)animation < sprite->Animations.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Animation %d is not in bounds of sprite.", animation);
-        return NULL_VAL;
-    }
-    if (!(frame > -1 && (size_t)frame < sprite->Animations[animation].Frames.size())) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Frame %d is not in bounds of animation %d.", frame, animation);
-        return NULL_VAL;
-    }
-
-    AnimFrame frameO = sprite->Animations[animation].Frames[frame];
-
-    if (!(hitbox > -1 && hitbox < frameO.BoxCount)) {
-        // ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Hitbox %d is not in bounds of frame %d.", hitbox, frame);
-        return NULL_VAL;
-    }
-
-    CollisionBox box = frameO.Boxes[hitbox];
-    ObjArray* array = NewArray();
-    array->Values->push_back(DECIMAL_VAL((float)box.Left));
-    array->Values->push_back(DECIMAL_VAL((float)box.Top));
-    array->Values->push_back(DECIMAL_VAL((float)box.Right));
-    array->Values->push_back(DECIMAL_VAL((float)box.Bottom));
-    return OBJECT_VAL(array);
-}
-
-/***
- * \method CollideWithObject
- * \desc Does collision with another entity.
- * \param other (Instance): The other entity.
- * \return Returns <code>true</code> if the entity collided, <code>false</code> if otherwise.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_CollideWithObject(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    ScriptEntity* other = GET_ENTITY(1);
-    if (!self || !other)
-        return NULL_VAL;
-    return INTEGER_VAL(self->CollideWithObject(other));
-}
-/***
- * \method SolidCollideWithObject
- * \desc Does solid collision with another entity.
- * \param other (Instance): The other entity.
- * \return Returns <code>true</code> if the entity collided, <code>false</code> if otherwise.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_SolidCollideWithObject(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 3);
-    ScriptEntity* self = GET_ENTITY(0);
-    ScriptEntity* other = GET_ENTITY(1);
-    int flag = GET_ARG(2, GetInteger);
-    if (!self || !other)
-        return NULL_VAL;
-    return INTEGER_VAL(self->SolidCollideWithObject(other, flag));
-}
-/***
- * \method TopSolidCollideWithObject
- * \desc Does solid collision with another entity's top.
- * \param other (Instance): The other entity.
- * \return Returns <code>true</code> if the entity collided, <code>false</code> if otherwise.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_TopSolidCollideWithObject(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 3);
-    ScriptEntity* self = GET_ENTITY(0);
-    ScriptEntity* other = GET_ENTITY(1);
-    int flag = GET_ARG(2, GetInteger);
-    if (!self || !other)
-        return NULL_VAL;
-    return INTEGER_VAL(self->TopSolidCollideWithObject(other, flag));
-}
-
-PUBLIC STATIC VMValue ScriptEntity::VM_ApplyPhysics(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 1);
-    ScriptEntity* self = GET_ENTITY(0);
-    if (self)
-        self->ApplyPhysics();
-    return NULL_VAL;
-}
-
-/***
- * \method PropertyExists
- * \desc Checks if a property exists in the entity.
- * \param property (String): The property name.
- * \return Returns <code>true</code> if the property exists, <code>false</code> if otherwise.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_PropertyExists(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    char* property = GET_ARG(1, GetString);
-    if (self && self->Properties->Exists(property))
-        return INTEGER_VAL(1);
-    return INTEGER_VAL(0);
-}
-/***
- * \method PropertyGet
- * \desc Gets a property exists from the entity.
- * \param property (String): The property name.
- * \return Returns the property if it exists, and <code>null</code> if the property does not exist.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_PropertyGet(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    char* property = GET_ARG(1, GetString);
-    if (!self || !self->Properties->Exists(property))
-        return NULL_VAL;
-    return self->Properties->Get(property);
-}
-
-/***
- * \method SetViewVisibility
- * \desc Sets whether the entity is visible on a specific view.
- * \param viewIndex (Integer): The view index.
- * \param visible (Boolean): Whether the entity will be visible or not on the specified view.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_SetViewVisibility(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 3);
-    ScriptEntity* self = GET_ENTITY(0);
-    int viewIndex = GET_ARG(1, GetInteger);
-    bool visible = GET_ARG(2, GetInteger);
-    if (self) {
-        int flag = 1 << viewIndex;
-        if (visible)
-            self->ViewRenderFlag |= flag;
-        else
-            self->ViewRenderFlag &= ~flag;
-    }
-    return NULL_VAL;
-}
-/***
- * \method SetViewOverride
- * \desc Toggles the bypass for each view's entity rendering toggle set by <linkto ref="Scene.SetObjectViewRender"></linkto>.
- * \param viewIndex (Integer): The view index.
- * \param visible (Boolean): Whether the entity will always be visible or not on the specified view.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_SetViewOverride(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 3);
-    ScriptEntity* self = GET_ENTITY(0);
-    int viewIndex = GET_ARG(1, GetInteger);
-    bool override = GET_ARG(2, GetInteger);
-    if (self) {
-        int flag = 1 << viewIndex;
-        if (override)
-            self->ViewOverrideFlag |= flag;
-        else
-            self->ViewOverrideFlag &= ~flag;
-    }
-    return NULL_VAL;
-}
-
-/***
- * \method AddToDrawGroup
- * \desc Adds the entity into the specified draw group.
- * \param drawGroup (Integer): The draw group.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_AddToDrawGroup(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    int drawGroup = GET_ARG(1, GetInteger);
-    if (drawGroup >= 0 && drawGroup < Scene::PriorityPerLayer) {
-        if (!Scene::PriorityLists[drawGroup].Contains(self))
-            Scene::PriorityLists[drawGroup].Add(self);
-    }
-    else
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Draw group %d out of range. (0 - %d)", drawGroup, Scene::PriorityPerLayer - 1);
-    return NULL_VAL;
-}
-/***
- * \method IsInDrawGroup
- * \desc Checks if the entity is in the specified draw group.
- * \param drawGroup (Integer): The draw group.
- * \return Returns <code>true</code> if the entity is in the specified draw group, <code>false</code> if otherwise.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_IsInDrawGroup(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    int drawGroup = GET_ARG(1, GetInteger);
-    if (drawGroup >= 0 && drawGroup < Scene::PriorityPerLayer)
-        return INTEGER_VAL(!!(Scene::PriorityLists[drawGroup].Contains(self)));
-    else
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Draw group %d out of range. (0 - %d)", drawGroup, Scene::PriorityPerLayer - 1);
-    return NULL_VAL;
-}
-/***
- * \method RemoveFromDrawGroup
- * \desc Removes the entity from the specified draw group.
- * \param drawGroup (Integer): The draw group.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_RemoveFromDrawGroup(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    int drawGroup = GET_ARG(1, GetInteger);
-    if (drawGroup >= 0 && drawGroup < Scene::PriorityPerLayer)
-        Scene::PriorityLists[drawGroup].Remove(self);
-    else
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false, "Draw group %d out of range. (0 - %d)", drawGroup, Scene::PriorityPerLayer - 1);
-    return NULL_VAL;
-}
-
-/***
- * \method PlaySound
- * \desc Plays a sound once from the entity.
- * \param sound (Integer): The sound index to play.
- * \paramOpt panning (Decimal): Control the panning of the audio. -1.0 makes it sound in left ear only, 1.0 makes it sound in right ear, and closer to 0.0 centers it. (0.0 is the default.)
- * \paramOpt speed (Decimal): Control the speed of the audio. > 1.0 makes it faster, < 1.0 is slower, 1.0 is normal speed. (1.0 is the default.)
- * \paramOpt volume (Decimal): Controls the volume of the audio. 0.0 is muted, 1.0 is normal volume. (1.0 is the default.)
- * \return Returns the channel index where the sound began to play.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_PlaySound(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckAtLeastArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    ISound* audio = GET_ARG(1, GetSound);
-    float panning = GET_ARG_OPT(2, GetDecimal, 0.0f);
-    float speed = GET_ARG_OPT(3, GetDecimal, 1.0f);
-    float volume = GET_ARG_OPT(4, GetDecimal, 1.0f);
-    int channel = -1;
-    if (self) {
-        AudioManager::StopOriginSound((void*)self, audio);
-        channel = AudioManager::PlaySound(audio, false, 0, panning, speed, volume, (void*)self);
-    }
-    return INTEGER_VAL(channel);
-}
-/***
- * \method LoopSound
- * \desc Plays a sound from the entity, looping back when it ends.
- * \param sound (Integer): The sound index to play.
- * \paramOpt loopPoint (Integer): Loop point in samples.
- * \paramOpt panning (Decimal): Control the panning of the audio. -1.0 makes it sound in left ear only, 1.0 makes it sound in right ear, and closer to 0.0 centers it. (0.0 is the default.)
- * \paramOpt speed (Decimal): Control the speed of the audio. > 1.0 makes it faster, < 1.0 is slower, 1.0 is normal speed. (1.0 is the default.)
- * \paramOpt volume (Decimal): Controls the volume of the audio. 0.0 is muted, 1.0 is normal volume. (1.0 is the default.)
- * \return Returns the channel index where the sound began to play.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_LoopSound(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckAtLeastArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    ISound* audio = GET_ARG(1, GetSound);
-    int loopPoint = GET_ARG_OPT(2, GetInteger, 0);
-    float panning = GET_ARG_OPT(3, GetDecimal, 0.0f);
-    float speed = GET_ARG_OPT(4, GetDecimal, 1.0f);
-    float volume = GET_ARG_OPT(5, GetDecimal, 1.0f);
-    int channel = -1;
-    if (self) {
-        AudioManager::StopOriginSound((void*)self, audio);
-        channel = AudioManager::PlaySound(audio, true, loopPoint, panning, speed, volume, (void*)self);
-    }
-    return INTEGER_VAL(channel);
-}
-/***
- * \method StopSound
- * \desc Stops a specific sound that is being played from the entity.
- * \param sound (Integer): The sound index to interrupt.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_StopSound(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
-    ScriptEntity* self = GET_ENTITY(0);
-    ISound* audio = GET_ARG(1, GetSound);
-    if (self)
-        AudioManager::StopOriginSound((void*)self, audio);
-    return NULL_VAL;
-}
-/***
- * \method StopAllSounds
- * \desc Stops all sounds the entity is playing.
- * \ns Instance
- */
-PUBLIC STATIC VMValue ScriptEntity::VM_StopAllSounds(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 1);
-    ScriptEntity* self = GET_ENTITY(0);
-    if (self)
-        AudioManager::StopAllOriginSounds((void*)self);
-    return NULL_VAL;
+bool ScriptEntity::IsValid() {
+	return Active && !Removed;
 }

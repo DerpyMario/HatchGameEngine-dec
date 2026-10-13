@@ -1,235 +1,461 @@
-# recursive wildcard
-rwc = $(foreach d, $(wildcard $1*), $(call rwc,$d/,$2) $(filter $(subst *,%,$2),$d))
+include meta/prologue.mk
 
-PLATFORM_UNKNOWN = 0
-PLATFORM_WINDOWS = 1
-PLATFORM_MACOS = 2
-PLATFORM_LINUX = 3
+# name of project. used in output binary naming
+PROJECT := hatch
 
-PLATFORM = $(PLATFORM_UNKNOWN)
-OUT_FOLDER =
+# put a ‘1’ for the desired target types to compile
+EXEFILE := 1
+SOFILE  :=
+AFILE   :=
 
-# from https://www.msys2.org/wiki/Porting/
-# nonzero value means we're using msys
-MSYS_VERSION := $(if $(findstring Msys, $(shell uname -o)),$(word 1, $(subst ., ,$(shell uname -r))),0)
+# space-separated path list for #includes
+# <system> includes
+INCLUDES := source
+# "local" includes
+INCLUDEL := source
 
-ifeq ($(OS),Windows_NT)
-	PLATFORM = $(PLATFORM_WINDOWS)
-	OUT_FOLDER = windows
-else
-	UNAME_S := $(shell uname -s)
-	ifeq ($(UNAME_S),Linux)
-		PLATFORM = $(PLATFORM_LINUX)
-		OUT_FOLDER = linux
-	endif
-	ifeq ($(UNAME_S),Darwin)
-		PLATFORM = $(PLATFORM_MACOS)
-		OUT_FOLDER = macos
-	endif
-endif
+# space-separated library name list for linking
+# libraries
+LIBS      := assimp ogg vorbis vorbisfile SDL2
+LIBDIRS   :=
+FWORKS    := Cocoa CoreFoundation CoreServices Foundation OpenGL
+FWORKDIRS :=
 
-ifeq ($(PLATFORM),0)
-	$(error Unknown platform)
-endif
+CFILES := \
+	source/Libraries/miniz.c \
+	source/Libraries/spng.c \
+	source/Libraries/stb_vorbis.c
+CPPFILES := \
+	source/Engine/Application.cpp \
+	source/Engine/Audio/AudioManager.cpp \
+	source/Engine/Audio/AudioPlayback.cpp \
+	source/Engine/Bytecode/Bytecode.cpp \
+	source/Engine/Bytecode/BytecodeDebugger.cpp \
+	source/Engine/Bytecode/Compiler.cpp \
+	source/Engine/Bytecode/GarbageCollector.cpp \
+	source/Engine/Bytecode/ScriptEntity.cpp \
+	source/Engine/Bytecode/ScriptManager.cpp \
+	source/Engine/Bytecode/SourceFileMap.cpp \
+	source/Engine/Bytecode/StandardLibrary.cpp \
+	source/Engine/Bytecode/TypeImpl/ArrayImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/EntityImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/FontImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/FunctionImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/InstanceImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/MapImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/MaterialImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/ShaderImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/StreamImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/StringImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/TextureImpl.cpp \
+	source/Engine/Bytecode/TypeImpl/TypeImpl.cpp \
+	source/Engine/Bytecode/Types.cpp \
+	source/Engine/Bytecode/Value.cpp \
+	source/Engine/Bytecode/ValuePrinter.cpp \
+	source/Engine/Bytecode/VMThread.cpp \
+	source/Engine/Bytecode/VMThreadDebugger.cpp \
+	source/Engine/Data/DefaultFonts.cpp \
+	source/Engine/Diagnostics/Clock.cpp \
+	source/Engine/Diagnostics/Log.cpp \
+	source/Engine/Diagnostics/Memory.cpp \
+	source/Engine/Diagnostics/MemoryPools.cpp \
+	source/Engine/Diagnostics/PerformanceMeasure.cpp \
+	source/Engine/Diagnostics/PerformanceViewer.cpp \
+	source/Engine/Diagnostics/RemoteDebug.cpp \
+	source/Engine/Error.cpp \
+	source/Engine/Extensions/Discord.cpp \
+	source/Engine/Filesystem/Directory.cpp \
+	source/Engine/Filesystem/File.cpp \
+	source/Engine/Filesystem/Path.cpp \
+	source/Engine/Filesystem/VFS/ArchiveVFS.cpp \
+	source/Engine/Filesystem/VFS/FileSystemVFS.cpp \
+	source/Engine/Filesystem/VFS/HatchVFS.cpp \
+	source/Engine/Filesystem/VFS/MemoryCache.cpp \
+	source/Engine/Filesystem/VFS/MemoryVFS.cpp \
+	source/Engine/Filesystem/VFS/VFSEntry.cpp \
+	source/Engine/Filesystem/VFS/VFSProvider.cpp \
+	source/Engine/Filesystem/VFS/VirtualFileSystem.cpp \
+	source/Engine/Graphics.cpp \
+	source/Engine/Hashing/CombinedHash.cpp \
+	source/Engine/Hashing/CRC32.cpp \
+	source/Engine/Hashing/FNV1A.cpp \
+	source/Engine/Hashing/MD5.cpp \
+	source/Engine/Hashing/Murmur.cpp \
+	source/Engine/Input/Controller.cpp \
+	source/Engine/Input/InputAction.cpp \
+	source/Engine/Input/InputPlayer.cpp \
+	source/Engine/InputManager.cpp \
+	source/Engine/IO/Compression/Huffman.cpp \
+	source/Engine/IO/Compression/LZ11.cpp \
+	source/Engine/IO/Compression/LZSS.cpp \
+	source/Engine/IO/Compression/RunLength.cpp \
+	source/Engine/IO/Compression/ZLibStream.cpp \
+	source/Engine/IO/FileStream.cpp \
+	source/Engine/IO/MemoryStream.cpp \
+	source/Engine/IO/NetworkStream.cpp \
+	source/Engine/IO/ResourceStream.cpp \
+	source/Engine/IO/SDLStream.cpp \
+	source/Engine/IO/Serializer.cpp \
+	source/Engine/IO/StandardIOStream.cpp \
+	source/Engine/IO/Stream.cpp \
+	source/Engine/IO/TextStream.cpp \
+	source/Engine/IO/VirtualFileStream.cpp \
+	source/Engine/Main.cpp \
+	source/Engine/Math/Clipper.cpp \
+	source/Engine/Math/Ease.cpp \
+	source/Engine/Math/Geometry.cpp \
+	source/Engine/Math/Math.cpp \
+	source/Engine/Math/Matrix4x4.cpp \
+	source/Engine/Math/Random.cpp \
+	source/Engine/Math/Vector.cpp \
+	source/Engine/Media/Decoder.cpp \
+	source/Engine/Media/Decoders/AudioDecoder.cpp \
+	source/Engine/Media/Decoders/VideoDecoder.cpp \
+	source/Engine/Media/MediaPlayer.cpp \
+	source/Engine/Media/MediaSource.cpp \
+	source/Engine/Media/Utils/MediaPlayerState.cpp \
+	source/Engine/Media/Utils/PtrBuffer.cpp \
+	source/Engine/Media/Utils/RingBuffer.cpp \
+	source/Engine/Network/AndroidWifiP2P.cpp \
+	source/Engine/Network/HTTP.cpp \
+	source/Engine/Network/WebSocketClient.cpp \
+	source/Engine/Rendering/D3D/D3DRenderer.cpp \
+	source/Engine/Rendering/FaceInfo.cpp \
+	source/Engine/Rendering/GL/GLRenderer.cpp \
+	source/Engine/Rendering/GL/GLShader.cpp \
+	source/Engine/Rendering/GL/GLShaderBuilder.cpp \
+	source/Engine/Rendering/GL/GLShaderContainer.cpp \
+	source/Engine/Rendering/Material.cpp \
+	source/Engine/Rendering/ModelRenderer.cpp \
+	source/Engine/Rendering/PolygonRenderer.cpp \
+	source/Engine/Rendering/SDL2/SDL2Renderer.cpp \
+	source/Engine/Rendering/Shader.cpp \
+	source/Engine/Rendering/Software/PolygonRasterizer.cpp \
+	source/Engine/Rendering/Software/Scanline.cpp \
+	source/Engine/Rendering/Software/SoftwareRenderer.cpp \
+	source/Engine/Rendering/Texture.cpp \
+	source/Engine/Rendering/TextureReference.cpp \
+	source/Engine/Rendering/VertexBuffer.cpp \
+	source/Engine/ResourceTypes/Font.cpp \
+	source/Engine/ResourceTypes/Image.cpp \
+	source/Engine/ResourceTypes/ImageFormats/GIF.cpp \
+	source/Engine/ResourceTypes/ImageFormats/ImageFormat.cpp \
+	source/Engine/ResourceTypes/ImageFormats/JPEG.cpp \
+	source/Engine/ResourceTypes/ImageFormats/PNG.cpp \
+	source/Engine/ResourceTypes/IModel.cpp \
+	source/Engine/ResourceTypes/ISound.cpp \
+	source/Engine/ResourceTypes/ISprite.cpp \
+	source/Engine/ResourceTypes/ModelFormats/HatchModel.cpp \
+	source/Engine/ResourceTypes/ModelFormats/Importer.cpp \
+	source/Engine/ResourceTypes/ModelFormats/MD3Model.cpp \
+	source/Engine/ResourceTypes/ModelFormats/RSDKModel.cpp \
+	source/Engine/ResourceTypes/ResourceManager.cpp \
+	source/Engine/ResourceTypes/SceneFormats/HatchSceneReader.cpp \
+	source/Engine/ResourceTypes/SceneFormats/RSDKSceneReader.cpp \
+	source/Engine/ResourceTypes/SceneFormats/TiledMapReader.cpp \
+	source/Engine/ResourceTypes/SoundFormats/OGG.cpp \
+	source/Engine/ResourceTypes/SoundFormats/SoundFormat.cpp \
+	source/Engine/ResourceTypes/SoundFormats/WAV.cpp \
+	source/Engine/Scene.cpp \
+	source/Engine/Scene/ImageLayer.cpp \
+	source/Engine/Scene/SceneInfo.cpp \
+	source/Engine/Scene/SceneLayer.cpp \
+	source/Engine/Scene/TileLayer.cpp \
+	source/Engine/Scene/View.cpp \
+	source/Engine/TextFormats/INI/INI.cpp \
+	source/Engine/TextFormats/XML/XMLParser.cpp \
+	source/Engine/Types/Camera.cpp \
+	source/Engine/Types/DrawGroupList.cpp \
+	source/Engine/Types/Entity.cpp \
+	source/Engine/Types/ObjectList.cpp \
+	source/Engine/Types/ObjectRegistry.cpp \
+	source/Engine/Types/Property.cpp \
+	source/Engine/Types/Tileset.cpp \
+	source/Engine/Utilities/ColorUtils.cpp \
+	source/Engine/Utilities/PrintBuffer.cpp \
+	source/Engine/Utilities/Screenshot.cpp \
+	source/Engine/Utilities/StringUtils.cpp \
+	source/Libraries/Clipper2/clipper.engine.cpp \
+	source/Libraries/Clipper2/clipper.offset.cpp \
+	source/Libraries/Clipper2/clipper.rectclip.cpp \
+	source/Libraries/linenoise-ng/linenoise.cpp \
+	source/Libraries/linenoise-ng/wcwidth.cpp \
+	source/Libraries/poly2tri/common/shapes.cpp \
+	source/Libraries/poly2tri/sweep/advancing_front.cpp \
+	source/Libraries/poly2tri/sweep/cdt.cpp \
+	source/Libraries/poly2tri/sweep/sweep.cpp \
+	source/Libraries/poly2tri/sweep/sweep_context.cpp
+MFILES := \
+	source/Engine/Platforms/MacOS/Filesystem.m
+PRVHFILES := \
+	source/Libraries/discord_game_sdk.h \
+	source/Libraries/ankerl/stl.h \
+	source/Libraries/ankerl/unordered_dense.h \
+	source/Libraries/utfcpp/utf8/cpp17.h \
+	source/Libraries/utfcpp/utf8/core.h \
+	source/Libraries/utfcpp/utf8/unchecked.h \
+	source/Libraries/utfcpp/utf8/cpp11.h \
+	source/Libraries/utfcpp/utf8/cpp20.h \
+	source/Libraries/utfcpp/utf8/checked.h \
+	source/Libraries/utfcpp/utf8.h \
+	source/Libraries/jsmn.h \
+	source/Libraries/stb_rect_pack.h \
+	source/Libraries/Clipper2/clipper.rectclip.h \
+	source/Libraries/Clipper2/clipper.minkowski.h \
+	source/Libraries/Clipper2/clipper.version.h \
+	source/Libraries/Clipper2/clipper.offset.h \
+	source/Libraries/Clipper2/clipper.core.h \
+	source/Libraries/Clipper2/clipper.h \
+	source/Libraries/Clipper2/clipper.export.h \
+	source/Libraries/Clipper2/clipper.engine.h \
+	source/Libraries/nanoprintf.h \
+	source/Libraries/stb_image.h \
+	source/Libraries/miniz.h \
+	source/Libraries/stb_truetype.h \
+	source/Libraries/linenoise-ng/linenoise.h \
+	source/Libraries/poly2tri/poly2tri.h \
+	source/Libraries/poly2tri/common/utils.h \
+	source/Libraries/poly2tri/common/dll_symbol.h \
+	source/Libraries/poly2tri/common/shapes.h \
+	source/Libraries/poly2tri/sweep/advancing_front.h \
+	source/Libraries/poly2tri/sweep/sweep.h \
+	source/Libraries/poly2tri/sweep/sweep_context.h \
+	source/Libraries/poly2tri/sweep/cdt.h \
+	source/Libraries/stb_vorbis.h \
+	source/Libraries/spng.h \
+	source/Engine/Error.h \
+	source/Engine/Platforms/MacOS/Filesystem.h \
+	source/Engine/Platforms/Capability.h \
+	source/Engine/Platforms/iOS/MediaPlayer.h \
+	source/Engine/InputManager.h \
+	source/Engine/Types/ObjectList.h \
+	source/Engine/Types/EntityTypes.h \
+	source/Engine/Types/Camera.h \
+	source/Engine/Types/Collision.h \
+	source/Engine/Types/DrawGroupList.h \
+	source/Engine/Types/Entity.h \
+	source/Engine/Types/Tileset.h \
+	source/Engine/Types/Property.h \
+	source/Engine/Types/ObjectRegistry.h \
+	source/Engine/Input/Input.h \
+	source/Engine/Input/ControllerRumble.h \
+	source/Engine/Input/Controller.h \
+	source/Engine/Input/InputPlayer.h \
+	source/Engine/Input/InputAction.h \
+	source/Engine/Application.h \
+	source/Engine/DeveloperMenu.h \
+	source/Engine/Network/HTTP.h \
+	source/Engine/Network/WebSocketIncludes.h \
+	source/Engine/Network/WebSocketClient.h \
+	source/Engine/IO/MemoryStream.h \
+	source/Engine/IO/Stream.h \
+	source/Engine/IO/ResourceStream.h \
+	source/Engine/IO/NetworkStream.h \
+	source/Engine/IO/StandardIOStream.h \
+	source/Engine/IO/Serializer.h \
+	source/Engine/IO/SDLStream.h \
+	source/Engine/IO/VirtualFileStream.h \
+	source/Engine/IO/FileStream.h \
+	source/Engine/IO/TextStream.h \
+	source/Engine/IO/Compression/LZ11.h \
+	source/Engine/IO/Compression/ZLibStream.h \
+	source/Engine/IO/Compression/RunLength.h \
+	source/Engine/IO/Compression/CompressionEnums.h \
+	source/Engine/IO/Compression/Huffman.h \
+	source/Engine/IO/Compression/LZSS.h \
+	source/Engine/Includes/StandardSDL2.h \
+	source/Engine/Includes/Version.h \
+	source/Engine/Includes/OrderedHashMap.h \
+	source/Engine/Includes/Endian.h \
+	source/Engine/Includes/BijectiveMap.h \
+	source/Engine/Includes/DateTime.h \
+	source/Engine/Includes/HashMap.h \
+	source/Engine/Includes/Standard.h \
+	source/Engine/Includes/Token.h \
+	source/Engine/Includes/Operation.h \
+	source/Engine/Filesystem/VFS/HatchVFS.h \
+	source/Engine/Filesystem/VFS/VirtualFileSystem.h \
+	source/Engine/Filesystem/VFS/FileSystemVFS.h \
+	source/Engine/Filesystem/VFS/ArchiveVFS.h \
+	source/Engine/Filesystem/VFS/VFSEntry.h \
+	source/Engine/Filesystem/VFS/MemoryCache.h \
+	source/Engine/Filesystem/VFS/MemoryVFS.h \
+	source/Engine/Filesystem/VFS/VFSProvider.h \
+	source/Engine/Filesystem/Path.h \
+	source/Engine/Filesystem/File.h \
+	source/Engine/Filesystem/Directory.h \
+	source/Engine/ResourceTypes/IModel.h \
+	source/Engine/ResourceTypes/ResourceType.h \
+	source/Engine/ResourceTypes/SoundFormats/OGG.h \
+	source/Engine/ResourceTypes/SoundFormats/WAV.h \
+	source/Engine/ResourceTypes/SoundFormats/SoundFormat.h \
+	source/Engine/ResourceTypes/SceneFormats/HatchSceneTypes.h \
+	source/Engine/ResourceTypes/SceneFormats/RSDKSceneReader.h \
+	source/Engine/ResourceTypes/SceneFormats/TiledMapReader.h \
+	source/Engine/ResourceTypes/SceneFormats/HatchSceneReader.h \
+	source/Engine/ResourceTypes/ISprite.h \
+	source/Engine/ResourceTypes/ISound.h \
+	source/Engine/ResourceTypes/ImageFormats/GIF.h \
+	source/Engine/ResourceTypes/ImageFormats/PNG.h \
+	source/Engine/ResourceTypes/ImageFormats/JPEG.h \
+	source/Engine/ResourceTypes/ImageFormats/ImageFormat.h \
+	source/Engine/ResourceTypes/Font.h \
+	source/Engine/ResourceTypes/ResourceManager.h \
+	source/Engine/ResourceTypes/Image.h \
+	source/Engine/ResourceTypes/ModelFormats/RSDKModel.h \
+	source/Engine/ResourceTypes/ModelFormats/MD3Model.h \
+	source/Engine/ResourceTypes/ModelFormats/Importer.h \
+	source/Engine/ResourceTypes/ModelFormats/HatchModel.h \
+	source/Engine/Hashing/Murmur.h \
+	source/Engine/Hashing/MD5.h \
+	source/Engine/Hashing/FNV1A.h \
+	source/Engine/Hashing/CombinedHash.h \
+	source/Engine/Hashing/CRC32.h \
+	source/Engine/Exceptions/ScriptException.h \
+	source/Engine/Exceptions/CompilerErrorException.h \
+	source/Engine/Math/Matrix4x4.h \
+	source/Engine/Math/Ease.h \
+	source/Engine/Math/VectorTypes.h \
+	source/Engine/Math/GeometryTypes.h \
+	source/Engine/Math/Clipper.h \
+	source/Engine/Math/Math.h \
+	source/Engine/Math/Vector.h \
+	source/Engine/Math/FixedPoint.h \
+	source/Engine/Math/Random.h \
+	source/Engine/Math/Geometry.h \
+	source/Engine/Extensions/Discord.h \
+	source/Engine/Utilities/Screenshot.h \
+	source/Engine/Utilities/StringUtils.h \
+	source/Engine/Utilities/ColorUtils.h \
+	source/Engine/Utilities/PrintBuffer.h \
+	source/Engine/Audio/AudioManager.h \
+	source/Engine/Audio/AudioIncludes.h \
+	source/Engine/Audio/AudioChannel.h \
+	source/Engine/Audio/AudioPlayback.h \
+	source/Engine/Diagnostics/PerformanceViewer.h \
+	source/Engine/Diagnostics/RemoteDebug.h \
+	source/Engine/Diagnostics/MemoryPools.h \
+	source/Engine/Diagnostics/Log.h \
+	source/Engine/Diagnostics/Memory.h \
+	source/Engine/Diagnostics/PerformanceTypes.h \
+	source/Engine/Diagnostics/Clock.h \
+	source/Engine/Diagnostics/PerformanceMeasure.h \
+	source/Engine/Bytecode/BytecodeDebugger.h \
+	source/Engine/Bytecode/Compiler.h \
+	source/Engine/Bytecode/Types.h \
+	source/Engine/Bytecode/StandardLibrary.h \
+	source/Engine/Bytecode/GarbageCollector.h \
+	source/Engine/Bytecode/SourceFileMap.h \
+	source/Engine/Bytecode/ScriptEntity.h \
+	source/Engine/Bytecode/Value.h \
+	source/Engine/Bytecode/TypeImpl/StringImpl.h \
+	source/Engine/Bytecode/TypeImpl/ShaderImpl.h \
+	source/Engine/Bytecode/TypeImpl/MaterialImpl.h \
+	source/Engine/Bytecode/TypeImpl/InstanceImpl.h \
+	source/Engine/Bytecode/TypeImpl/TextureImpl.h \
+	source/Engine/Bytecode/TypeImpl/FontImpl.h \
+	source/Engine/Bytecode/TypeImpl/FunctionImpl.h \
+	source/Engine/Bytecode/TypeImpl/MapImpl.h \
+	source/Engine/Bytecode/TypeImpl/EntityImpl.h \
+	source/Engine/Bytecode/TypeImpl/ArrayImpl.h \
+	source/Engine/Bytecode/TypeImpl/StreamImpl.h \
+	source/Engine/Bytecode/TypeImpl/TypeImpl.h \
+	source/Engine/Bytecode/VMThread.h \
+	source/Engine/Bytecode/VMThreadDebugger.h \
+	source/Engine/Bytecode/Bytecode.h \
+	source/Engine/Bytecode/ValuePrinter.h \
+	source/Engine/Bytecode/ScriptManager.h \
+	source/Engine/Bytecode/CompilerEnums.h \
+	source/Engine/Rendering/TextureReference.h \
+	source/Engine/Rendering/Shader.h \
+	source/Engine/Rendering/Metal/MetalFuncs.h \
+	source/Engine/Rendering/Metal/Includes.h \
+	source/Engine/Rendering/Material.h \
+	source/Engine/Rendering/Mesh.h \
+	source/Engine/Rendering/Scene3D.h \
+	source/Engine/Rendering/Software/SoftwareRenderer.h \
+	source/Engine/Rendering/Software/Scanline.h \
+	source/Engine/Rendering/Software/Contour.h \
+	source/Engine/Rendering/Software/SoftwareEnums.h \
+	source/Engine/Rendering/Software/PolygonRasterizer.h \
+	source/Engine/Rendering/GraphicsFunctions.h \
+	source/Engine/Rendering/Enums.h \
+	source/Engine/Rendering/FaceInfo.h \
+	source/Engine/Rendering/GL/GLRenderer.h \
+	source/Engine/Rendering/GL/GLShaderContainer.h \
+	source/Engine/Rendering/GL/GLShaderBuilder.h \
+	source/Engine/Rendering/GL/Structs.h \
+	source/Engine/Rendering/GL/ShaderIncludes.h \
+	source/Engine/Rendering/GL/GLShader.h \
+	source/Engine/Rendering/GL/Includes.h \
+	source/Engine/Rendering/PolygonRenderer.h \
+	source/Engine/Rendering/ModelRenderer.h \
+	source/Engine/Rendering/Texture.h \
+	source/Engine/Rendering/SDL2/SDL2Renderer.h \
+	source/Engine/Rendering/SDL2/SDL2MetalFunc.h \
+	source/Engine/Rendering/3D.h \
+	source/Engine/Rendering/VertexBuffer.h \
+	source/Engine/Rendering/D3D/D3DRenderer.h \
+	source/Engine/Sprites/Animation.h \
+	source/Engine/Graphics.h \
+	source/Engine/Scene/TileLayer.h \
+	source/Engine/Scene/TileAnimation.h \
+	source/Engine/Scene/LayerTileBuffers.h \
+	source/Engine/Scene/TileConfig.h \
+	source/Engine/Scene/ScrollingInfo.h \
+	source/Engine/Scene/SceneLayer.h \
+	source/Engine/Scene/View.h \
+	source/Engine/Scene/SceneEnums.h \
+	source/Engine/Scene/TileSpriteInfo.h \
+	source/Engine/Scene/SceneInfo.h \
+	source/Engine/Scene/ImageLayer.h \
+	source/Engine/Scene/LayerGroup.h \
+	source/Engine/Scene/SceneConfig.h \
+	source/Engine/TextFormats/XML/XMLParser.h \
+	source/Engine/TextFormats/XML/XMLNode.h \
+	source/Engine/TextFormats/INI/INI.h \
+	source/Engine/TextFormats/INI/INIStructs.h \
+	source/Engine/Data/DefaultFonts.h \
+	source/Engine/Scene.h \
+	source/Engine/Media/MediaSource.h \
+	source/Engine/Media/MediaPlayer.h \
+	source/Engine/Media/Decoder.h \
+	source/Engine/Media/Includes/AVCodec.h \
+	source/Engine/Media/Includes/AVUtils.h \
+	source/Engine/Media/Includes/SWScale.h \
+	source/Engine/Media/Includes/AVFormat.h \
+	source/Engine/Media/Includes/SWResample.h \
+	source/Engine/Media/Utils/PtrBuffer.h \
+	source/Engine/Media/Utils/Codec.h \
+	source/Engine/Media/Utils/RingBuffer.h \
+	source/Engine/Media/Utils/MediaPlayerState.h \
+	source/Engine/Media/Decoders/AudioDecoder.h \
+	source/Engine/Media/Decoders/VideoDecoder.h \
 
-PROGRAM_SUFFIX :=
-ifeq ($(PLATFORM),$(PLATFORM_WINDOWS))
-PROGRAM_SUFFIX := .exe
-endif
+DEFINES := \
+	_THREAD_SAFE \
+	GL_SILENCE_DEPRECATION \
+	MACOSX \
+	TARGET_NAME=\"$(PROJECT)\" \
+	USING_ASSIMP \
+	USING_OPENGL
 
-ifeq ($(PLATFORM),$(PLATFORM_LINUX))
-MAKEHEADERS := ./tools/makeheaders
-else
-MAKEHEADERS := ./tools/makeheaders$(PROGRAM_SUFFIX)
-endif
+CFLAGS := -std=c11
+CXXFLAGS := \
+	-std=c++17 \
+	-Wno-pedantic \
+	-Wno-unused-but-set-variable \
+	-Wno-unused-function \
+	-Wno-unused-label \
+	-Wno-unused-lambda-capture \
+	-Wno-unused-value \
+	-Wno-unused-variable
 
-USING_LIBAV = 0
-USING_CURL = 0
-USING_LIBPNG = 1
-USING_ASSIMP = 1
+# the linker has to care about this too, unfortunately
+LDFLAGS := -std=c++17 -fuse-ld=lld
 
-TARGET    = HatchGameEngine
-TARGETDIR = builds/$(OUT_FOLDER)/$(TARGET)
-OBJS      = main.o
+# Hatch uses meta/ instead of etc/
+FMTFLAGS := -style=file:meta/clang-format.yml
 
-SRC_C   = $(call rwc, source/, *.c)
-SRC_CPP = $(call rwc, source/, *.cpp)
-SRC_M   = $(call rwc, source/, *.m)
-
-OBJ_DIRS := $(sort \
-			$(addprefix out/$(OUT_FOLDER)/, $(dir $(SRC_C:source/%.c=%.o))) \
-			$(addprefix out/$(OUT_FOLDER)/, $(dir $(SRC_CPP:source/%.cpp=%.o))))
-ifeq ($(PLATFORM),$(PLATFORM_MACOS))
-OBJ_DIRS += $(addprefix out/$(OUT_FOLDER)/, $(dir $(SRC_M:source/%.m=%.o)))
-endif
-
-OBJS     := $(addprefix out/$(OUT_FOLDER)/, $(SRC_C:source/%.c=%.o)) \
-			$(addprefix out/$(OUT_FOLDER)/, $(SRC_CPP:source/%.cpp=%.o))
-ifeq ($(PLATFORM),$(PLATFORM_MACOS))
-OBJ_DIRS += $(addprefix out/$(OUT_FOLDER)/, $(SRC_M:source/%.m=%.o))
-endif
-
-INCLUDES  =	-Wall -Wno-deprecated -Wno-unused-variable \
-			-I/usr/local/include/ \
-			-I/usr/local/include/freetype2 \
-			-Iinclude/ \
-			-Isource/
-LIBS	  =	-lpng16 -ljpeg -lfreetype $(shell sdl2-config --libs)
-DEFINES   = -DTARGET_NAME=\"$(TARGET)\" \
-			-DUSING_LIBPNG \
-			-DUSING_LIBPNG_HEADER=\<libpng16/png.h\> \
-			-DDEBUG \
-			-DUSING_VM_DISPATCH_TABLE \
-			$(shell sdl2-config --cflags)
-
-ifeq ($(PLATFORM),$(PLATFORM_WINDOWS))
-INCLUDES += -Imeta/win/include
-LIBS += -lwsock32 -lws2_32
-DEFINES += -DWIN32
-ifneq ($(MSYS_VERSION),0)
-DEFINES += -DMSYS
-endif
-endif
-ifeq ($(PLATOFRM),$(PLATFORM_MACOS))
-INCLUDES += -F/Library/Frameworks/ \
-			-F/System/Library/Frameworks/ \
-			-Fmeta/mac/ \
-			-I/Library/Frameworks/SDL2.framework/Headers/ \
-			-I/System/Library/Frameworks/OpenGL.framework/Headers/
-DEFINES += -DMACOSX -DUSING_FRAMEWORK
-endif
-ifeq ($(PLATFORM),$(PLATFORM_LINUX))
-DEFINES += -DLINUX
-endif
-
-# Compiler Optimzations
-ifeq ($(USING_COMPILER_OPTS), 1)
-DEFINES	 +=	-Ofast
-DEFINES	 +=	-DUSING_COMPILER_OPTS
-endif
-
-# Open Asset Importer Library
-ifeq ($(USING_ASSIMP), 1)
-LIBS	 +=	-lassimp
-DEFINES	 +=	-DUSING_ASSIMP
-endif
-
-# FFmpeg Libraries
-ifeq ($(USING_LIBAV), 1)
-LIBS	 +=	-lavcodec -lavformat -lavutil -lswscale -lswresample
-DEFINES	 +=	-DUSING_LIBAV
-endif
-
-# Networking Libraries
-ifeq ($(USING_CURL), 1)
-LIBS 	 +=	-lcurl -lcrypto
-DEFINES	 +=	-DUSING_CURL
-endif
-
-# OGG Audio
-LIBS	 +=	-logg -lvorbis -lvorbisfile
-# zlib Compression
-LIBS	 +=	-lz
-
-ifeq ($(PLATFORM),$(PLATFORM_MACOS))
-LINKER	  =	-framework SDL2 \
-			-framework OpenGL \
-			-framework CoreFoundation \
-			-framework CoreServices \
-			-framework Foundation
-			# \
-			-framework Cocoa
-endif
-
-all:
-	mkdir -p $(OBJ_DIRS)
-	$(MAKEHEADERS) source
-	$(MAKE) build
-
-clean:
-	rm -rf $(OBJS)
-
-build: $(OBJS)
-	$(CXX) $^ $(INCLUDES) $(LIBS) $(LINKER) -o "$(TARGETDIR)" -std=c++11
-
-$(OBJ_DIRS):
-	mkdir -p $@
-
-package:
-	@#@rm -rf "$(TARGETDIR).app"
-	@mkdir -p "$(TARGETDIR).app"
-	@mkdir -p "$(TARGETDIR).app/Contents"
-	@mkdir -p "$(TARGETDIR).app/Contents/Frameworks"
-	@mkdir -p "$(TARGETDIR).app/Contents/MacOS"
-	@mkdir -p "$(TARGETDIR).app/Contents/Resources"
-	@# @rm -rf $(OBJS)
-	@mkdir -p $(OBJ_DIRS)
-	@./tools/makeheaders source
-	@make build
-	@chmod +x "$(TARGETDIR)"
-	@cp "$(TARGETDIR)" "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@[ -f "source/Data.hatch" ] && cp "source/Data.hatch" "$(TARGETDIR).app/Contents/Resources/Data.hatch" || true
-	@[ -f "source/config.ini" ] && cp "source/config.ini" "$(TARGETDIR).app/Contents/Resources/config.ini" || true
-	@[ -f "meta/mac/icon.icns" ] && cp "meta/mac/icon.icns" "$(TARGETDIR).app/Contents/Resources/icon.icns" || true
-	@# Making PkgInfo
-	@echo "APPL????" > "$(TARGETDIR).app/Contents/PkgInfo"
-	@# Making Info.plist
-	@echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" > "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "<plist version=\"1.0\">" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "    <dict>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <key>CFBundleExecutable</key>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <string>$(TARGET)</string>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <key>CFBundleDisplayName</key>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <string>$(TARGET)</string>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@[ -f "meta/mac/icon.icns" ] && echo "        <key>CFBundleIconFile</key>" >> "$(TARGETDIR).app/Contents/Info.plist" && echo "        <string>icon</string>" >> "$(TARGETDIR).app/Contents/Info.plist" || true
-	@# GCSupportsControllerUserInteraction
-	@echo "        <key>CFBundlePackageType</key>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <string>APPL</string>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <key>CFBundleShortVersionString</key>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <string>1.0.0</string>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <key>CFBundleVersion</key>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <string>1.0.0</string>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <key>NSHighResolutionCapable</key>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "        <string>true</string>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "    </dict>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@echo "</plist>" >> "$(TARGETDIR).app/Contents/Info.plist"
-	@# Copy libs
-	@cp "meta/mac/libpng16.16.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libpng16.16.dylib"
-	@cp "/usr/local/opt/jpeg/lib/libjpeg.9.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libjpeg.9.dylib"
-	@cp "/usr/local/opt/freetype/lib/libfreetype.6.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libfreetype.6.dylib"
-	@cp "meta/mac/libogg.0.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libogg.0.dylib"
-	@cp "meta/mac/libvorbis.0.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libvorbis.0.dylib"
-	@cp "meta/mac/libvorbisfile.3.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libvorbisfile.3.dylib"
-	@rsync -a "meta/mac/SDL2.framework/" "$(TARGETDIR).app/Contents/Frameworks/_SDL2.framework/"
-	@# @cp "meta/mac/libcurl.4.dylib" "$(TARGETDIR).app/Contents/Frameworks/_libcurl.4.dylib"
-	@# Link to copies
-	@install_name_tool -change /usr/local/opt/libpng/lib/libpng16.16.dylib @executable_path/../Frameworks/_libpng16.16.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change /usr/local/opt/jpeg/lib/libjpeg.9.dylib @executable_path/../Frameworks/_libjpeg.9.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change /usr/local/opt/freetype/lib/libfreetype.6.dylib @executable_path/../Frameworks/_libfreetype.6.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change /usr/local/opt/libogg/lib/libogg.0.dylib @executable_path/../Frameworks/_libogg.0.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change /usr/local/opt/libvorbis/lib/libvorbis.0.dylib @executable_path/../Frameworks/_libvorbis.0.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change /usr/local/opt/libvorbis/lib/libvorbisfile.3.dylib @executable_path/../Frameworks/_libvorbisfile.3.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change @rpath/SDL2.framework/Versions/A/SDL2 @executable_path/../Frameworks/_SDL2.framework/Versions/A/SDL2 "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@install_name_tool -change /usr/local/opt/curl/lib/libcurl.4.dylib @executable_path/../Frameworks/_libcurl.4.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@# Link copies to themselves
-	@#@install_name_tool -change /usr/local/opt/libogg/lib/libogg.0.dylib @executable_path/../Frameworks/_libogg.0.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@#@install_name_tool -change /usr/local/opt/libpng/lib/libpng16.16.dylib @executable_path/../Frameworks/_libpng16.16.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@#@install_name_tool -change /usr/local/opt/libvorbis/lib/libvorbis.0.dylib @executable_path/../Frameworks/_libvorbis.0.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@#@install_name_tool -change /usr/local/opt/libvorbis/lib/libvorbisfile.3.dylib @executable_path/../Frameworks/_libvorbisfile.3.dylib "$(TARGETDIR).app/Contents/MacOS/$(TARGET)"
-	@# Link Freetype to local PNG
-	@install_name_tool -change /usr/local/opt/libpng/lib/libpng16.16.dylib @executable_path/../Frameworks/_libpng16.16.dylib "$(TARGETDIR).app/Contents/Frameworks/_libfreetype.6.dylib"
-	@# Link Vorbis to local OGG
-	@install_name_tool -change /usr/local/opt/libogg/lib/libogg.0.dylib @executable_path/../Frameworks/_libogg.0.dylib "$(TARGETDIR).app/Contents/Frameworks/_libvorbis.0.dylib"
-	@# Link Vorbisfile to local OGG and Vorbis
-	@install_name_tool -change /usr/local/opt/libogg/lib/libogg.0.dylib @executable_path/../Frameworks/_libogg.0.dylib "$(TARGETDIR).app/Contents/Frameworks/_libvorbisfile.3.dylib"
-	@install_name_tool -change /usr/local/Cellar/libvorbis/1.3.6/lib/libvorbis.0.dylib @executable_path/../Frameworks/_libvorbis.0.dylib "$(TARGETDIR).app/Contents/Frameworks/_libvorbisfile.3.dylib"
-
-out/$(OUT_FOLDER)/%.o: source/%.cpp
-	$(CXX) -c -g $(INCLUDES) $(DEFINES) -o "$@" "$<" -std=c++11
-
-out/$(OUT_FOLDER)/%.o: source/%.c
-	$(CC) -c -g $(INCLUDES) $(DEFINES) -o "$@" "$<" -std=c11
-
-out/$(OUT_FOLDER)/%.o: source/%.m
-	$(CC) -c -g $(INCLUDES) $(DEFINES) -o "$@" "$<"
+# this defines all our usual targets
+include meta/epilogue.mk

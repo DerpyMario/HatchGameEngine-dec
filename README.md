@@ -1,7 +1,17 @@
-# HatchGameEngine
+# Hatch Game Engine
+
+![Hatch](https://cdn.tohoku.ac/hatchbg2.jpg)
+
 Multiplatform engine powering projects and making ideas into reality.
 
+[Discord Server](https://discord.gg/ZSw23t2sSd)
+
 I don't actively push to this, but this is here for portfolio reasons. Feel free to look around; however, this may not build without the correct libraries.
+
+This is a fork of [Hatch](https://github.com/HatchGameEngine/HatchGameEngine)
+that keeps up with it: upstream's engine is merged in as it moves, and what is
+added here -- the editor, the console and browser targets, the SEGA exports --
+is carried on top of it. See [Keeping up with upstream](#keeping-up-with-upstream).
 
 ## Hatch Studio (built-in editor)
 
@@ -232,18 +242,26 @@ attribute vec4 i_color;      uniform vec4 u_color;
                              uniform float u_fogDensity;
 ```
 
-From a script:
+From a script, through the engine's `Shader` class:
 
 ```js
-var shader = Shader.Load("Shaders/tint.vert", "Shaders/tint.frag");
-Shader.Set(shader);
+var shader = new Shader();
+shader.AddStage(SHADERSTAGE_VERTEX, "Shaders/tint.vert");
+shader.AddStage(SHADERSTAGE_FRAGMENT, "Shaders/tint.frag");
+shader.Compile();
+
+Draw.SetShader(shader);
 // ... draw ...
-Shader.Unset();
+Draw.SetShader(null);
 ```
 
-`Shader.Load` gives back -1 if the shader did not build, and the console carries
-whatever the driver said about it. Only the OpenGL renderer builds shaders from
-source; the others say so rather than pretending.
+A shader can also be set on a layer (`Scene.SetLayerShader`), on a view
+(`View.SetShader`), or over the whole window (`Window.SetPostProcessingShader`).
+A shader that does not build throws, with whatever the driver said about it.
+The editor's **3D > Shaders** panel builds the pairs it finds the same way and
+shows which built and which did not; **Rebuild** builds one again after an edit,
+and keeps the one already built when the new one does not compile. Only the
+OpenGL renderer builds shaders from source.
 
 The game is paused while the editor is open, so anything you inspect holds
 still; turn that off under **View** or **Play** if you would rather watch it
@@ -274,10 +292,35 @@ HatchGameEngine [options] [scene file]
   --resource-file <path>  Read resources from a packed .hatch file.
   --scripts-dir <path>    Read scripts from <path> instead of Scripts.
   --scene <path>          Load this scene at startup, relative to
-                          the Resources folder.
+                          the Resources folder. A game has to allow
+                          this in its GameConfig, except when the
+                          scene is being exported or opened in the
+                          editor.
   --studio                Open the editor on startup.
+  --export-megadrive <p>  Convert the loaded scene into a Mega Drive
+                          project under <p> and exit. Needs --scene.
+                          --export-genesis is the same machine.
+  --export-32x <p>        The same, for the SEGA 32X.
+  --export-megacd <p>     The same, for the SEGA Mega CD.
+  --export-gamegear <p>   The same, for the SEGA Game Gear.
+  --export-saturn <p>     The same, for the SEGA Saturn.
+  --export-dreamcast <p>  The same, for the SEGA Dreamcast.
+  --export-saturn-3d <p> <scene3d>
+                          Convert a 3D scene for the Saturn's VDP1.
+  --export-dreamcast-3d <p> <scene3d>
+                          Convert a 3D scene for the Dreamcast.
+  --32x-runtime <p>       Where meta/32x/runtime is, when it is not
+                          beside the engine or the working directory.
+  --saturn-runtime <p>    The same, for meta/saturn/runtime.
+  --dreamcast-runtime <p> The same, for meta/dreamcast/runtime.
+  --convert-model <from> <to>
+                          Load a model and save it as a Hatch model.
   --help                  Show this text.
 ```
+
+Started with no game at all -- no `Resources` folder and no data file -- the
+engine opens the editor rather than stopping, so a project can be opened or
+made from there.
 
 A single argument that is not an option is still treated as a `.hatch` file or
 as a scene file inside a `Resources` folder, the way the engine has always been
@@ -297,6 +340,7 @@ one self-contained application for every target:
 | `HatchGameEngine-macos-universal` | A `.app` holding one binary with both Apple silicon and Intel in it |
 | `HatchGameEngine-linux-x86_64` | A single executable |
 | `HatchGameEngine-linux-aarch64` | A single executable |
+| `HatchGameEngine-switch` | A `.nro` for the Nintendo Switch homebrew launcher |
 | `HatchGameEngine-xbox` | A `default.xbe` for the original Xbox |
 | `HatchGameEngine-web` | A page -- `index.html`, `index.js`, `index.wasm` -- to drop on any static host |
 | `HatchGameEngine-megadrive-sample-rom` | A Mega Drive ROM built from the sample scene, proving the exporter still works |
@@ -306,16 +350,18 @@ one self-contained application for every target:
 | `HatchGameEngine-saturn-sample-discs` | Two Saturn discs: the same scene as a VDP2 bitmap, and a 3D scene as VDP1 polygons |
 | `HatchGameEngine-dreamcast-sample-binaries` | Two Dreamcast binaries: the same scene as PowerVR textures, and a 3D scene as PowerVR polygons |
 
-Each job builds SDL2 from source as a static library and links it, along with
-GLEW and the C++ runtime, into the executable, so what comes out asks nothing of
-the machine it lands on beyond what the operating system already has. Windows
-uses the static C runtime, so no Visual C++ redistributable is needed either.
+Each desktop job links SDL2, GLEW and the C++ runtime into the executable, so
+what comes out asks nothing of the machine it lands on beyond what the operating
+system already has. On Linux and macOS the job builds SDL2 from source first; on
+Windows the engine's own CMake files fetch and build both, and the job asks for
+the static C runtime, so no Visual C++ redistributable is needed either.
 The Unix artifacts arrive as tarballs because a zip -- which is what GitHub
 wraps artifacts in -- does not carry the executable bit.
 
-The Xbox and WebAssembly jobs are the exceptions. Neither builds SDL2 and GLEW:
-the Xbox gets them from nxdk, and the browser from Emscripten's ports. What they
-produce is a title and a web page rather than an application. See below.
+The Switch, Xbox and WebAssembly jobs are the exceptions. None of them builds
+SDL2 and GLEW: the Switch gets them from devkitPro, the Xbox from nxdk, and the
+browser from Emscripten's ports. What they produce is a title, a homebrew
+application and a web page rather than a desktop application. See below.
 
 The six SEGA jobs are not builds of the engine at all -- it does not run on any
 of that hardware. They check the export the other way round: that a scene still
@@ -329,8 +375,30 @@ round. The Dreamcast job does both of those over again in that machine's own
 formats -- sixteen-bit textures and little-endian floats.
 
 ## Building
-### Windows
-Included in /VisualC is a Visual Studio 2019 solution. You'll need the x86 version of the [Microsoft Visual C++ Redistributable for Visual Studio 2015, 2017 and 2019](https://support.microsoft.com/en-us/topic/the-latest-supported-visual-c-downloads-2647da03-1eea-4433-9aff-95f26a218cc0) installed to compile in Visual Studio.
+### Microsoft Windows
+Included in `/VisualC` is a Visual Studio 2019 solution. You'll need the
+x86 version of the [Microsoft Visual C++ Redistributable for Visual
+Studio 2015, 2017 and 2019](https://support.microsoft.com/en-us/topic/the-latest-supported-visual-c-downloads-2647da03-1eea-4433-9aff-95f26a218cc0)
+installed to compile in Visual Studio.
+
+`CMakeLists.txt` works too, and fetches and builds SDL2 and GLEW itself.
+
+### GNU/Linux
+Use the provided `CMakeLists.txt` file.
+
+### Apple macOS
+Use the provided `Makefile`, or `CMakeLists.txt`.
+
+### Nintendo Switch
+With [devkitPro](https://devkitpro.org/)'s devkitA64 installed:
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake"
+cmake --build build --parallel
+```
+
+Each platform's own build settings live in `cmake/Platforms`, one file named
+after the system CMake is building for.
 
 ### Xbox
 
@@ -363,14 +431,17 @@ does not come along:
 | --- | --- |
 | Rendering | The SDL2 backend over the software rasteriser. There is no OpenGL on the Xbox, and the GL renderer is left out of the build entirely. |
 | 3D models | No Open Asset Import Library, so the formats it reads are unavailable. The engine's own model formats are unaffected. |
-| Polygon triangulation | `Geometry.Triangulate` returns nothing and logs a warning. The library behind it reports bad input by throwing, and nxdk has no exception runtime to catch it with. |
+| Script errors | Stop the title, with the error on screen and in the log. The engine reports script errors by throwing, and nxdk has no exception runtime, so `source/Engine/Includes/XboxCompat.h` turns a throw into a message and a stop: an error the engine recovers from elsewhere ends the game here. |
+| Polygon triangulation | `Geometry.Triangulate` returns nothing and logs a warning. The library behind it reports bad input by throwing. |
+| Paths | nxdk's C++ library declares `std::filesystem` without building it, and the engine's paths go through it, so what the engine uses is supplied in `source/Engine/Platforms/Xbox/Filesystem.cpp`. |
 | Networking | `WebSocketClient` is present but never connects. nxdk reaches the network through lwIP, which a title has to bring up itself, and which is not the socket layer the client was written against. |
 | Fonts | No FreeType. |
-| Saves | Written to `D:\Saves`, on the drive the title was launched from. |
+| Saves | Written beside the title, on the drive it was launched from (`D:`). |
 
-The engine's Xbox code is reached with `#if XBOX`. nxdk defines `_WIN32` as
-well, since the console is given a subset of the Windows API, so anywhere the
-two differ the Xbox has to be asked about first.
+The engine's Xbox code is reached with `#if XBOX`, and its build settings are in
+`cmake/Platforms/Xbox.cmake`. nxdk defines `_WIN32` as well, since the console
+is given a subset of the Windows API, so anywhere the two differ the Xbox has to
+be asked about first.
 
 ### WebAssembly
 
@@ -416,14 +487,16 @@ What is different in a browser:
 | | |
 | --- | --- |
 | The frame loop | Driven by the browser through `requestAnimationFrame` rather than by the engine. A page that spun in its own loop would never hand control back, and nothing it drew would reach the screen. |
-| Saved games and settings | Kept under `/save`, which the page mounts from IndexedDB, so they survive a reload. Everything else the engine writes goes to a filesystem that lives as long as the tab. |
+| Saved games and settings | `save://` and `config://` are kept under `/save`, which the page mounts from IndexedDB, so they survive a reload. Everything else the engine writes goes to a filesystem that lives as long as the tab. |
+| Script errors | Reported as on desktop: the build turns on Emscripten's C++ exceptions, which the script VM reports errors with. |
 | `Thread.RunEvent` | Does nothing, and says so. Threads in a browser need SharedArrayBuffer, which needs the host to send `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers -- more than a static host can be assumed to do. |
 | 3D models | No Open Asset Import Library. The engine's own model formats are unaffected. |
 | Fonts | No FreeType. |
 | Networking | No `WebSocketClient`. |
-| Fog | ES will not index a uniform array with a value that is not constant, so the fog curve is worked out in the shader rather than looked up. It can differ from the desktop table by one step of 256 at a handful of depths; `GLShaderBuilder::BuildFogTableLookup` says exactly where and why. |
+| Shaders | Built as GLSL ES 1.00, the version WebGL compiles that the engine's generated shaders are written in. |
 
-The engine's browser code is reached with `#if EMSCRIPTEN`.
+The engine's browser code is reached with `#if EMSCRIPTEN`, and its build
+settings are in `cmake/Platforms/Emscripten.cmake`.
 
 ### SEGA Mega Drive / Genesis
 
@@ -774,13 +847,31 @@ course, so on this machine that is a thing to add rather than a limit.
 Game logic does not come across, here or anywhere else -- it is bytecode for a
 VM that does not exist on an SH-4.
 
-## Dependecies
+## Keeping up with upstream
+
+Upstream Hatch is merged in with `git merge`, so its history is this fork's
+history too and the next merge only has to deal with what changed since the last
+one. The things that make that easier, and that are worth keeping in mind when
+adding to the fork:
+
+- Headers are written by hand next to their sources, as upstream does. What the
+  fork adds lives in files of its own wherever it can -- `source/Engine/UI`,
+  `source/Engine/Exporters`, `cmake/Platforms/Xbox.cmake` and so on -- so a merge
+  rarely has to touch it.
+- Where the fork has to change one of upstream's files, the change is kept
+  small and says why next to it.
+- `tools/verify-sega-export.py` and `tools/verify-model-roundtrip.py` read the
+  exporters' output back without using any of the engine's code, so an exporter
+  that a merge broke shows up as a failing check rather than a ROM that comes out
+  wrong.
+
+## Dependencies
 Required:
 - SDL2 (https://www.libsdl.org/)
 - Visual C++ (for Windows building)
 - Android Studio (for Android building)
 - Xcode 12 (for iOS building)
-- devKitPro (for Nintendo Switch/3DS homebrew building) (wip)
+- devKitPro (for Nintendo Switch homebrew building, and 3DS (wip))
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 - [Emscripten](https://emscripten.org/) (for WebAssembly building)
 - [SGDK](https://github.com/Stephane-D/SGDK) (to build the Mega Drive export into a ROM)
@@ -791,7 +882,7 @@ Required:
 - [KallistiOS](https://github.com/KallistiOS/KallistiOS) (to build the Dreamcast export)
 
 Optional:
-- [Open Asset Import Library](https://github.com/assimp/assimp)
+- [Open Asset Import Library (`assimp`)](https://github.com/assimp/assimp)
 - FFmpeg (for video playback, currently broken)
 - CURL (for simple HTTP network, currently broken)
 - libpng

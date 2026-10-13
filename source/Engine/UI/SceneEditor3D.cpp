@@ -1,19 +1,8 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Rendering/Scene3DTypes.h>
-
-need_t Scene3DObject;
-
-class SceneEditor3D {
-public:
-    static bool Loaded;
-};
-#endif
-
 #include <Engine/UI/SceneEditor3D.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
 #include <Engine/UI/UITheme.h>
+#include <Engine/UI/UIFiles.h>
 
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
@@ -61,6 +50,18 @@ static vector<std::string> ShaderFragmentPaths;
 static bool  ShadersScanned = false;
 static int   SelectedShader = -1;
 
+// Shaders built from here, so each can be built again after an edit. The engine
+// owns the shaders themselves, and throws them all away when the game restarts,
+// so an entry only points at one the engine still has.
+struct BuiltShader {
+    std::string Name;
+    std::string VertexPath;
+    std::string FragmentPath;
+    Shader*     Program = NULL;
+    std::string Error;
+};
+static vector<BuiltShader> BuiltShaders;
+
 static char  StatusText[512] = "";
 
 // The 3D scene being put together, and where it came from.
@@ -85,20 +86,99 @@ static vector<std::string> SceneFiles3D;
 static bool  Scenes3DScanned = false;
 static int   SelectedScene3D = -1;
 
-PRIVATE STATIC void SceneEditor3D::SetStatus(const char* format, ...) {
+// Builds a shader out of a vertex and a fragment file in the game's resources,
+// the way a script's Shader does, or says why it could not.
+static Shader* BuildShaderFromFiles(const char* vertexPath, const char* fragmentPath, std::string* error) {
+    Shader* shader = Graphics::CreateShader();
+    if (!shader) {
+        *error = "this renderer does not build shaders";
+        return NULL;
+    }
+
+    const char* paths[2] = { vertexPath, fragmentPath };
+    int stages[2] = { Shader::STAGE_VERTEX, Shader::STAGE_FRAGMENT };
+
+    for (int i = 0; i < 2; i++) {
+        ResourceStream* stream = ResourceStream::New(paths[i]);
+        if (!stream) {
+            *error = std::string("could not open ") + paths[i];
+            Graphics::DeleteShader(shader);
+            return NULL;
+        }
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+        try {
+            shader->AddStage(stages[i], stream);
+        } catch (const std::runtime_error& err) {
+            *error = err.what();
+            stream->Close();
+            Graphics::DeleteShader(shader);
+            return NULL;
+        }
+#else
+        shader->AddStage(stages[i], stream);
+#endif
+
+        stream->Close();
+    }
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+        shader->Compile();
+    } catch (const std::runtime_error& err) {
+        *error = err.what();
+    }
+#else
+    shader->Compile();
+#endif
+
+    if (!shader->WasCompiled()) {
+        if (error->empty())
+            *error = "it did not compile";
+        Graphics::DeleteShader(shader);
+        return NULL;
+    }
+
+    return shader;
+}
+
+static bool EngineStillHas(Shader* shader) {
+    return shader && std::find(Graphics::Shaders.begin(), Graphics::Shaders.end(), shader) != Graphics::Shaders.end();
+}
+
+// Builds (or builds again) one of the shaders listed, keeping the shader it
+// already had when the new one does not compile.
+static bool BuildListedShader(BuiltShader& entry) {
+    std::string error;
+    Shader* shader = BuildShaderFromFiles(entry.VertexPath.c_str(), entry.FragmentPath.c_str(), &error);
+    if (!shader) {
+        entry.Error = error;
+        Log::Print(Log::LOG_ERROR, "Shader \"%s\" did not build: %s", entry.Name.c_str(), error.c_str());
+        return false;
+    }
+
+    if (EngineStillHas(entry.Program))
+        Graphics::DeleteShader(entry.Program);
+
+    entry.Program = shader;
+    entry.Error = "";
+    return true;
+}
+
+void SceneEditor3D::SetStatus(const char* format, ...) {
     va_list args;
     va_start(args, format);
     vsnprintf(StatusText, sizeof(StatusText), format, args);
     va_end(args);
 }
 
-PUBLIC STATIC const char* SceneEditor3D::GetStatus() {
+const char* SceneEditor3D::GetStatus() {
     return StatusText;
 }
 
 // ------------------------------------------------------------- browsing ---
 
-PRIVATE STATIC bool SceneEditor3D::HasExtension(const char* path, const char* extension) {
+bool SceneEditor3D::HasExtension(const char* path, const char* extension) {
     size_t pathLength = strlen(path);
     size_t extLength = strlen(extension);
     if (pathLength < extLength)
@@ -109,7 +189,7 @@ PRIVATE STATIC bool SceneEditor3D::HasExtension(const char* path, const char* ex
 
 // Everything the engine can open as a model. The three of its own, and the
 // common ones Open Asset Import handles when it is built in.
-PRIVATE STATIC bool SceneEditor3D::IsModelFile(const char* path) {
+bool SceneEditor3D::IsModelFile(const char* path) {
     static const char* extensions[] = {
         ".hmdl", ".bin", ".md3", ".mdl",
         ".fbx", ".dae", ".gltf", ".glb", ".obj", ".blend", ".3ds", ".ply", ".stl"
@@ -123,11 +203,11 @@ PRIVATE STATIC bool SceneEditor3D::IsModelFile(const char* path) {
     return false;
 }
 
-PRIVATE STATIC void SceneEditor3D::ScanForModels() {
+void SceneEditor3D::ScanForModels() {
     ModelFiles.clear();
 
     if (ResourceManager::UsingDataFolder && Directory::Exists("Resources")) {
-        vector<char*> files = Directory::GetFiles("Resources", "*.*", true);
+        vector<char*> files = UIFiles::GetFiles("Resources", "*.*", true);
         for (size_t i = 0; i < files.size(); i++) {
             const char* path = files[i];
 
@@ -152,7 +232,7 @@ PRIVATE STATIC void SceneEditor3D::ScanForModels() {
 
 // Shaders come in pairs. A vertex file and a fragment file that share a name
 // are one shader, which is the layout every renderer that reads GLSL uses.
-PRIVATE STATIC void SceneEditor3D::ScanForShaders() {
+void SceneEditor3D::ScanForShaders() {
     ShaderNames.clear();
     ShaderVertexPaths.clear();
     ShaderFragmentPaths.clear();
@@ -165,7 +245,7 @@ PRIVATE STATIC void SceneEditor3D::ScanForShaders() {
     vector<std::string> vertexFiles;
     vector<std::string> fragmentFiles;
 
-    vector<char*> files = Directory::GetFiles("Resources", "*.*", true);
+    vector<char*> files = UIFiles::GetFiles("Resources", "*.*", true);
     for (size_t i = 0; i < files.size(); i++) {
         const char* path = files[i];
 
@@ -207,11 +287,11 @@ PRIVATE STATIC void SceneEditor3D::ScanForShaders() {
     ShadersScanned = true;
 }
 
-PRIVATE STATIC void SceneEditor3D::ScanForScenes() {
+void SceneEditor3D::ScanForScenes() {
     SceneFiles3D.clear();
 
     if (ResourceManager::UsingDataFolder && Directory::Exists("Resources")) {
-        vector<char*> files = Directory::GetFiles("Resources", "*.*", true);
+        vector<char*> files = UIFiles::GetFiles("Resources", "*.*", true);
         for (size_t i = 0; i < files.size(); i++) {
             const char* path = files[i];
 
@@ -233,7 +313,7 @@ PRIVATE STATIC void SceneEditor3D::ScanForScenes() {
 
 // --------------------------------------------------------------- models ---
 
-PUBLIC STATIC void SceneEditor3D::Unload() {
+void SceneEditor3D::Unload() {
     delete Model;
     Model = NULL;
 
@@ -242,18 +322,16 @@ PUBLIC STATIC void SceneEditor3D::Unload() {
     SceneEditor3D::Loaded = false;
 }
 
-PRIVATE STATIC bool SceneEditor3D::LoadModel(const char* path) {
+bool SceneEditor3D::LoadModel(const char* path) {
     SceneEditor3D::Unload();
 
-    ResourceStream* stream = ResourceStream::New(path);
-    if (!stream) {
+    if (!ResourceManager::ResourceExists(path)) {
         SceneEditor3D::SetStatus("Could not open \"%s\".", path);
         return false;
     }
 
-    IModel* model = new IModel();
-    bool loaded = model->Load(stream, path);
-    stream->Close();
+    IModel* model = new IModel(path);
+    bool loaded = !model->LoadFailed;
 
     if (!loaded) {
         delete model;
@@ -263,18 +341,18 @@ PRIVATE STATIC bool SceneEditor3D::LoadModel(const char* path) {
 
     Model = model;
     ModelPath = path;
-    SelectedMaterial = model->MaterialCount ? 0 : -1;
+    SelectedMaterial = model->Materials.size() ? 0 : -1;
     SceneEditor3D::Loaded = true;
 
     SceneEditor3D::SetStatus("Loaded %s: %d mesh(es), %d vertices, %d material(s).",
-        path, (int)model->MeshCount, (int)model->VertexCount, (int)model->MaterialCount);
+        path, (int)model->Meshes.size(), (int)model->VertexCount, (int)model->Materials.size());
 
     return true;
 }
 
 // ------------------------------------------------------------ 3D scenes ---
 
-PRIVATE STATIC void SceneEditor3D::UnloadScene() {
+void SceneEditor3D::UnloadScene() {
     for (size_t i = 0; i < Objects.size(); i++)
         delete (IModel*)Objects[i].Model;
 
@@ -288,28 +366,25 @@ PRIVATE STATIC void SceneEditor3D::UnloadScene() {
 // A placed model is loaded when the scene is, and a model that will not load
 // leaves its place in the scene rather than being dropped, so a scene with a
 // missing file can still be saved without losing what was in it.
-PRIVATE STATIC void SceneEditor3D::LoadObjectModel(Scene3DObject* object) {
+void SceneEditor3D::LoadObjectModel(Scene3DObject* object) {
     if (object->Model || object->Failed)
         return;
 
-    ResourceStream* stream = ResourceStream::New(object->Source);
-    if (!stream) {
+    if (!ResourceManager::ResourceExists(object->Source)) {
         object->Failed = true;
         return;
     }
 
-    IModel* model = new IModel();
-    if (!model->Load(stream, object->Source)) {
+    IModel* model = new IModel(object->Source);
+    if (model->LoadFailed) {
         delete model;
         object->Failed = true;
     }
     else
         object->Model = model;
-
-    stream->Close();
 }
 
-PRIVATE STATIC bool SceneEditor3D::OpenScene(const char* path) {
+bool SceneEditor3D::OpenScene(const char* path) {
     SceneEditor3D::UnloadScene();
 
     if (!Scene3DFormat::Read(path, &Settings, &Objects)) {
@@ -328,7 +403,7 @@ PRIVATE STATIC bool SceneEditor3D::OpenScene(const char* path) {
     return true;
 }
 
-PRIVATE STATIC bool SceneEditor3D::SaveScene() {
+bool SceneEditor3D::SaveScene() {
     if (ScenePath.empty()) {
         SceneEditor3D::SetStatus("This scene has nowhere to be saved to yet.");
         return false;
@@ -345,7 +420,7 @@ PRIVATE STATIC bool SceneEditor3D::SaveScene() {
     return true;
 }
 
-PRIVATE STATIC bool SceneEditor3D::CreateScene(const char* name) {
+bool SceneEditor3D::CreateScene(const char* name) {
     if (!ResourceManager::UsingDataFolder) {
         SceneEditor3D::SetStatus("3D scenes can only be created in a project folder.");
         return false;
@@ -391,7 +466,7 @@ PRIVATE STATIC bool SceneEditor3D::CreateScene(const char* name) {
 // The preview draws through the engine's own 3D scene, which is what a game
 // would draw through, so what shows here is what the renderer actually does
 // with the models rather than a second opinion about them.
-PRIVATE STATIC void SceneEditor3D::DrawPreview(float x, float y, float w, float h) {
+void SceneEditor3D::DrawPreview(float x, float y, float w, float h) {
     if (w < 8.0f || h < 8.0f)
         return;
 
@@ -493,7 +568,7 @@ PRIVATE STATIC void SceneEditor3D::DrawPreview(float x, float y, float w, float 
 
 // -------------------------------------------------------------- drawing ---
 
-PRIVATE STATIC void SceneEditor3D::DrawColor(const char* label, float* color) {
+void SceneEditor3D::DrawColor(const char* label, float* color) {
     char name[128];
 
     for (int i = 0; i < 3; i++) {
@@ -506,7 +581,7 @@ PRIVATE STATIC void SceneEditor3D::DrawColor(const char* label, float* color) {
     }
 }
 
-PRIVATE STATIC void SceneEditor3D::DrawModelPanel(float x, float y, float w, float h) {
+void SceneEditor3D::DrawModelPanel(float x, float y, float w, float h) {
     UICore::BeginPanel("Models", x, y, w, h);
         if (!ResourceManager::UsingDataFolder)
             UICore::Text("Open a project folder to browse its models.", UI_COL_TEXT_FAINT);
@@ -546,15 +621,15 @@ PRIVATE STATIC void SceneEditor3D::DrawModelPanel(float x, float y, float w, flo
                 UICore::Text("Nothing loaded.", UI_COL_TEXT_FAINT);
             else {
                 UICore::Field("File", ModelPath.c_str());
-                UICore::FieldFormatted("Meshes", "%d", (int)Model->MeshCount);
+                UICore::FieldFormatted("Meshes", "%d", (int)Model->Meshes.size());
                 UICore::FieldFormatted("Vertices", "%d", (int)Model->VertexCount);
                 UICore::FieldFormatted("Vertices per face", "%d", (int)Model->VertexPerFace);
-                UICore::FieldFormatted("Materials", "%d", (int)Model->MaterialCount);
-                UICore::FieldFormatted("Animations", "%d", (int)Model->AnimationCount);
-                UICore::FieldFormatted("Armatures", "%d", (int)Model->ArmatureCount);
+                UICore::FieldFormatted("Materials", "%d", (int)Model->Materials.size());
+                UICore::FieldFormatted("Animations", "%d", (int)Model->Animations.size());
+                UICore::FieldFormatted("Armatures", "%d", (int)Model->Armatures.size());
                 UICore::Field("Animated by", Model->UseVertexAnimation ? "vertices" : "bones");
 
-                for (size_t i = 0; i < Model->MeshCount && i < 16; i++) {
+                for (size_t i = 0; i < Model->Meshes.size() && i < 16; i++) {
                     Mesh* mesh = Model->Meshes[i];
                     if (!mesh)
                         continue;
@@ -572,15 +647,15 @@ PRIVATE STATIC void SceneEditor3D::DrawModelPanel(float x, float y, float w, flo
     UICore::EndPanel();
 }
 
-PRIVATE STATIC void SceneEditor3D::DrawMaterialPanel(float x, float y, float w, float h) {
+void SceneEditor3D::DrawMaterialPanel(float x, float y, float w, float h) {
     UICore::BeginPanel("Materials", x, y, w, h);
         if (!Model)
             UICore::Text("Load a model to see its materials.", UI_COL_TEXT_FAINT);
-        else if (!Model->MaterialCount)
+        else if (!Model->Materials.size())
             UICore::Text("This model has no materials.", UI_COL_TEXT_DIM);
         else {
             UICore::ResetRowStriping();
-            for (size_t i = 0; i < Model->MaterialCount; i++) {
+            for (size_t i = 0; i < Model->Materials.size(); i++) {
                 Material* material = Model->Materials[i];
 
                 char label[512];
@@ -593,7 +668,7 @@ PRIVATE STATIC void SceneEditor3D::DrawMaterialPanel(float x, float y, float w, 
 
             UICore::Separator();
 
-            if (SelectedMaterial >= 0 && SelectedMaterial < (int)Model->MaterialCount &&
+            if (SelectedMaterial >= 0 && SelectedMaterial < (int)Model->Materials.size() &&
                 Model->Materials[SelectedMaterial]) {
                 Material* material = Model->Materials[SelectedMaterial];
 
@@ -629,7 +704,7 @@ PRIVATE STATIC void SceneEditor3D::DrawMaterialPanel(float x, float y, float w, 
     UICore::EndPanel();
 }
 
-PRIVATE STATIC void SceneEditor3D::DrawShaderPanel(float x, float y, float w, float h) {
+void SceneEditor3D::DrawShaderPanel(float x, float y, float w, float h) {
     UICore::BeginPanel("Shaders", x, y, w, h);
         if (!ResourceManager::UsingDataFolder)
             UICore::Text("Open a project folder to browse its shaders.", UI_COL_TEXT_FAINT);
@@ -657,17 +732,29 @@ PRIVATE STATIC void SceneEditor3D::DrawShaderPanel(float x, float y, float w, fl
             bool haveSelection = SelectedShader >= 0 && SelectedShader < (int)ShaderNames.size();
 
             if (UICore::ButtonEnabled("Build Shader", haveSelection)) {
-                int index = Shader::LoadInto(ShaderVertexPaths[SelectedShader].c_str(),
-                    ShaderFragmentPaths[SelectedShader].c_str());
+                // Building one that is already listed builds it again rather
+                // than listing it twice.
+                int index = -1;
+                for (size_t i = 0; i < BuiltShaders.size(); i++) {
+                    if (BuiltShaders[i].Name == ShaderNames[SelectedShader])
+                        index = (int)i;
+                }
 
-                Shader* built = Shader::Get(index);
+                if (index < 0) {
+                    BuiltShader entry;
+                    entry.Name = ShaderNames[SelectedShader];
+                    entry.VertexPath = ShaderVertexPaths[SelectedShader];
+                    entry.FragmentPath = ShaderFragmentPaths[SelectedShader];
+                    BuiltShaders.push_back(entry);
+                    index = (int)BuiltShaders.size() - 1;
+                }
 
-                if (index < 0 || !built || built->Failed)
-                    SceneEditor3D::SetStatus("\"%s\" did not build; the console says why.",
-                        ShaderNames[SelectedShader].c_str());
-                else
+                if (BuildListedShader(BuiltShaders[index]))
                     SceneEditor3D::SetStatus("Built \"%s\" as shader %d.",
                         ShaderNames[SelectedShader].c_str(), index);
+                else
+                    SceneEditor3D::SetStatus("\"%s\" did not build; the console says why.",
+                        ShaderNames[SelectedShader].c_str());
             }
 
             if (UICore::Button("Rescan Shaders"))
@@ -676,34 +763,38 @@ PRIVATE STATIC void SceneEditor3D::DrawShaderPanel(float x, float y, float w, fl
             UICore::Separator();
             UICore::Heading("Built");
 
-            if (!Shader::GetCount())
+            if (!BuiltShaders.size())
                 UICore::Text("Nothing built yet.", UI_COL_TEXT_FAINT);
 
-            for (int i = 0; i < Shader::GetCount(); i++) {
-                Shader* shader = Shader::Get(i);
-                if (!shader)
-                    continue;
+            for (int i = 0; i < (int)BuiltShaders.size(); i++) {
+                BuiltShader& entry = BuiltShaders[i];
+                if (!EngineStillHas(entry.Program))
+                    entry.Program = NULL;
 
                 char label[512];
-                snprintf(label, sizeof(label), "%d: %s", i,
-                    shader->Name ? shader->Name : "unnamed");
+                snprintf(label, sizeof(label), "%d: %s", i, entry.Name.c_str());
 
-                UICore::Field(label, shader->Failed ? "failed" : "ready");
+                const char* state = "ready";
+                if (!entry.Program)
+                    state = entry.Error.size() ? "failed" : "unloaded";
+                UICore::Field(label, state);
 
                 char button[512];
                 snprintf(button, sizeof(button), "Rebuild##rebuild%d", i);
                 if (UICore::Button(button)) {
-                    if (shader->Reload())
+                    if (BuildListedShader(entry))
                         SceneEditor3D::SetStatus("Built shader %d again.", i);
-                    else
+                    else if (entry.Program)
                         SceneEditor3D::SetStatus("Shader %d did not build; the one loaded is still in use.", i);
+                    else
+                        SceneEditor3D::SetStatus("Shader %d did not build; the console says why.", i);
                 }
             }
         }
     UICore::EndPanel();
 }
 
-PRIVATE STATIC void SceneEditor3D::DrawSceneEditPanel(float x, float y, float w, float h) {
+void SceneEditor3D::DrawSceneEditPanel(float x, float y, float w, float h) {
     UICore::BeginPanel("3D Scene", x, y, w, h);
         // The preview takes the top of the panel, and what it is showing is
         // edited underneath it.
@@ -882,7 +973,7 @@ PRIVATE STATIC void SceneEditor3D::DrawSceneEditPanel(float x, float y, float w,
     UICore::EndPanel();
 }
 
-PUBLIC STATIC void SceneEditor3D::Draw(float x, float y, float w, float h, bool split) {
+void SceneEditor3D::Draw(float x, float y, float w, float h, bool split) {
     float halfW = split ? w / 2.0f : w;
     float halfH = split ? h / 2.0f : h / 4.0f;
     float secondX = split ? x + halfW : x;

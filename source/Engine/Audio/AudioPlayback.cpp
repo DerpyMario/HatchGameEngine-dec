@@ -1,176 +1,211 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/StandardSDL2.h>
-
-#include <Engine/ResourceTypes/SoundFormats/SoundFormat.h>
-
-class AudioPlayback {
-public:
-    Uint8*           Buffer = NULL;
-    Uint8*           UnconvertedSampleBuffer = NULL;
-    Uint32           BufferedSamples = 0;
-    SDL_AudioSpec    Format;
-    size_t           BytesPerSample = 0;
-    size_t           RequiredSamples = 0;
-    size_t           DeviceBytesPerSample = 0;
-    SDL_AudioStream* ConversionStream = NULL;
-    SoundFormat*     SoundData = NULL;
-    bool             OwnsSoundData = false;
-    Sint32           LoopIndex = -1;
-};
-#endif
-
-#include <Engine/Audio/AudioPlayback.h>
 #include <Engine/Audio/AudioManager.h>
+#include <Engine/Audio/AudioPlayback.h>
+#include <Engine/Diagnostics/Log.h>
 
-PUBLIC      AudioPlayback::AudioPlayback(SDL_AudioSpec format, size_t requiredSamples, size_t audioBytesPerSample, size_t deviceBytesPerSample) {
-    Format = format;
-    RequiredSamples = requiredSamples;
-    BytesPerSample = audioBytesPerSample;
-    DeviceBytesPerSample = deviceBytesPerSample;
+AudioPlayback::AudioPlayback(SDL_AudioSpec format,
+	size_t requiredSamples,
+	size_t audioBytesPerSample,
+	size_t deviceBytesPerSample) {
+	Format = format;
+	RequiredSamples = requiredSamples;
+	BytesPerSample = audioBytesPerSample;
+	DeviceBytesPerSample = deviceBytesPerSample;
 
-    // Create sample buffers
-    Buffer = (Uint8*)Memory::TrackedMalloc("Playback::Buffer", requiredSamples * deviceBytesPerSample);
-    UnconvertedSampleBuffer = (Uint8*)Memory::TrackedMalloc("Playback::UnconvertedSampleBuffer", requiredSamples * audioBytesPerSample);
+	// Create sample buffers
+	Buffer = (Uint8*)Memory::TrackedMalloc(
+		"Playback::Buffer", requiredSamples * deviceBytesPerSample);
+	UnconvertedSampleBuffer = (Uint8*)Memory::TrackedMalloc(
+		"Playback::UnconvertedSampleBuffer", requiredSamples * audioBytesPerSample);
 
-    // Create sound conversion stream
-    CreateConversionStream(format);
+	// Create sound conversion stream
+	CreateConversionStream(format);
 }
 
-PUBLIC void AudioPlayback::Change(SDL_AudioSpec format, size_t requiredSamples, size_t audioBytesPerSample, size_t deviceBytesPerSample) {
-    bool formatChanged = format.format != Format.format || format.channels != Format.channels || format.freq != Format.freq;
+void AudioPlayback::Change(SDL_AudioSpec format,
+	size_t requiredSamples,
+	size_t audioBytesPerSample,
+	size_t deviceBytesPerSample) {
+	bool formatChanged = format.format != Format.format || format.channels != Format.channels ||
+		format.freq != Format.freq;
 
-    size_t bufSize = requiredSamples * deviceBytesPerSample;
-    if (bufSize > RequiredSamples * DeviceBytesPerSample)
-        Buffer = (Uint8*)Memory::Realloc(Buffer, bufSize);
+	size_t bufSize = requiredSamples * deviceBytesPerSample;
+	if (bufSize > RequiredSamples * DeviceBytesPerSample) {
+		Buffer = (Uint8*)Memory::Realloc(Buffer, bufSize);
+	}
 
-    bufSize = requiredSamples * audioBytesPerSample;
-    if (bufSize > RequiredSamples * BytesPerSample)
-        UnconvertedSampleBuffer = (Uint8*)Memory::Realloc(UnconvertedSampleBuffer, bufSize);
+	bufSize = requiredSamples * audioBytesPerSample;
+	if (bufSize > RequiredSamples * BytesPerSample) {
+		UnconvertedSampleBuffer = (Uint8*)Memory::Realloc(UnconvertedSampleBuffer, bufSize);
+	}
 
-    Format = format;
-    RequiredSamples = requiredSamples;
-    BytesPerSample = audioBytesPerSample;
-    DeviceBytesPerSample = deviceBytesPerSample;
+	Format = format;
+	RequiredSamples = requiredSamples;
+	BytesPerSample = audioBytesPerSample;
+	DeviceBytesPerSample = deviceBytesPerSample;
 
-    if (formatChanged) {
-        if (ConversionStream)
-            SDL_FreeAudioStream(ConversionStream);
-        CreateConversionStream(format);
-    }
+	if (formatChanged) {
+		if (ConversionStream) {
+			SDL_FreeAudioStream(ConversionStream);
+		}
+		CreateConversionStream(format);
+	}
 }
 
-PRIVATE void AudioPlayback::CreateConversionStream(SDL_AudioSpec format) {
-    ConversionStream = SDL_NewAudioStream(Format.format, Format.channels, Format.freq, AudioManager::DeviceFormat.format, AudioManager::DeviceFormat.channels, AudioManager::DeviceFormat.freq);
-    if (ConversionStream == NULL) {
-        Log::Print(Log::LOG_ERROR, "Conversion stream failed to create: %s", SDL_GetError());
-        Log::Print(Log::LOG_INFO, "Source Format:");
-        Log::Print(Log::LOG_INFO, "Format:   %04X", Format.format);
-        Log::Print(Log::LOG_INFO, "Channels: %d", Format.channels);
-        Log::Print(Log::LOG_INFO, "Freq:     %d", Format.freq);
-        Log::Print(Log::LOG_INFO, "Device Format:");
-        Log::Print(Log::LOG_INFO, "Format:   %04X", AudioManager::DeviceFormat.format);
-        Log::Print(Log::LOG_INFO, "Channels: %d", AudioManager::DeviceFormat.channels);
-        Log::Print(Log::LOG_INFO, "Freq:     %d", AudioManager::DeviceFormat.freq);
-    }
+void AudioPlayback::CreateConversionStream(SDL_AudioSpec format) {
+	ConversionStream = SDL_NewAudioStream(Format.format,
+		Format.channels,
+		Format.freq,
+		AudioManager::DeviceFormat.format,
+		AudioManager::DeviceFormat.channels,
+		AudioManager::DeviceFormat.freq);
+	if (ConversionStream == NULL) {
+		Log::Print(
+			Log::LOG_ERROR, "Conversion stream failed to create: %s", SDL_GetError());
+		Log::Print(Log::LOG_INFO, "Source Format:");
+		Log::Print(Log::LOG_INFO, "Format:   %04X", Format.format);
+		Log::Print(Log::LOG_INFO, "Channels: %d", Format.channels);
+		Log::Print(Log::LOG_INFO, "Freq:     %d", Format.freq);
+		Log::Print(Log::LOG_INFO, "Device Format:");
+		Log::Print(Log::LOG_INFO, "Format:   %04X", AudioManager::DeviceFormat.format);
+		Log::Print(Log::LOG_INFO, "Channels: %d", AudioManager::DeviceFormat.channels);
+		Log::Print(Log::LOG_INFO, "Freq:     %d", AudioManager::DeviceFormat.freq);
+	}
 }
 
-PUBLIC void AudioPlayback::Dispose() {
-    if (Buffer) {
-        Memory::Free(Buffer);
-        Buffer = NULL;
-    }
-    if (UnconvertedSampleBuffer) {
-        Memory::Free(UnconvertedSampleBuffer);
-        UnconvertedSampleBuffer = NULL;
-    }
-    if (ConversionStream) {
-        SDL_FreeAudioStream(ConversionStream);
-        ConversionStream = NULL;
-    }
+void AudioPlayback::Dispose() {
+	if (Buffer) {
+		Memory::Free(Buffer);
+		Buffer = NULL;
+	}
+	if (UnconvertedSampleBuffer) {
+		Memory::Free(UnconvertedSampleBuffer);
+		UnconvertedSampleBuffer = NULL;
+	}
+	if (ConversionStream) {
+		SDL_FreeAudioStream(ConversionStream);
+		ConversionStream = NULL;
+	}
 
-    if (SoundData) {
-        if (OwnsSoundData) {
-            SoundData->Dispose();
-            delete SoundData;
-        }
-        SoundData = NULL;
-    }
+	if (SoundData) {
+		if (OwnsSoundData) {
+			SoundData->Dispose();
+			delete SoundData;
+		}
+		SoundData = NULL;
+	}
 }
 
-PUBLIC int AudioPlayback::RequestSamples(int samples, bool loop, int sample_to_loop_to) {
-    if (!SoundData)
-        return AudioManager::REQUEST_ERROR;
+int AudioPlayback::RequestSamples(int samples, bool loop, int sample_to_loop_to) {
+	if (!SoundData) {
+		return AudioManager::REQUEST_ERROR;
+	}
 
-    // If the format is the same, no need to convert.
-    if (Format.freq == AudioManager::DeviceFormat.freq
-    && Format.format == AudioManager::DeviceFormat.format
-    && Format.channels == AudioManager::DeviceFormat.channels) {
-        int num_samples = SoundData->GetSamples(Buffer, samples, LoopIndex);
-        if (num_samples == 0 && loop) {
-            SoundData->SeekSample(sample_to_loop_to);
-            num_samples = SoundData->GetSamples(Buffer, samples, LoopIndex);
-        }
+	// If the format is the same, no need to convert.
+	if (Format.freq == AudioManager::DeviceFormat.freq &&
+		Format.format == AudioManager::DeviceFormat.format &&
+		Format.channels == AudioManager::DeviceFormat.channels) {
+		int totalObtained = 0;
+		int num_samples = 0;
 
-        if (num_samples == 0)
-            return AudioManager::REQUEST_EOF;
+		// Fill 'samples' worth of sample data.
+		while (totalObtained < samples) {
+			Uint8* buffer = Buffer + (totalObtained * AudioManager::BytesPerSample);
+			int remaining = samples - totalObtained;
 
-        BufferedSamples = num_samples;
+			// If GetSamples returns zero, and this audio is supposed to loop,
+			// then seek to 'sample_to_loop_to' and call GetSamples again.
+			int num_samples = SoundData->GetSamples(buffer, remaining, LoopIndex);
+			if (num_samples == 0 && loop) {
+				SoundData->SeekSample(sample_to_loop_to);
+				num_samples = SoundData->GetSamples(buffer, remaining, LoopIndex);
+			}
 
-        num_samples *= SoundData->SampleSize;
-        return num_samples;
-    }
+			// If GetSamples returns zero again:
+			if (num_samples == 0) {
+				if (totalObtained == 0) {
+					// This 'while' never obtained any sample data.
+					// It can happen if there is no more audio to play, or if
+					// or if the SoundFormat had an error obtaining samples.
+					return AudioManager::REQUEST_EOF;
+				}
+				else {
+					// Some sample data was obtained, so break out and return
+					// the amount.
+					break;
+				}
+			}
 
-    if (!ConversionStream)
-        return AudioManager::REQUEST_ERROR;
+			totalObtained += num_samples;
+		}
 
-    int samplesRequestedInBytes = AudioManager::BytesPerSample * samples;
+		BufferedSamples = totalObtained;
 
-    int availableBytes = SDL_AudioStreamAvailable(ConversionStream);
-    if (availableBytes < samplesRequestedInBytes) {
-        // Load extra samples if we have none
-        int num_samples = SoundData->GetSamples(UnconvertedSampleBuffer, samples * AUDIO_FIRST_LOAD_SAMPLE_BOOST, LoopIndex);
-        if (num_samples == 0 && loop) {
-            SoundData->SeekSample(sample_to_loop_to);
-            num_samples = SoundData->GetSamples(UnconvertedSampleBuffer, samples, LoopIndex);
-        }
+		return totalObtained * SoundData->SampleSize;
+	}
 
-        if (num_samples == 0) {
-            if (availableBytes == 0)
-                return AudioManager::REQUEST_EOF;
-            else
-                goto CONVERT;
-        }
+	if (!ConversionStream) {
+		return AudioManager::REQUEST_ERROR;
+	}
 
-        int result = SDL_AudioStreamPut(ConversionStream, UnconvertedSampleBuffer, num_samples * BytesPerSample);
-        if (result == -1) {
-            Log::Print(Log::LOG_ERROR, "Failed to put samples in conversion stream: %s", SDL_GetError());
-            return AudioManager::REQUEST_ERROR;
-        }
-    }
+	int samplesRequestedInBytes = AudioManager::BytesPerSample * samples;
 
-    CONVERT:
-    int received_bytes = SDL_AudioStreamGet(ConversionStream, Buffer, samplesRequestedInBytes);
-    if (received_bytes == -1) {
-        Log::Print(Log::LOG_ERROR, "Failed to get converted samples: %s", SDL_GetError());
-        return AudioManager::REQUEST_ERROR;
-    }
-    // Wait for data if we got none
-    if (received_bytes == 0)
-        return AudioManager::REQUEST_CONVERTING;
+	int availableBytes = SDL_AudioStreamAvailable(ConversionStream);
+	while (availableBytes < samplesRequestedInBytes) {
+		// Load extra samples if we have none
+		int num_samples = SoundData->GetSamples(UnconvertedSampleBuffer,
+			samples * AUDIO_FIRST_LOAD_SAMPLE_BOOST,
+			LoopIndex);
+		if (num_samples == 0 && loop) {
+			SoundData->SeekSample(sample_to_loop_to);
+			num_samples =
+				SoundData->GetSamples(UnconvertedSampleBuffer, samples, LoopIndex);
+		}
 
-    BufferedSamples = received_bytes / AudioManager::BytesPerSample;
+		if (num_samples == 0) {
+			if (availableBytes == 0) {
+				return AudioManager::REQUEST_EOF;
+			}
+			else {
+				goto CONVERT;
+			}
+		}
 
-    return received_bytes;
+		int result = SDL_AudioStreamPut(
+			ConversionStream, UnconvertedSampleBuffer, num_samples * BytesPerSample);
+		if (result == -1) {
+			Log::Print(Log::LOG_ERROR,
+				"Failed to put samples in conversion stream: %s",
+				SDL_GetError());
+			return AudioManager::REQUEST_ERROR;
+		}
+
+		availableBytes = SDL_AudioStreamAvailable(ConversionStream);
+	}
+
+CONVERT:
+	int received_bytes = SDL_AudioStreamGet(ConversionStream, Buffer, samplesRequestedInBytes);
+	if (received_bytes == -1) {
+		Log::Print(Log::LOG_ERROR, "Failed to get converted samples: %s", SDL_GetError());
+		return AudioManager::REQUEST_ERROR;
+	}
+	// Wait for data if we got none
+	if (received_bytes == 0) {
+		return AudioManager::REQUEST_CONVERTING;
+	}
+
+	BufferedSamples = received_bytes / AudioManager::BytesPerSample;
+
+	return received_bytes;
 }
 
-PUBLIC void AudioPlayback::Seek(int samples) {
-    if (!SoundData)
-        return;
+void AudioPlayback::Seek(int samples) {
+	if (!SoundData) {
+		return;
+	}
 
-    SoundData->SeekSample(samples);
+	SoundData->SeekSample(samples);
 }
 
-PUBLIC AudioPlayback::~AudioPlayback() {
-    Dispose();
+AudioPlayback::~AudioPlayback() {
+	Dispose();
 }

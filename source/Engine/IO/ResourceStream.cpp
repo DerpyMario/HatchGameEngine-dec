@@ -1,70 +1,76 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/IO/Stream.h>
-class ResourceStream : public Stream {
-public:
-    Uint8* pointer = NULL;
-    Uint8* pointer_start = NULL;
-    size_t size = 0;
-};
-#endif
-
 #include <Engine/IO/ResourceStream.h>
 
 #include <Engine/ResourceTypes/ResourceManager.h>
 
-PUBLIC STATIC ResourceStream* ResourceStream::New(const char* filename) {
-    ResourceStream* stream = new (std::nothrow) ResourceStream;
-    if (!stream) {
-        return NULL;
-    }
+ResourceStream* ResourceStream::New(const char* filename) {
+	ResourceStream* stream = new (std::nothrow) ResourceStream;
+	if (!stream) {
+		return NULL;
+	}
 
-    if (!filename)
-        goto FREE;
+	if (!filename) {
+		goto FREE;
+	}
 
-    if (!ResourceManager::LoadResource(filename, &stream->pointer_start, &stream->size))
-        goto FREE;
+	if (!ResourceManager::LoadResource(filename, &stream->pointer_start, &stream->size)) {
+		goto FREE;
+	}
 
-    stream->pointer = stream->pointer_start;
+	stream->pointer = stream->pointer_start;
 
-    return stream;
+	return stream;
 
-    FREE:
-        delete stream;
-        return NULL;
+FREE:
+	delete stream;
+	return NULL;
 }
 
-PUBLIC        void            ResourceStream::Close() {
-    Memory::Free(pointer_start);
-    Stream::Close();
+bool ResourceStream::IsReadable() {
+	return true;
 }
-PUBLIC        void            ResourceStream::Seek(Sint64 offset) {
-    pointer = pointer_start + offset;
+bool ResourceStream::IsWritable() {
+	return false;
 }
-PUBLIC        void            ResourceStream::SeekEnd(Sint64 offset) {
-    pointer = pointer_start + size + offset;
+bool ResourceStream::MakeReadable(bool readable) {
+	return readable;
 }
-PUBLIC        void            ResourceStream::Skip(Sint64 offset) {
-    pointer = pointer + offset;
-}
-PUBLIC        size_t          ResourceStream::Position() {
-    return pointer - pointer_start;
-}
-PUBLIC        size_t          ResourceStream::Length() {
-    return size;
+bool ResourceStream::MakeWritable(bool writable) {
+	return !writable;
 }
 
-PUBLIC        size_t          ResourceStream::ReadBytes(void* data, size_t n) {
-    if (n > size - Position()) {
-        n = size - Position();
-    }
-    if (n == 0) return 0;
-
-    memcpy(data, pointer, n);
-    pointer += n;
-    return n;
+void ResourceStream::Close() {
+	Memory::Free(pointer_start);
+	Stream::Close();
 }
-PUBLIC        size_t          ResourceStream::WriteBytes(void* data, size_t n) {
-    // Cannot write to a resource.
-    return 0;
+void ResourceStream::Seek(Sint64 offset) {
+	pointer = pointer_start + offset;
+}
+void ResourceStream::SeekEnd(Sint64 offset) {
+	pointer = pointer_start + size + offset;
+}
+void ResourceStream::Skip(Sint64 offset) {
+	pointer = pointer + offset;
+}
+size_t ResourceStream::Position() {
+	return pointer - pointer_start;
+}
+size_t ResourceStream::Length() {
+	return size;
+}
+
+size_t ResourceStream::ReadBytes(void* data, size_t n) {
+	if (n > size - Position()) {
+		n = size - Position();
+	}
+	if (n == 0) {
+		return 0;
+	}
+
+	memcpy(data, pointer, n);
+	pointer += n;
+	return n;
+}
+size_t ResourceStream::WriteBytes(void* data, size_t n) {
+	// Cannot write to a resource.
+	return 0;
 }

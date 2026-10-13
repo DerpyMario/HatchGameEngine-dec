@@ -1,198 +1,263 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-class Shader {
-public:
-    char* Name = nullptr;
-    char* VertexPath = nullptr;
-    char* FragmentPath = nullptr;
-
-    void* Handle = nullptr;
-    bool  Failed = false;
-};
-#endif
-
+#include <Engine/Diagnostics/Log.h>
+#include <Engine/Graphics.h>
 #include <Engine/Rendering/Shader.h>
 
-#include <Engine/Diagnostics/Log.h>
-#include <Engine/Diagnostics/Memory.h>
-#include <Engine/Graphics.h>
-#include <Engine/IO/ResourceStream.h>
-#include <Engine/Utilities/StringUtils.h>
-
-// A shader the game wrote, rather than one the engine generated for itself.
-//
-// The engine builds its own shaders as it needs them, which leaves no way to
-// use one of your own. This loads a pair of GLSL files out of the game's
-// resources and hands them to the renderer to build.
-//
-// A shader written for this talks to the engine through the names its own
-// shaders use, since those are what the draw path fills in:
-//
-//   attributes  i_position, i_uv, i_color
-//   uniforms    u_projectionMatrix, u_modelViewMatrix, u_color, u_texture,
-//               u_paletteTexture, u_fogColor, u_fogLinearStart,
-//               u_fogLinearEnd, u_fogDensity, u_fogTable
-//
-// Anything the shader does not declare is simply not set, so a shader only has
-// to name the parts it uses.
-
-PRIVATE STATIC char* Shader::ReadSource(const char* path) {
-    ResourceStream* stream = ResourceStream::New(path);
-    if (!stream) {
-        Log::Print(Log::LOG_ERROR, "Could not open the shader source \"%s\"!", path);
-        return NULL;
-    }
-
-    size_t length = stream->Length();
-    char* source = (char*)Memory::Malloc(length + 1);
-    if (!source) {
-        stream->Close();
-        return NULL;
-    }
-
-    stream->ReadBytes(source, length);
-    source[length] = '\0';
-    stream->Close();
-
-    return source;
+void Shader::Compile() {
+	throw std::runtime_error("Shader::Compile() called without an implementation");
 }
 
-PUBLIC STATIC Shader* Shader::Load(const char* vertexPath, const char* fragmentPath) {
-    if (!vertexPath || !fragmentPath)
-        return NULL;
-
-    char* vertexSource = Shader::ReadSource(vertexPath);
-    if (!vertexSource)
-        return NULL;
-
-    char* fragmentSource = Shader::ReadSource(fragmentPath);
-    if (!fragmentSource) {
-        Memory::Free(vertexSource);
-        return NULL;
-    }
-
-    Shader* shader = new Shader();
-    shader->VertexPath = StringUtils::Duplicate(vertexPath);
-    shader->FragmentPath = StringUtils::Duplicate(fragmentPath);
-    shader->Name = StringUtils::Duplicate(vertexPath);
-
-    shader->Handle = Graphics::CreateShader(vertexSource, fragmentSource);
-    shader->Failed = shader->Handle == NULL;
-
-    Memory::Free(vertexSource);
-    Memory::Free(fragmentSource);
-
-    if (shader->Failed)
-        Log::Print(Log::LOG_ERROR, "Could not build the shader from \"%s\" and \"%s\".", vertexPath, fragmentPath);
-    else
-        Log::Print(Log::LOG_VERBOSE, "Built the shader from \"%s\" and \"%s\".", vertexPath, fragmentPath);
-
-    return shader;
+void Shader::AddStage(int stage, Stream* stream) {
+	throw std::runtime_error("Shader::AddStage() called without an implementation");
+}
+bool Shader::HasStage(int stage) {
+	return false;
+}
+bool Shader::HasRequiredStages() {
+	return false;
+}
+bool Shader::CanCompile() {
+	return false;
+}
+bool Shader::IsValid() {
+	return false;
+}
+bool Shader::WasCompiled() {
+	return Compiled;
 }
 
-// Builds the shader again from the same two files, so an edit can be seen
-// without restarting. The old one is only let go once the new one is built, so
-// a shader that stops compiling leaves the working one in place.
-PUBLIC bool Shader::Reload() {
-    if (!VertexPath || !FragmentPath)
-        return false;
-
-    char* vertexSource = Shader::ReadSource(VertexPath);
-    if (!vertexSource)
-        return false;
-
-    char* fragmentSource = Shader::ReadSource(FragmentPath);
-    if (!fragmentSource) {
-        Memory::Free(vertexSource);
-        return false;
-    }
-
-    void* rebuilt = Graphics::CreateShader(vertexSource, fragmentSource);
-
-    Memory::Free(vertexSource);
-    Memory::Free(fragmentSource);
-
-    if (!rebuilt) {
-        Log::Print(Log::LOG_ERROR, "Could not build \"%s\" again; the one already loaded is still in use.", VertexPath);
-        return false;
-    }
-
-    Graphics::DeleteShader(Handle);
-
-    Handle = rebuilt;
-    Failed = false;
-
-    return true;
+bool Shader::HasUniform(const char* name) {
+	return false;
+}
+void Shader::SetUniform(ShaderUniform* uniform, size_t count, void* values, Uint8 type) {
+	throw std::runtime_error("Shader::SetUniform() called without an implementation");
+}
+void Shader::SetUniformTexture(const char* name, Texture* texture) {
+	throw std::runtime_error("Shader::SetUniformTexture() called without an implementation");
 }
 
-PUBLIC void Shader::Use() {
-    if (Handle)
-        Graphics::UseShader(Handle);
+const char* Shader::GetUniformTypeName(Uint8 type) {
+	switch (type) {
+	case DATATYPE_FLOAT:
+		return "float";
+	case DATATYPE_FLOAT_VEC2:
+		return "vec2";
+	case DATATYPE_FLOAT_VEC3:
+		return "vec3";
+	case DATATYPE_FLOAT_VEC4:
+		return "vec4";
+	case DATATYPE_INT:
+		return "int";
+	case DATATYPE_INT_VEC2:
+		return "ivec2";
+	case DATATYPE_INT_VEC3:
+		return "ivec3";
+	case DATATYPE_INT_VEC4:
+		return "ivec4";
+	case DATATYPE_BOOL:
+		return "bool";
+	case DATATYPE_BOOL_VEC2:
+		return "bvec2";
+	case DATATYPE_BOOL_VEC3:
+		return "bvec3";
+	case DATATYPE_BOOL_VEC4:
+		return "bvec4";
+	case DATATYPE_FLOAT_MAT2:
+		return "mat2";
+	case DATATYPE_FLOAT_MAT3:
+		return "mat3";
+	case DATATYPE_FLOAT_MAT4:
+		return "mat4";
+	case DATATYPE_SAMPLER_2D:
+		return "sampler2D";
+	case DATATYPE_SAMPLER_CUBE:
+		return "samplerCube";
+	default:
+		return "unknown";
+	}
 }
 
-PUBLIC STATIC void Shader::Unuse() {
-    Graphics::UseShader(NULL);
+size_t Shader::GetDataTypeElementCount(Uint8 type) {
+	switch (type) {
+	case DATATYPE_INT_VEC2:
+	case DATATYPE_FLOAT_VEC2:
+	case DATATYPE_BOOL_VEC2:
+		return 2;
+	case DATATYPE_INT_VEC3:
+	case DATATYPE_FLOAT_VEC3:
+	case DATATYPE_BOOL_VEC3:
+		return 3;
+	case DATATYPE_INT_VEC4:
+	case DATATYPE_FLOAT_VEC4:
+	case DATATYPE_BOOL_VEC4:
+		return 4;
+	default:
+		return 1;
+	}
+}
+size_t Shader::GetMatrixDataTypeSize(Uint8 type) {
+	switch (type) {
+	case DATATYPE_FLOAT_MAT2:
+		return 2 * 2;
+	case DATATYPE_FLOAT_MAT3:
+		return 3 * 3;
+	case DATATYPE_FLOAT_MAT4:
+		return 4 * 4;
+	default:
+		return 0;
+	}
+}
+bool Shader::DataTypeIsMatrix(Uint8 type) {
+	switch (type) {
+	case DATATYPE_FLOAT_MAT2:
+	case DATATYPE_FLOAT_MAT3:
+	case DATATYPE_FLOAT_MAT4:
+		return true;
+	}
+
+	return false;
+}
+bool Shader::DataTypeIsSampler(Uint8 type) {
+	switch (type) {
+	case DATATYPE_SAMPLER_2D:
+	case DATATYPE_SAMPLER_CUBE:
+		return true;
+	}
+
+	return false;
 }
 
-PUBLIC void Shader::Dispose() {
-    Graphics::DeleteShader(Handle);
-    Handle = NULL;
-
-    Memory::Free(Name);
-    Memory::Free(VertexPath);
-    Memory::Free(FragmentPath);
-
-    Name = NULL;
-    VertexPath = NULL;
-    FragmentPath = NULL;
+void Shader::Use() {
+	throw std::runtime_error("Shader::Use() called without an implementation");
+}
+void Shader::Validate() {
+	throw std::runtime_error("Shader::Validate() called without an implementation");
 }
 
-PUBLIC Shader::~Shader() {
-    Dispose();
+ShaderUniform* Shader::GetUniform(std::string identifier) {
+	std::unordered_map<std::string, ShaderUniform>::iterator it = UniformMap.find(identifier);
+	if (it != UniformMap.end()) {
+		return &UniformMap[identifier];
+	}
+
+	return nullptr;
 }
 
-// ------------------------------------------------------------- the loaded ---
-
-// Every shader the game has loaded, so scripts can name one by number and the
-// editor can list them without keeping its own copy of the same thing.
-static vector<Shader*> LoadedShaders;
-
-PUBLIC STATIC int Shader::LoadInto(const char* vertexPath, const char* fragmentPath) {
-    // A shader already loaded from the same pair of files is handed back rather
-    // than built a second time.
-    for (size_t i = 0; i < LoadedShaders.size(); i++) {
-        Shader* other = LoadedShaders[i];
-        if (other && other->VertexPath && other->FragmentPath &&
-            !strcmp(other->VertexPath, vertexPath) &&
-            !strcmp(other->FragmentPath, fragmentPath))
-            return (int)i;
-    }
-
-    Shader* shader = Shader::Load(vertexPath, fragmentPath);
-    if (!shader)
-        return -1;
-
-    LoadedShaders.push_back(shader);
-
-    return (int)LoadedShaders.size() - 1;
+int Shader::GetAttribLocation(std::string identifier) {
+	return -1;
+}
+int Shader::GetUniformLocation(std::string identifier) {
+	return -1;
 }
 
-PUBLIC STATIC int Shader::GetCount() {
-    return (int)LoadedShaders.size();
+int Shader::AddBuiltinUniform(std::string identifier) {
+	int uniform = GetUniformLocation(identifier);
+
+	if (!IsBuiltinUniform(identifier)) {
+		BuiltinUniforms.push_back(identifier);
+	}
+
+	return uniform;
+}
+bool Shader::IsBuiltinUniform(std::string identifier) {
+	auto it = std::find(BuiltinUniforms.begin(), BuiltinUniforms.end(), identifier);
+	return it != BuiltinUniforms.end();
 }
 
-PUBLIC STATIC Shader* Shader::Get(int index) {
-    if (index < 0 || index >= (int)LoadedShaders.size())
-        return NULL;
-
-    return LoadedShaders[index];
+void Shader::InitUniforms() {
+	throw std::runtime_error("Shader::InitUniforms() called without an implementation");
+}
+void Shader::InitTextureUniforms() {
+	throw std::runtime_error("Shader::InitTextureUniforms() called without an implementation");
 }
 
-PUBLIC STATIC void Shader::UnloadAll() {
-    Shader::Unuse();
+void Shader::AddTextureUniformName(std::string identifier) {
+	auto it = std::find(TextureUniformNames.begin(), TextureUniformNames.end(), identifier);
+	if (it == TextureUniformNames.end()) {
+		TextureUniformNames.push_back(identifier);
+	}
+}
+void Shader::ValidateTextureUniformNames() {
+	for (size_t i = 0; i < TextureUniformNames.size();) {
+		std::string uniformName = TextureUniformNames[i];
 
-    for (size_t i = 0; i < LoadedShaders.size(); i++)
-        delete LoadedShaders[i];
+		int uniform = GetUniformLocation(uniformName);
+		if (uniform == -1) {
+			if (!IsBuiltinUniform(uniformName)) {
+				Log::Print(Log::LOG_WARN,
+					"No uniform named \"%s\"!",
+					uniformName.c_str());
+			}
 
-    LoadedShaders.clear();
+			TextureUniformNames.erase(TextureUniformNames.begin() + i);
+			continue;
+		}
+
+		i++;
+	}
+}
+
+void Shader::InitTextureUnitMap() {
+	int maxTextureUnits = (int)Graphics::MaxTextureUnits;
+	int unit = 0;
+
+	for (size_t i = 0, iSz = TextureUniformNames.size(); i < iSz; i++) {
+		std::string uniformName = TextureUniformNames[i];
+
+		int uniform = GetUniformLocation(uniformName);
+		if (uniform == -1) {
+			if (!IsBuiltinUniform(uniformName)) {
+				throw std::runtime_error(
+					"No uniform named \"" + uniformName + "\"!");
+			}
+
+			continue;
+		}
+
+		if (unit >= maxTextureUnits) {
+			char buffer[64];
+			snprintf(buffer,
+				sizeof buffer,
+				"Too many texture units in use! (Maximum supported is %d)",
+				maxTextureUnits);
+			throw std::runtime_error(std::string(buffer));
+		}
+
+		TextureUnitMap[uniform] = unit;
+
+		unit++;
+	}
+
+	TextureUniformNames.clear();
+}
+
+int Shader::GetTextureUnit(int uniform) {
+	if (uniform == -1) {
+		return -1;
+	}
+
+	std::unordered_map<int, int>::iterator it = TextureUnitMap.find(uniform);
+	if (it != TextureUnitMap.end()) {
+		return it->second;
+	}
+
+	return -1;
+}
+
+void Shader::Delete() {
+	if (CachedProjectionMatrix) {
+		delete CachedProjectionMatrix;
+		CachedProjectionMatrix = nullptr;
+	}
+	if (CachedViewMatrix) {
+		delete CachedViewMatrix;
+		CachedViewMatrix = nullptr;
+	}
+	if (CachedModelMatrix) {
+		delete CachedModelMatrix;
+		CachedModelMatrix = nullptr;
+	}
+}
+
+Shader::~Shader() {
+	Delete();
 }

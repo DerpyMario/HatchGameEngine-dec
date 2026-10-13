@@ -1,17 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/StandardSDL2.h>
-#include <Engine/Types/Entity.h>
-#include <Engine/UI/Selection.h>
-
-class SceneEditor {
-public:
-    static bool Active;
-    static bool ShowGrid;
-    static bool UnsavedChanges;
-};
-#endif
-
 #include <Engine/UI/SceneEditor.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
@@ -22,6 +8,7 @@ public:
 #include <Engine/Scene.h>
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Scene/SceneEnums.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/ResourceTypes/ResourceManager.h>
 #include <Engine/ResourceTypes/SceneFormats/TiledMapWriter.h>
 #include <Engine/Types/ObjectList.h>
@@ -127,18 +114,18 @@ static char   StatusText[256] = "";
 
 #define SCENE_EDITOR_MAX_UNDO 128
 
-PUBLIC STATIC void SceneEditor::SetStatus(const char* format, ...) {
+void SceneEditor::SetStatus(const char* format, ...) {
     va_list args;
     va_start(args, format);
     vsnprintf(StatusText, sizeof(StatusText), format, args);
     va_end(args);
 }
 
-PUBLIC STATIC const char* SceneEditor::GetStatus() {
+const char* SceneEditor::GetStatus() {
     return StatusText;
 }
 
-PUBLIC STATIC bool SceneEditor::HasScene() {
+bool SceneEditor::HasScene() {
     return Scene::Layers.size() > 0;
 }
 
@@ -146,7 +133,7 @@ PUBLIC STATIC bool SceneEditor::HasScene() {
 
 // Where the scene's view lands inside the window, matching how Scene::Render
 // blits a single view: fitted to the window, keeping its aspect ratio.
-PRIVATE STATIC void SceneEditor::GetViewportRect(float* outX, float* outY, float* outW, float* outH) {
+void SceneEditor::GetViewportRect(float* outX, float* outY, float* outW, float* outH) {
     float windowW = (float)UIDraw::ViewWidth;
     float windowH = (float)UIDraw::ViewHeight;
 
@@ -170,7 +157,7 @@ PRIVATE STATIC void SceneEditor::GetViewportRect(float* outX, float* outY, float
     *outH = outHeight;
 }
 
-PRIVATE STATIC void SceneEditor::ScreenToWorld(float screenX, float screenY, float* worldX, float* worldY) {
+void SceneEditor::ScreenToWorld(float screenX, float screenY, float* worldX, float* worldY) {
     float x, y, w, h;
     SceneEditor::GetViewportRect(&x, &y, &w, &h);
 
@@ -180,7 +167,7 @@ PRIVATE STATIC void SceneEditor::ScreenToWorld(float screenX, float screenY, flo
     *worldY = view->Y + (screenY - y) * (view->Height / (h > 0.0f ? h : 1.0f));
 }
 
-PRIVATE STATIC void SceneEditor::WorldToScreen(float worldX, float worldY, float* screenX, float* screenY) {
+void SceneEditor::WorldToScreen(float worldX, float worldY, float* screenX, float* screenY) {
     float x, y, w, h;
     SceneEditor::GetViewportRect(&x, &y, &w, &h);
 
@@ -190,7 +177,7 @@ PRIVATE STATIC void SceneEditor::WorldToScreen(float worldX, float worldY, float
     *screenY = y + (worldY - view->Y) * (h / (view->Height > 0.0f ? view->Height : 1.0f));
 }
 
-PRIVATE STATIC float SceneEditor::GetWorldScale() {
+float SceneEditor::GetWorldScale() {
     float x, y, w, h;
     SceneEditor::GetViewportRect(&x, &y, &w, &h);
 
@@ -200,24 +187,56 @@ PRIVATE STATIC float SceneEditor::GetWorldScale() {
 
 // ------------------------------------------------------------------ tiles ---
 
-PRIVATE STATIC bool SceneEditor::IsLayerValid(int index) {
+bool SceneEditor::IsLayerValid(int index) {
     return index >= 0 && index < (int)Scene::Layers.size();
 }
 
-PRIVATE STATIC Uint32* SceneEditor::GetTileAddress(int layerIndex, int x, int y) {
+// Only tile layers have tiles to paint; an image layer is drawn whole.
+TileLayer* SceneEditor::GetTileLayer(int layerIndex) {
     if (!SceneEditor::IsLayerValid(layerIndex))
         return NULL;
 
-    SceneLayer& layer = Scene::Layers[layerIndex];
-    if (x < 0 || y < 0 || x >= layer.Width || y >= layer.Height || !layer.Tiles)
+    SceneLayer* layer = Scene::Layers[layerIndex];
+    if (!layer || layer->Type != SceneLayer::TYPE_TILE)
         return NULL;
 
-    return &layer.Tiles[x + (y << layer.WidthInBits)];
+    return (TileLayer*)layer;
+}
+
+Uint32* SceneEditor::GetTileAddress(int layerIndex, int x, int y) {
+    TileLayer* layer = SceneEditor::GetTileLayer(layerIndex);
+    if (!layer)
+        return NULL;
+
+    if (x < 0 || y < 0 || x >= layer->Width || y >= layer->Height || !layer->Tiles)
+        return NULL;
+
+    return &layer->Tiles[x + (y << layer->WidthInBits)];
+}
+
+// What has to follow a tile being written behind the renderer's back. The layer
+// keeps a pristine copy that a scene restart copies back over the live tiles,
+// and without updating it too, restarting would undo the edit. And a renderer
+// that batches a layer's tiles into buffers has to build them again: patching
+// the one tile in place skips any tile carrying collision flags, an empty one
+// and an animated one, which between them are most of what an editor writes.
+void SceneEditor::TileWritten(int layerIndex, int x, int y, Uint32 value) {
+    TileLayer* layer = SceneEditor::GetTileLayer(layerIndex);
+    if (!layer)
+        return;
+
+    if (layer->TilesBackup)
+        layer->TilesBackup[x + (y << layer->WidthInBits)] = value;
+
+    if (layer->UsingTileBuffers)
+        layer->RemakeTileBuffers = true;
+
+    Scene::AnyLayerTileChange = true;
 }
 
 // Writes a tile and files the change with the action being built, so a whole
 // brush stroke undoes in one step.
-PRIVATE STATIC void SceneEditor::WriteTile(int layerIndex, int x, int y, Uint32 value) {
+void SceneEditor::WriteTile(int layerIndex, int x, int y, Uint32 value) {
     Uint32* tile = SceneEditor::GetTileAddress(layerIndex, x, y);
     if (!tile || *tile == value)
         return;
@@ -233,18 +252,14 @@ PRIVATE STATIC void SceneEditor::WriteTile(int layerIndex, int x, int y, Uint32 
 
     *tile = value;
 
-    // The layer keeps a pristine copy that a scene restart copies back over the
-    // live tiles; without updating it too, restarting would undo the edit.
-    SceneLayer& layer = Scene::Layers[layerIndex];
-    if (layer.TilesBackup)
-        layer.TilesBackup[x + (y << layer.WidthInBits)] = value;
+    SceneEditor::TileWritten(layerIndex, x, y, value);
 
     SceneEditor::UnsavedChanges = true;
 }
 
 // Builds the tile word the brush paints: the chosen tile, its flip flags, and
 // whichever collision planes are being forced.
-PRIVATE STATIC Uint32 SceneEditor::MakeBrushTile(Uint32 existing) {
+Uint32 SceneEditor::MakeBrushTile(Uint32 existing) {
     Uint32 value = SelectedTile & TILE_IDENT_MASK;
 
     if (BrushFlipX)
@@ -265,7 +280,7 @@ PRIVATE STATIC Uint32 SceneEditor::MakeBrushTile(Uint32 existing) {
     return value;
 }
 
-PRIVATE STATIC void SceneEditor::PaintAt(int tileX, int tileY) {
+void SceneEditor::PaintAt(int tileX, int tileY) {
     int half = BrushSize / 2;
 
     for (int y = 0; y < BrushSize; y++) {
@@ -282,7 +297,7 @@ PRIVATE STATIC void SceneEditor::PaintAt(int tileX, int tileY) {
     }
 }
 
-PRIVATE STATIC void SceneEditor::EraseAt(int tileX, int tileY) {
+void SceneEditor::EraseAt(int tileX, int tileY) {
     int half = BrushSize / 2;
 
     for (int y = 0; y < BrushSize; y++) {
@@ -293,13 +308,13 @@ PRIVATE STATIC void SceneEditor::EraseAt(int tileX, int tileY) {
 
 // ----------------------------------------------------------------- undo ----
 
-PRIVATE STATIC void SceneEditor::BeginCommand() {
+void SceneEditor::BeginCommand() {
     PendingCommand.Tiles.clear();
     PendingCommand.Moves.clear();
     BuildingCommand = true;
 }
 
-PRIVATE STATIC void SceneEditor::EndCommand() {
+void SceneEditor::EndCommand() {
     BuildingCommand = false;
 
     if (!PendingCommand.Tiles.size() && !PendingCommand.Moves.size())
@@ -317,19 +332,17 @@ PRIVATE STATIC void SceneEditor::EndCommand() {
 
 // Puts a tile back without recording it, since undo and redo are bookkeeping
 // rather than edits of their own.
-PRIVATE STATIC void SceneEditor::ApplyTileDirect(int layerIndex, int x, int y, Uint32 value) {
+void SceneEditor::ApplyTileDirect(int layerIndex, int x, int y, Uint32 value) {
     Uint32* tile = SceneEditor::GetTileAddress(layerIndex, x, y);
     if (!tile)
         return;
 
     *tile = value;
 
-    SceneLayer& layer = Scene::Layers[layerIndex];
-    if (layer.TilesBackup)
-        layer.TilesBackup[x + (y << layer.WidthInBits)] = value;
+    SceneEditor::TileWritten(layerIndex, x, y, value);
 }
 
-PUBLIC STATIC void SceneEditor::Undo() {
+void SceneEditor::Undo() {
     if (!UndoStack.size()) {
         SceneEditor::SetStatus("Nothing to undo.");
         return;
@@ -355,7 +368,7 @@ PUBLIC STATIC void SceneEditor::Undo() {
     SceneEditor::SetStatus("Undid %d tile change(s).", (int)command.Tiles.size());
 }
 
-PUBLIC STATIC void SceneEditor::Redo() {
+void SceneEditor::Redo() {
     if (!RedoStack.size()) {
         SceneEditor::SetStatus("Nothing to redo.");
         return;
@@ -381,7 +394,7 @@ PUBLIC STATIC void SceneEditor::Redo() {
     SceneEditor::SetStatus("Redid %d tile change(s).", (int)command.Tiles.size());
 }
 
-PUBLIC STATIC void SceneEditor::ClearHistory() {
+void SceneEditor::ClearHistory() {
     UndoStack.clear();
     RedoStack.clear();
     PendingCommand.Tiles.clear();
@@ -393,7 +406,7 @@ PUBLIC STATIC void SceneEditor::ClearHistory() {
 
 // Where the scene that is loaded lives on disk. Only meaningful when the game
 // is being read out of a Resources folder rather than a packed data file.
-PUBLIC STATIC bool SceneEditor::GetScenePath(char* out, size_t outSize) {
+bool SceneEditor::GetScenePath(char* out, size_t outSize) {
     if (!Scene::CurrentScene[0])
         return false;
 
@@ -405,7 +418,7 @@ PUBLIC STATIC bool SceneEditor::GetScenePath(char* out, size_t outSize) {
 }
 
 // True when this scene is in a format the editor knows how to write back.
-PUBLIC STATIC bool SceneEditor::CanSave() {
+bool SceneEditor::CanSave() {
     char path[1024];
     if (!SceneEditor::GetScenePath(path, sizeof(path)))
         return false;
@@ -413,7 +426,7 @@ PUBLIC STATIC bool SceneEditor::CanSave() {
     return StringUtils::StrCaseStr(path, ".tmx") != NULL;
 }
 
-PUBLIC STATIC bool SceneEditor::Save() {
+bool SceneEditor::Save() {
     char path[1024];
     if (!SceneEditor::GetScenePath(path, sizeof(path))) {
         SceneEditor::SetStatus("Scenes inside a packed .hatch file cannot be saved.");
@@ -438,7 +451,7 @@ PUBLIC STATIC bool SceneEditor::Save() {
 
 // ---------------------------------------------------------------- stamps ---
 
-PRIVATE STATIC void SceneEditor::CaptureStamp() {
+void SceneEditor::CaptureStamp() {
     if (!HasSelection || SelectionW <= 0 || SelectionH <= 0)
         return;
 
@@ -466,7 +479,7 @@ PRIVATE STATIC void SceneEditor::CaptureStamp() {
 
 // Drops a stamp with its top-left corner at the given tile. Empty tiles in the
 // stamp are skipped, so stamps can be laid over existing artwork.
-PRIVATE STATIC void SceneEditor::PlaceStamp(int tileX, int tileY) {
+void SceneEditor::PlaceStamp(int tileX, int tileY) {
     if (SelectedStamp < 0 || SelectedStamp >= (int)Stamps.size())
         return;
 
@@ -487,7 +500,7 @@ PRIVATE STATIC void SceneEditor::PlaceStamp(int tileX, int tileY) {
 
 // The entity whose position is nearest the given world point, within a few
 // tiles of it.
-PRIVATE STATIC Entity* SceneEditor::PickEntity(float worldX, float worldY) {
+Entity* SceneEditor::PickEntity(float worldX, float worldY) {
     Entity* best = NULL;
     float bestDistance = (float)(Scene::TileWidth * 2);
 
@@ -509,7 +522,7 @@ PRIVATE STATIC Entity* SceneEditor::PickEntity(float worldX, float worldY) {
 
 // Handles the mouse over the scene itself. The dock panels have already had
 // their say, so this only runs when the pointer is out over the world.
-PRIVATE STATIC void SceneEditor::UpdateViewportInput(float areaX, float areaY, float areaW, float areaH) {
+void SceneEditor::UpdateViewportInput(float areaX, float areaY, float areaW, float areaH) {
     HoverValid = false;
 
     if (!SceneEditor::HasScene() || !SceneEditor::IsLayerValid(FocusedLayer))
@@ -523,7 +536,7 @@ PRIVATE STATIC void SceneEditor::UpdateViewportInput(float areaX, float areaY, f
     float worldX, worldY;
     SceneEditor::ScreenToWorld(UICore::MouseX, UICore::MouseY, &worldX, &worldY);
 
-    SceneLayer& layer = Scene::Layers[FocusedLayer];
+    SceneLayer& layer = *Scene::Layers[FocusedLayer];
 
     int tileX = (int)floorf((worldX - layer.OffsetX) / Scene::TileWidth);
     int tileY = (int)floorf((worldY - layer.OffsetY) / Scene::TileHeight);
@@ -641,11 +654,11 @@ PRIVATE STATIC void SceneEditor::UpdateViewportInput(float areaX, float areaY, f
 
 // Grid, selection, brush preview and entity markers, drawn over the scene the
 // engine has already rendered.
-PRIVATE STATIC void SceneEditor::DrawViewportOverlay(float areaX, float areaY, float areaW, float areaH) {
+void SceneEditor::DrawViewportOverlay(float areaX, float areaY, float areaW, float areaH) {
     if (!SceneEditor::HasScene() || !SceneEditor::IsLayerValid(FocusedLayer))
         return;
 
-    SceneLayer& layer = Scene::Layers[FocusedLayer];
+    SceneLayer& layer = *Scene::Layers[FocusedLayer];
     float scale = SceneEditor::GetWorldScale();
 
     float tileW = Scene::TileWidth * scale;
@@ -767,7 +780,7 @@ PRIVATE STATIC void SceneEditor::DrawViewportOverlay(float areaX, float areaY, f
 
 // The tile palette. Tiles are drawn with the engine's own sprite call so they
 // look exactly as they will in the scene.
-PRIVATE STATIC void SceneEditor::DrawTilePalette(float width) {
+void SceneEditor::DrawTilePalette(float width) {
     size_t tileCount = Scene::TileSpriteInfos.size();
     if (!tileCount) {
         UICore::Text("This scene has no tileset.", UI_COL_TEXT_FAINT);
@@ -825,7 +838,7 @@ PRIVATE STATIC void SceneEditor::DrawTilePalette(float width) {
     }
 }
 
-PRIVATE STATIC void SceneEditor::DrawToolsPanel() {
+void SceneEditor::DrawToolsPanel() {
     UICore::Field("Scene", Scene::CurrentScene[0] ? Scene::CurrentScene : "(none)");
 
     UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
@@ -894,7 +907,7 @@ PRIVATE STATIC void SceneEditor::DrawToolsPanel() {
     UICore::FieldFormatted("History", "%d undo, %d redo", (int)UndoStack.size(), (int)RedoStack.size());
 }
 
-PRIVATE STATIC void SceneEditor::DrawLayersPanel() {
+void SceneEditor::DrawLayersPanel() {
     UICore::Heading("Layers");
 
     if (!Scene::Layers.size()) {
@@ -905,7 +918,7 @@ PRIVATE STATIC void SceneEditor::DrawLayersPanel() {
     UICore::ResetRowStriping();
 
     for (size_t i = 0; i < Scene::Layers.size(); i++) {
-        SceneLayer& layer = Scene::Layers[i];
+        SceneLayer& layer = *Scene::Layers[i];
 
         char label[128];
         snprintf(label, sizeof(label), "%s  %dx%d##layerrow%d",
@@ -927,20 +940,20 @@ PRIVATE STATIC void SceneEditor::DrawLayersPanel() {
     }
 
     if (SceneEditor::IsLayerValid(FocusedLayer)) {
-        SceneLayer& layer = Scene::Layers[FocusedLayer];
+        SceneLayer& layer = *Scene::Layers[FocusedLayer];
 
         UICore::Separator();
         UICore::Heading("Focused Layer");
         UICore::Field("Name", layer.Name);
         UICore::FieldFormatted("Size", "%d x %d tiles", layer.Width, layer.Height);
-        UICore::FieldFormatted("Offset", "%d, %d", layer.OffsetX, layer.OffsetY);
+        UICore::FieldFormatted("Offset", "%g, %g", layer.OffsetX, layer.OffsetY);
         UICore::FieldFormatted("Draw group", "%d", layer.DrawGroup);
         UICore::FieldFormatted("Collideable", "%s",
             (layer.Flags & SceneLayer::FLAGS_COLLIDEABLE) ? "yes" : "no");
     }
 }
 
-PRIVATE STATIC void SceneEditor::DrawStampsPanel() {
+void SceneEditor::DrawStampsPanel() {
     UICore::Heading("Stamps");
 
     UICore::SetNextItemWidth(UICore::ContentWidth() * 0.48f);
@@ -973,7 +986,7 @@ PRIVATE STATIC void SceneEditor::DrawStampsPanel() {
     }
 }
 
-PRIVATE STATIC void SceneEditor::DrawEntitiesPanel() {
+void SceneEditor::DrawEntitiesPanel() {
     UICore::Heading("Entities");
     UICore::FieldFormatted("In scene", "%d", Scene::ObjectCount);
 
@@ -1011,7 +1024,7 @@ PRIVATE STATIC void SceneEditor::DrawEntitiesPanel() {
 
 // ----------------------------------------------------------------- render ---
 
-PUBLIC STATIC void SceneEditor::Reset() {
+void SceneEditor::Reset() {
     SceneEditor::ClearHistory();
 
     Stamps.clear();
@@ -1027,7 +1040,7 @@ PUBLIC STATIC void SceneEditor::Reset() {
 
 // Draws the editor. The scene is already on screen behind it, so only the dock
 // on the right and the overlays over the world are painted here.
-PUBLIC STATIC void SceneEditor::Draw(float x, float y, float width, float height) {
+void SceneEditor::Draw(float x, float y, float width, float height) {
     float dockWidth = 46.0f * UIDraw::CharWidth();
     if (dockWidth > width * 0.5f)
         dockWidth = width * 0.5f;

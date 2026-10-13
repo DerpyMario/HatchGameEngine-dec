@@ -36,13 +36,6 @@ jobs:
             libdrm-dev libgbm-dev \
             libasound2-dev libpulse-dev libudev-dev libdbus-1-dev libibus-1.0-dev
 
-      # The makeheaders that comes with the repository is an x86-64 binary, so
-      # it is built from source instead of run as it is. tools/makeheaders2-src
-      # is the copy that binary was built from, and gives back byte-identical
-      # headers; the older tools/makeheaders-src only fills in headers that are
-      # already there, and leaves a fresh checkout with broken ones.
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build SDL2 as a static library
         env:
@@ -110,8 +103,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       # Both architectures in the one library, so the one application covers
       # Apple silicon and Intel Macs alike.
@@ -172,9 +163,9 @@ jobs:
               <key>CFBundleInfoDictionaryVersion</key>
               <string>6.0</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.2.2</string>
+              <string>1.4.0</string>
               <key>CFBundleVersion</key>
-              <string>1.2.2</string>
+              <string>1.4.0</string>
               <key>LSMinimumSystemVersion</key>
               <string>11.0</string>
               <key>NSHighResolutionCapable</key>
@@ -284,6 +275,32 @@ jobs:
           path: dist/HatchGameEngine.exe
           if-no-files-found: error
 
+  switch:
+    name: Nintendo Switch
+    runs-on: ubuntu-22.04
+    container: devkitpro/devkita64:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # github.workspace does not work in a container job, so GITHUB_WORKSPACE
+      # is used instead.
+      - name: Configure
+        run: >
+          cmake -B "${GITHUB_WORKSPACE}/build"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/Switch.cmake
+          -S "${GITHUB_WORKSPACE}"
+
+      - name: Build
+        run: cmake --build "${GITHUB_WORKSPACE}/build" --config Release --parallel 4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-switch
+          path: build/*.nro
+          if-no-files-found: error
+
   xbox:
     # 24.04 rather than the 22.04 the other Linux jobs use: nxdk tests itself
     # against the clang of the current Ubuntu, and 22.04's clang 14 is behind
@@ -302,8 +319,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake clang lld llvm pkgconf bison flex
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Check out nxdk
         run: |
@@ -372,8 +387,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential cmake
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       # Pinned rather than tracking latest, the same way SDL2 and GLEW are
       # above: a toolchain that changes underneath the build is a build that
@@ -451,8 +464,6 @@ jobs:
             gcc-m68k-linux-gnu binutils-m68k-linux-gnu \
             xvfb libglew-dev libgl1-mesa-dev libsdl2-dev
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
@@ -580,8 +591,6 @@ jobs:
           command -v mkisofs >/dev/null || \
             sudo ln -s "$(command -v genisoimage)" /usr/local/bin/mkisofs
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
@@ -735,8 +744,6 @@ jobs:
             exit 1
           fi
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
@@ -803,8 +810,6 @@ jobs:
             build-essential cmake xvfb sdcc sdcc-libraries \
             libglew-dev libgl1-mesa-dev libsdl2-dev
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
@@ -937,8 +942,6 @@ jobs:
           make -j"$(nproc)" all-gcc all-target-libgcc MAKEINFO=true
           make install-gcc install-target-libgcc MAKEINFO=true
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
@@ -1105,8 +1108,6 @@ jobs:
             exit 1
           fi
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |

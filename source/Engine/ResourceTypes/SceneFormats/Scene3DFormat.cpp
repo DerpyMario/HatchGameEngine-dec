@@ -1,16 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Rendering/Scene3DTypes.h>
-#include <Engine/TextFormats/XML/XMLParser.h>
-
-need_t Scene3DObject;
-need_t Scene3DSettings;
-need_t XMLNode;
-
-class Scene3DFormat {
-};
-#endif
-
 #include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
 
 #include <Engine/Diagnostics/Log.h>
@@ -31,14 +18,14 @@ class Scene3DFormat {
 // sits. The models themselves stay where they are and are named by path, the
 // same way a tile scene names its tilesets.
 
-PRIVATE STATIC float Scene3DFormat::Attribute(XMLNode* node, const char* name, float fallback) {
+float Scene3DFormat::Attribute(XMLNode* node, const char* name, float fallback) {
     if (!node->attributes.Exists(name))
         return fallback;
 
     return (float)XMLParser::TokenToNumber(node->attributes.Get(name));
 }
 
-PRIVATE STATIC void Scene3DFormat::AttributeString(XMLNode* node, const char* name, char* out, size_t outSize) {
+void Scene3DFormat::AttributeString(XMLNode* node, const char* name, char* out, size_t outSize) {
     out[0] = '\0';
 
     if (!node->attributes.Exists(name))
@@ -53,13 +40,13 @@ PRIVATE STATIC void Scene3DFormat::AttributeString(XMLNode* node, const char* na
     out[length] = '\0';
 }
 
-PRIVATE STATIC void Scene3DFormat::ReadColor(XMLNode* node, float* r, float* g, float* b) {
+void Scene3DFormat::ReadColor(XMLNode* node, float* r, float* g, float* b) {
     *r = Scene3DFormat::Attribute(node, "r", *r);
     *g = Scene3DFormat::Attribute(node, "g", *g);
     *b = Scene3DFormat::Attribute(node, "b", *b);
 }
 
-PUBLIC STATIC bool Scene3DFormat::Read(const char* path, Scene3DSettings* settings, vector<Scene3DObject>* objects) {
+bool Scene3DFormat::Read(const char* path, Scene3DSettings* settings, vector<Scene3DObject>* objects) {
     XMLNode* xml = XMLParser::ParseFromResource(path);
     if (!xml) {
         Log::Print(Log::LOG_ERROR, "Could not read the 3D scene \"%s\"!", path);
@@ -143,7 +130,7 @@ PUBLIC STATIC bool Scene3DFormat::Read(const char* path, Scene3DSettings* settin
     return true;
 }
 
-PUBLIC STATIC bool Scene3DFormat::Write(const char* path, Scene3DSettings* settings, vector<Scene3DObject>* objects) {
+bool Scene3DFormat::Write(const char* path, Scene3DSettings* settings, vector<Scene3DObject>* objects) {
     char line[1024];
     std::string text;
 

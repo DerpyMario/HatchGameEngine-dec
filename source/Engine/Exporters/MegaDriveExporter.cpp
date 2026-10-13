@@ -1,22 +1,10 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/MegaDriveTypes.h>
-
-need_t SceneLayer;
-
-class MegaDriveExporter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/MegaDriveExporter.h>
 
 #include <Engine/Exporters/SegaSceneArt.h>
 #include <Engine/Exporters/SegaVDPConverter.h>
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Scene.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a Mega Drive can show.
@@ -30,7 +18,7 @@ public:
 // needs exactly the same one. What is here is the cartridge: an SGDK project
 // wrapped around the three things the hardware reads, which builds into a ROM.
 
-PRIVATE STATIC bool MegaDriveExporter::WriteBinary(const char* path, const void* data, size_t size) {
+bool MegaDriveExporter::WriteBinary(const char* path, const void* data, size_t size) {
     FILE* f = fopen(path, "wb");
     if (!f)
         return false;
@@ -41,7 +29,7 @@ PRIVATE STATIC bool MegaDriveExporter::WriteBinary(const char* path, const void*
     return ok;
 }
 
-PRIVATE STATIC bool MegaDriveExporter::WriteText(const char* path, const char* text) {
+bool MegaDriveExporter::WriteText(const char* path, const char* text) {
     FILE* f = fopen(path, "w");
     if (!f)
         return false;
@@ -52,11 +40,11 @@ PRIVATE STATIC bool MegaDriveExporter::WriteText(const char* path, const char* t
     return ok;
 }
 
-PUBLIC STATIC MegaDriveExportResult MegaDriveExporter::ExportScene(const char* outputPath) {
+MegaDriveExportResult MegaDriveExporter::ExportScene(const char* outputPath) {
     MegaDriveExportResult result;
     memset(&result, 0, sizeof(result));
 
-    SceneLayer* layer = SegaSceneArt::PickLayer();
+    TileLayer* layer = SegaSceneArt::PickLayer();
     if (!layer) {
         StringUtils::Copy(result.Message, "The scene has no visible tile layer to export.", sizeof(result.Message));
         return result;
@@ -122,7 +110,7 @@ PUBLIC STATIC MegaDriveExportResult MegaDriveExporter::ExportScene(const char* o
     return result;
 }
 
-PRIVATE STATIC bool MegaDriveExporter::WriteProject(const char* outputPath, MegaDriveExportResult* result) {
+bool MegaDriveExporter::WriteProject(const char* outputPath, MegaDriveExportResult* result) {
     char path[1024];
 
     if (!Directory::Exists(outputPath) && !Directory::CreatePath(outputPath)) {
@@ -185,7 +173,7 @@ PRIVATE STATIC bool MegaDriveExporter::WriteProject(const char* outputPath, Mega
 
     return MegaDriveExporter::WritePlayer(outputPath, result);
 }
-PRIVATE STATIC bool MegaDriveExporter::WritePlayer(const char* outputPath, MegaDriveExportResult* result) {
+bool MegaDriveExporter::WritePlayer(const char* outputPath, MegaDriveExportResult* result) {
     char path[1024];
     char text[8192];
 
