@@ -74,7 +74,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "$(nproc)"
 
       - name: Package
         run: |
@@ -133,7 +133,7 @@ jobs:
             -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Assemble the application bundle
         run: |
@@ -353,7 +353,7 @@ jobs:
         run: |
           export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk"
           export PATH="${NXDK_DIR}/bin:${PATH}"
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Package
         run: |
@@ -409,7 +409,7 @@ jobs:
       - name: Build
         run: |
           . "${GITHUB_WORKSPACE}/emsdk/emsdk_env.sh"
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Package
         run: |
@@ -468,7 +468,7 @@ jobs:
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Check out SGDK
         run: git clone --depth 1 https://github.com/Stephane-D/SGDK.git "${GITHUB_WORKSPACE}/sgdk"
@@ -483,7 +483,7 @@ jobs:
           for tool in sjasm bintos; do
             cmake -S "${sgdk}/tools/${tool}" -B "build-${tool}" \
               -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-            cmake --build "build-${tool}" --parallel
+            cmake --build "build-${tool}" --parallel "$(nproc)"
             find "build-${tool}" -maxdepth 2 -type f -executable -name "${tool}*" \
               -exec cp {} "${GITHUB_WORKSPACE}/mdbin/" \;
           done
@@ -595,7 +595,7 @@ jobs:
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Check out Megadev
         run: git clone --depth 1 https://github.com/drojaazu/megadev.git "${GITHUB_WORKSPACE}/megadev"
@@ -748,7 +748,7 @@ jobs:
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Export the sample scene
         run: |
@@ -814,7 +814,7 @@ jobs:
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       # devkitSMS ships its library, its startup code and its ihx2sms converter
       # prebuilt, and those binaries do not necessarily match the SDCC in front
@@ -946,7 +946,7 @@ jobs:
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       # ---- the tile scene, through VDP2 ----
 
@@ -1112,7 +1112,7 @@ jobs:
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       # ---- the tile scene, as PowerVR textures ----
 
