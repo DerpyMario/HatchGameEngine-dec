@@ -824,14 +824,20 @@ jobs:
       # of them. They are built from the sources beside them instead. This is
       # not belt and braces: with the shipped ihx2sms the cartridge came out
       # with tile data where its reset vector belongs and ran as a black screen.
+      # Pinned, the way KallistiOS is for the Dreamcast: devkitSMS rearranges
+      # itself from time to time -- ihx2sms moved under tools/legacy -- and a
+      # job that follows its head breaks when it does.
       - name: Check out and build devkitSMS
+        env:
+          DEVKITSMS_COMMIT: 533ae572c897cf44f1da865013ebf690134301a3
         run: |
-          git clone --depth 1 https://github.com/sverx/devkitSMS.git "${GITHUB_WORKSPACE}/devkitSMS"
+          git clone https://github.com/sverx/devkitSMS.git "${GITHUB_WORKSPACE}/devkitSMS"
           dk="${GITHUB_WORKSPACE}/devkitSMS"
+          git -C "${dk}" checkout --quiet "${DEVKITSMS_COMMIT}"
 
           make -C "${dk}/crt0/src"
           make -C "${dk}/SMSlib/src"
-          cc -O2 -o "${GITHUB_WORKSPACE}/ihx2sms" "${dk}/ihx2sms/src/ihx2sms.c"
+          cc -O2 -o "${GITHUB_WORKSPACE}/ihx2sms" "${dk}/tools/legacy/ihx2sms/src/ihx2sms.c"
 
       - name: Export the sample scene
         run: |
