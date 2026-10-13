@@ -98,7 +98,10 @@ jobs:
 
   macos:
     name: macOS (universal)
-    runs-on: macos-14
+    # GitHub's Xcode 27 image, which is named after its Xcode rather than its
+    # macOS. It only comes on Apple silicon; the Intel half of the universal
+    # binary is cross-compiled by Xcode alongside the arm64 one.
+    runs-on: xcode-27
 
     steps:
       - uses: actions/checkout@v4
