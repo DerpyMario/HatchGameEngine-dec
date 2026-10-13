@@ -1088,7 +1088,7 @@ jobs:
         if: steps.sh4cache.outputs.cache-hit != 'true'
         run: |
           cd /opt/toolchains/dc/kos/utils/kos-chain
-          cp Makefile.dreamcast.cfg.sample Makefile.cfg
+          cp Makefile.dreamcast.cfg Makefile.cfg
 
           # legacy is GCC 13, which is what this was developed against.
           sed -i 's/^toolchain_profile=.*/toolchain_profile=legacy/' Makefile.cfg
