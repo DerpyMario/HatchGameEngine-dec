@@ -175,6 +175,30 @@ CPPFILES := \
 	source/Engine/Utilities/PrintBuffer.cpp \
 	source/Engine/Utilities/Screenshot.cpp \
 	source/Engine/Utilities/StringUtils.cpp \
+	source/Engine/Exporters/DreamcastExporter.cpp \
+	source/Engine/Exporters/GameGearExporter.cpp \
+	source/Engine/Exporters/MegaCDExporter.cpp \
+	source/Engine/Exporters/MegaDriveExporter.cpp \
+	source/Engine/Exporters/Sega32XExporter.cpp \
+	source/Engine/Exporters/SegaSaturnExporter.cpp \
+	source/Engine/Exporters/SegaSceneArt.cpp \
+	source/Engine/Exporters/SegaVDPConverter.cpp \
+	source/Engine/Platforms/Xbox/Exceptions.cpp \
+	source/Engine/Platforms/Xbox/Filesystem.cpp \
+	source/Engine/ResourceTypes/SceneFormats/Scene3DFormat.cpp \
+	source/Engine/ResourceTypes/SceneFormats/TiledMapWriter.cpp \
+	source/Engine/UI/Hierarchy.cpp \
+	source/Engine/UI/Inspector.cpp \
+	source/Engine/UI/ResourceEditor.cpp \
+	source/Engine/UI/SceneEditor.cpp \
+	source/Engine/UI/SceneEditor3D.cpp \
+	source/Engine/UI/Selection.cpp \
+	source/Engine/UI/Studio.cpp \
+	source/Engine/UI/TileCollisionEditor.cpp \
+	source/Engine/UI/UICore.cpp \
+	source/Engine/UI/UIDraw.cpp \
+	source/Engine/UI/UIFileDialog.cpp \
+	source/Engine/UI/UIMenu.cpp \
 	source/Libraries/Clipper2/clipper.engine.cpp \
 	source/Libraries/Clipper2/clipper.offset.cpp \
 	source/Libraries/Clipper2/clipper.rectclip.cpp \
@@ -243,6 +267,42 @@ PRVHFILES := \
 	source/Engine/Input/InputPlayer.h \
 	source/Engine/Input/InputAction.h \
 	source/Engine/Application.h \
+	source/Engine/Exporters/DreamcastExporter.h \
+	source/Engine/Exporters/DreamcastTypes.h \
+	source/Engine/Exporters/GameGearExporter.h \
+	source/Engine/Exporters/GameGearTypes.h \
+	source/Engine/Exporters/MegaCDExporter.h \
+	source/Engine/Exporters/MegaCDTypes.h \
+	source/Engine/Exporters/MegaDriveExporter.h \
+	source/Engine/Exporters/MegaDriveTypes.h \
+	source/Engine/Exporters/Sega32XExporter.h \
+	source/Engine/Exporters/Sega32XTypes.h \
+	source/Engine/Exporters/SegaSaturnExporter.h \
+	source/Engine/Exporters/SegaSaturnTypes.h \
+	source/Engine/Exporters/SegaSceneArt.h \
+	source/Engine/Exporters/SegaVDPConverter.h \
+	source/Engine/Exporters/SegaVDPTypes.h \
+	source/Engine/Includes/WebStorage.h \
+	source/Engine/Includes/XboxCompat.h \
+	source/Engine/Rendering/Scene3DTypes.h \
+	source/Engine/ResourceTypes/SceneFormats/Scene3DFormat.h \
+	source/Engine/ResourceTypes/SceneFormats/TiledMapWriter.h \
+	source/Engine/UI/Hierarchy.h \
+	source/Engine/UI/Inspector.h \
+	source/Engine/UI/ResourceEditor.h \
+	source/Engine/UI/SceneEditor.h \
+	source/Engine/UI/SceneEditor3D.h \
+	source/Engine/UI/Selection.h \
+	source/Engine/UI/Studio.h \
+	source/Engine/UI/TileCollisionEditor.h \
+	source/Engine/UI/TileCollisionTypes.h \
+	source/Engine/UI/UICore.h \
+	source/Engine/UI/UIDraw.h \
+	source/Engine/UI/UIFileDialog.h \
+	source/Engine/UI/UIFiles.h \
+	source/Engine/UI/UIFontData.h \
+	source/Engine/UI/UIMenu.h \
+	source/Engine/UI/UITheme.h \
 	source/Engine/DeveloperMenu.h \
 	source/Engine/Network/HTTP.h \
 	source/Engine/Network/WebSocketIncludes.h \
