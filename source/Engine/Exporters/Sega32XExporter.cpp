@@ -1,15 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/Sega32XTypes.h>
-
-need_t SceneLayer;
-
-class Sega32XExporter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/Sega32XExporter.h>
 #include <Engine/Exporters/SegaSceneArt.h>
 
@@ -17,7 +5,7 @@ public:
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Scene.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a 32X can show.
@@ -40,7 +28,7 @@ static int            DroppedColors;
 
 // Rounded into the five bits a channel the 32X keeps, then spread back over the
 // full range so comparisons happen in the space it will land in.
-PRIVATE STATIC Uint32 Sega32XExporter::QuantizeColor(Uint32 argb) {
+Uint32 Sega32XExporter::QuantizeColor(Uint32 argb) {
     Uint32 r = (Uint32)((((argb >> 16) & 0xFF) >> 3) * 255 / 31);
     Uint32 g = (Uint32)((((argb >> 8) & 0xFF) >> 3) * 255 / 31);
     Uint32 b = (Uint32)(((argb & 0xFF) >> 3) * 255 / 31);
@@ -48,7 +36,7 @@ PRIVATE STATIC Uint32 Sega32XExporter::QuantizeColor(Uint32 argb) {
     return (r << 16) | (g << 8) | b;
 }
 
-PRIVATE STATIC long Sega32XExporter::ColorDistance(Uint32 a, Uint32 b) {
+long Sega32XExporter::ColorDistance(Uint32 a, Uint32 b) {
     long dr = (long)((a >> 16) & 0xFF) - (long)((b >> 16) & 0xFF);
     long dg = (long)((a >> 8) & 0xFF) - (long)((b >> 8) & 0xFF);
     long db = (long)(a & 0xFF) - (long)(b & 0xFF);
@@ -56,7 +44,7 @@ PRIVATE STATIC long Sega32XExporter::ColorDistance(Uint32 a, Uint32 b) {
     return dr * dr + dg * dg + db * db;
 }
 
-PRIVATE STATIC int Sega32XExporter::NearestInPalette(Uint32 color) {
+int Sega32XExporter::NearestInPalette(Uint32 color) {
     int best = 0;
     long bestDistance = -1;
 
@@ -74,7 +62,7 @@ PRIVATE STATIC int Sega32XExporter::NearestInPalette(Uint32 color) {
 // Counts every colour the picture uses, most-used first. Ordering by use is
 // what makes the reduction below defensible: when something has to go, it is
 // the colour covering the fewest pixels.
-PRIVATE STATIC void Sega32XExporter::GatherColors(SceneLayer* layer, int width, int height, vector<X32ColorUse>* out) {
+void Sega32XExporter::GatherColors(TileLayer* layer, int width, int height, vector<X32ColorUse>* out) {
     std::map<Uint32, size_t> counts;
 
     for (int y = 0; y < height; y++) {
@@ -110,7 +98,7 @@ PRIVATE STATIC void Sega32XExporter::GatherColors(SceneLayer* layer, int width, 
 // Draws the layer into one byte a pixel. Index 0 stays transparent, so art is
 // laid over 1..255 and anything that did not fit is matched to the nearest that
 // did.
-PRIVATE STATIC void Sega32XExporter::BuildImage(SceneLayer* layer, int width, int height) {
+void Sega32XExporter::BuildImage(TileLayer* layer, int width, int height) {
     Indices.assign((size_t)width * height, 0);
 
     std::map<Uint32, int> resolved;
@@ -154,7 +142,7 @@ PRIVATE STATIC void Sega32XExporter::BuildImage(SceneLayer* layer, int width, in
     }
 }
 
-PRIVATE STATIC bool Sega32XExporter::WriteBinary(const char* path, const void* data, size_t size) {
+bool Sega32XExporter::WriteBinary(const char* path, const void* data, size_t size) {
     FILE* f = fopen(path, "wb");
     if (!f)
         return false;
@@ -165,7 +153,7 @@ PRIVATE STATIC bool Sega32XExporter::WriteBinary(const char* path, const void* d
     return ok;
 }
 
-PRIVATE STATIC bool Sega32XExporter::WriteText(const char* path, const char* text) {
+bool Sega32XExporter::WriteText(const char* path, const char* text) {
     FILE* f = fopen(path, "w");
     if (!f)
         return false;
@@ -176,7 +164,7 @@ PRIVATE STATIC bool Sega32XExporter::WriteText(const char* path, const char* tex
     return ok;
 }
 
-PRIVATE STATIC bool Sega32XExporter::CopyFile(const char* from, const char* to) {
+bool Sega32XExporter::CopyFile(const char* from, const char* to) {
     FILE* in = fopen(from, "rb");
     if (!in)
         return false;
@@ -213,7 +201,7 @@ PRIVATE STATIC bool Sega32XExporter::CopyFile(const char* from, const char* to) 
 // build tree does not necessarily have either -- the binary can be anywhere and
 // the working directory is usually the project being exported -- so
 // --32x-runtime says outright where it is.
-PRIVATE STATIC bool Sega32XExporter::FindRuntime(char* out, size_t outSize) {
+bool Sega32XExporter::FindRuntime(char* out, size_t outSize) {
     if (Application::Sega32XRuntimePath.size()) {
         StringUtils::Copy(out, Application::Sega32XRuntimePath.c_str(), outSize);
         return Directory::Exists(out);
@@ -238,11 +226,11 @@ PRIVATE STATIC bool Sega32XExporter::FindRuntime(char* out, size_t outSize) {
     return false;
 }
 
-PUBLIC STATIC Sega32XExportResult Sega32XExporter::ExportScene(const char* outputPath) {
+Sega32XExportResult Sega32XExporter::ExportScene(const char* outputPath) {
     Sega32XExportResult result;
     memset(&result, 0, sizeof(result));
 
-    SceneLayer* layer = SegaSceneArt::PickLayer();
+    TileLayer* layer = SegaSceneArt::PickLayer();
     if (!layer) {
         StringUtils::Copy(result.Message, "The scene has no visible tile layer to export.", sizeof(result.Message));
         return result;
@@ -312,7 +300,7 @@ PUBLIC STATIC Sega32XExportResult Sega32XExporter::ExportScene(const char* outpu
     return result;
 }
 
-PRIVATE STATIC bool Sega32XExporter::WriteProject(const char* outputPath, Sega32XExportResult* result) {
+bool Sega32XExporter::WriteProject(const char* outputPath, Sega32XExportResult* result) {
     char path[1024];
     char runtime[1024];
 
@@ -401,7 +389,7 @@ PRIVATE STATIC bool Sega32XExporter::WriteProject(const char* outputPath, Sega32
 //
 // Getting the width wrong here does not produce a wrong name -- it shifts every
 // field after it, and the console reads the wrong bytes for all of them.
-PRIVATE STATIC void Sega32XExporter::HeaderField(char* out, size_t width, const char* text) {
+void Sega32XExporter::HeaderField(char* out, size_t width, const char* text) {
     size_t at = 0;
 
     for (const char* c = text; *c && at < width; c++) {
@@ -427,7 +415,7 @@ PRIVATE STATIC void Sega32XExporter::HeaderField(char* out, size_t width, const 
     out[width] = '\0';
 }
 
-PRIVATE STATIC bool Sega32XExporter::WriteSources(const char* outputPath, Sega32XExportResult* result) {
+bool Sega32XExporter::WriteSources(const char* outputPath, Sega32XExportResult* result) {
     char path[1024];
     char text[8192];
 
@@ -620,7 +608,7 @@ PRIVATE STATIC bool Sega32XExporter::WriteSources(const char* outputPath, Sega32
     return Sega32XExporter::WriteBuildFiles(outputPath, result);
 }
 
-PRIVATE STATIC bool Sega32XExporter::WriteBuildFiles(const char* outputPath, Sega32XExportResult* result) {
+bool Sega32XExporter::WriteBuildFiles(const char* outputPath, Sega32XExportResult* result) {
     char path[1024];
     char text[6144];
 

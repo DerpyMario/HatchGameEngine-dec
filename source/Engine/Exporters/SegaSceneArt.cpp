@@ -1,24 +1,14 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-need_t SceneLayer;
-
-class SegaSceneArt {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/SegaSceneArt.h>
 
 #include <Engine/Graphics.h>
 #include <Engine/Scene.h>
 #include <Engine/Scene/SceneEnums.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Sprites/Animation.h>
 #include <Engine/Rendering/Texture.h>
 #include <Engine/ResourceTypes/ISprite.h>
 #include <Engine/Types/Tileset.h>
+#include <Engine/Utilities/ColorUtils.h>
 
 // Reaching a scene's art the way the renderer reaches it.
 //
@@ -28,25 +18,22 @@ public:
 // thing about them that is easy to get wrong.
 
 // A texture holds its pixels in whatever order the renderer that created it
-// wanted: the GL backend asks for ABGR and the software and Direct3D ones for
-// ARGB. Reading them as though they were always ARGB is why the first Mega
-// Drive ROM this produced came out with every red and blue exchanged.
-//
-// The engine has a converter for this, but it forces alpha opaque on the way
-// through, and the transparency is needed here to tell a blank pixel from a
-// black one. So the swap is done here instead, alpha left alone.
-PUBLIC STATIC Uint32 SegaSceneArt::ToARGB(Uint32 native) {
-    if (Graphics::PreferredPixelFormat != SDL_PIXELFORMAT_ABGR8888)
-        return native;
+// wanted. Reading them as though they were always ARGB is why the first Mega
+// Drive ROM this produced came out with every red and blue exchanged -- and
+// why it happened again when the engine moved from naming those orders after
+// SDL's formats to naming them with its own. So the channels are read out the
+// way the engine itself reads them, alpha included: the transparency is what
+// tells a blank pixel from a black one.
+Uint32 SegaSceneArt::ToARGB(Uint32 native) {
+    Uint8 red, green, blue, alpha;
+    ColorUtils::GetChannels(native, Graphics::PreferredPixelFormat, red, green, blue, alpha);
 
-    return (native & 0xFF00FF00U) |
-           ((native & 0x00FF0000U) >> 16) |
-           ((native & 0x000000FFU) << 16);
+    return ((Uint32)alpha << 24) | ((Uint32)red << 16) | ((Uint32)green << 8) | (Uint32)blue;
 }
 
 // Reads a source tile's pixels the way the renderer reads them, so a tile that
 // draws is a tile that exports.
-PUBLIC STATIC bool SegaSceneArt::GetTilePixels(size_t tileID, Uint32** pixels, int* stride, int* width, int* height) {
+bool SegaSceneArt::GetTilePixels(size_t tileID, Uint32** pixels, int* stride, int* width, int* height) {
     if (tileID >= Scene::TileSpriteInfos.size())
         return false;
 
@@ -77,12 +64,16 @@ PUBLIC STATIC bool SegaSceneArt::GetTilePixels(size_t tileID, Uint32** pixels, i
     return true;
 }
 
-PUBLIC STATIC SceneLayer* SegaSceneArt::PickLayer() {
+TileLayer* SegaSceneArt::PickLayer() {
     // The first visible layer that actually has tiles. A scene's later layers
     // are foreground and overlay work that needs a second plane and the sprite
     // engine, neither of which any of these exports writes yet.
     for (size_t i = 0; i < Scene::Layers.size(); i++) {
-        SceneLayer* layer = &Scene::Layers[i];
+        SceneLayer* sceneLayer = Scene::Layers[i];
+        if (!sceneLayer || sceneLayer->Type != SceneLayer::TYPE_TILE)
+            continue;
+
+        TileLayer* layer = (TileLayer*)sceneLayer;
         if (layer->Visible && layer->Tiles && layer->Width > 0 && layer->Height > 0)
             return layer;
     }
@@ -97,7 +88,7 @@ PUBLIC STATIC SceneLayer* SegaSceneArt::PickLayer() {
 // Returns false where the layer has no tile, which is not the same as a tile
 // whose pixel is clear -- but both end up transparent, so callers treat them
 // alike.
-PUBLIC STATIC bool SegaSceneArt::GetLayerPixel(SceneLayer* layer, int x, int y, Uint32* out) {
+bool SegaSceneArt::GetLayerPixel(TileLayer* layer, int x, int y, Uint32* out) {
     int tileX = x / Scene::TileWidth;
     int tileY = y / Scene::TileHeight;
 

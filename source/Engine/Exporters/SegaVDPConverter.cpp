@@ -1,20 +1,8 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/SegaVDPTypes.h>
-
-need_t SceneLayer;
-
-class SegaVDPConverter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/SegaVDPConverter.h>
 
 #include <Engine/Exporters/SegaSceneArt.h>
 #include <Engine/Scene.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Types/Tileset.h>
 
 // Turning a scene layer into what a Mega Drive's VDP reads.
@@ -54,7 +42,7 @@ static vector<Uint16>        Nametable;
 static SegaVDPPalette             Palettes[MD_PALETTE_COUNT];
 static int                   PaletteCount;
 static int                   ColorsMapped;   // colours that had to be approximated
-PRIVATE STATIC Uint32 SegaVDPConverter::QuantizeColor(Uint32 native) {
+Uint32 SegaVDPConverter::QuantizeColor(Uint32 native) {
     Uint32 pixel = SegaSceneArt::ToARGB(native);
 
     if (((pixel >> 24) & 0xFF) < 128)
@@ -69,7 +57,7 @@ PRIVATE STATIC Uint32 SegaVDPConverter::QuantizeColor(Uint32 native) {
     return (r << 16) | (g << 8) | b;
 }
 
-PRIVATE STATIC long SegaVDPConverter::ColorDistance(Uint32 a, Uint32 b) {
+long SegaVDPConverter::ColorDistance(Uint32 a, Uint32 b) {
     long dr = (long)((a >> 16) & 0xFF) - (long)((b >> 16) & 0xFF);
     long dg = (long)((a >> 8) & 0xFF) - (long)((b >> 8) & 0xFF);
     long db = (long)(a & 0xFF) - (long)(b & 0xFF);
@@ -79,7 +67,7 @@ PRIVATE STATIC long SegaVDPConverter::ColorDistance(Uint32 a, Uint32 b) {
 
 // Cuts the layer into the 8x8 cells the VDP works in, stopping at the plane's
 // edge. Source tiles are usually 16x16, so each becomes four cells.
-PRIVATE STATIC void SegaVDPConverter::BuildCells(SceneLayer* layer, int planeW, int planeH) {
+void SegaVDPConverter::BuildCells(TileLayer* layer, int planeW, int planeH) {
     int cellsPerTileX = Scene::TileWidth / MD_TILE_SIZE;
     int cellsPerTileY = Scene::TileHeight / MD_TILE_SIZE;
 
@@ -148,7 +136,7 @@ PRIVATE STATIC void SegaVDPConverter::BuildCells(SceneLayer* layer, int planeW, 
     }
 }
 
-PRIVATE STATIC void SegaVDPConverter::CellColors(SegaVDPCell* cell, vector<Uint32>* out) {
+void SegaVDPConverter::CellColors(SegaVDPCell* cell, vector<Uint32>* out) {
     out->clear();
 
     for (int i = 0; i < MD_TILE_SIZE * MD_TILE_SIZE; i++) {
@@ -172,7 +160,7 @@ PRIVATE STATIC void SegaVDPConverter::CellColors(SegaVDPCell* cell, vector<Uint3
 // How many of a cell's colours a palette is missing. -1 when the cell could
 // never fit, which is the answer for a cell holding more colours than a palette
 // has room for at all.
-PRIVATE STATIC int SegaVDPConverter::MissingFrom(SegaVDPPalette* palette, vector<Uint32>* colors) {
+int SegaVDPConverter::MissingFrom(SegaVDPPalette* palette, vector<Uint32>* colors) {
     int missing = 0;
 
     for (size_t i = 0; i < colors->size(); i++) {
@@ -200,7 +188,7 @@ PRIVATE STATIC int SegaVDPConverter::MissingFrom(SegaVDPPalette* palette, vector
 // colouring problem and not worth solving -- art drawn for this machine is
 // drawn within these limits already, and art that was not needs to be told so
 // rather than shuffled cleverly.
-PRIVATE STATIC void SegaVDPConverter::AssignPalettes() {
+void SegaVDPConverter::AssignPalettes() {
     for (int i = 0; i < MD_PALETTE_COUNT; i++)
         Palettes[i].Count = 0;
 
@@ -306,7 +294,7 @@ PRIVATE STATIC void SegaVDPConverter::AssignPalettes() {
 
 // Turns a cell into the 32 bytes the VDP reads: four bytes a row, the high
 // nibble of each byte being the left pixel of its pair.
-PRIVATE STATIC void SegaVDPConverter::PackCell(SegaVDPCell* cell, SegaVDPTile* out) {
+void SegaVDPConverter::PackCell(SegaVDPCell* cell, SegaVDPTile* out) {
     SegaVDPPalette* palette = &Palettes[cell->Palette];
 
     memset(out->Data, 0, MD_TILE_BYTES);
@@ -350,7 +338,7 @@ PRIVATE STATIC void SegaVDPConverter::PackCell(SegaVDPCell* cell, SegaVDPTile* o
     }
 }
 
-PRIVATE STATIC void SegaVDPConverter::FlipTile(SegaVDPTile* in, bool flipX, bool flipY, SegaVDPTile* out) {
+void SegaVDPConverter::FlipTile(SegaVDPTile* in, bool flipX, bool flipY, SegaVDPTile* out) {
     for (int y = 0; y < MD_TILE_SIZE; y++) {
         for (int x = 0; x < MD_TILE_SIZE; x++) {
             int sx = flipX ? (MD_TILE_SIZE - 1) - x : x;
@@ -372,7 +360,7 @@ PRIVATE STATIC void SegaVDPConverter::FlipTile(SegaVDPTile* in, bool flipX, bool
 // Finds a pattern among those already emitted, in any of its four
 // orientations, and adds it if it is new. Returns the nametable's flip bits
 // alongside the index.
-PRIVATE STATIC int SegaVDPConverter::AddPattern(SegaVDPTile* tile, bool* flipX, bool* flipY) {
+int SegaVDPConverter::AddPattern(SegaVDPTile* tile, bool* flipX, bool* flipY) {
     SegaVDPTile variant;
 
     for (int orientation = 0; orientation < 4; orientation++) {
@@ -400,7 +388,7 @@ PRIVATE STATIC int SegaVDPConverter::AddPattern(SegaVDPTile* tile, bool* flipX, 
 
 // The largest plane the VDP will accept that still covers the layer. Sides are
 // 32, 64 or 128 cells and the two multiplied have to stay within 4096.
-PUBLIC STATIC void SegaVDPConverter::ChoosePlaneSize(int wantW, int wantH, int* planeW, int* planeH) {
+void SegaVDPConverter::ChoosePlaneSize(int wantW, int wantH, int* planeW, int* planeH) {
     static const int sides[3] = { 32, 64, 128 };
 
     int bestW = 32, bestH = 32;
@@ -433,7 +421,7 @@ PUBLIC STATIC void SegaVDPConverter::ChoosePlaneSize(int wantW, int wantH, int* 
 // Everything the callers need afterwards is read back through the accessors
 // below rather than handed over, since there is only ever one conversion in
 // flight and the largest part of it is 64 KB of patterns.
-PUBLIC STATIC bool SegaVDPConverter::Convert(SceneLayer* layer, int planeW, int planeH, SegaVDPConversion* out) {
+bool SegaVDPConverter::Convert(TileLayer* layer, int planeW, int planeH, SegaVDPConversion* out) {
     memset(out, 0, sizeof(SegaVDPConversion));
 
     out->PlaneWidth = planeW;
@@ -495,7 +483,7 @@ PUBLIC STATIC bool SegaVDPConverter::Convert(SceneLayer* layer, int planeW, int 
 // Four palettes of sixteen colour words. Entry zero of each is the backdrop
 // rather than a colour, and stays black; entries the layer did not need stay
 // black too.
-PUBLIC STATIC void SegaVDPConverter::PaletteBytes(vector<Uint8>* out) {
+void SegaVDPConverter::PaletteBytes(vector<Uint8>* out) {
     Uint16 words[MD_PALETTE_COUNT * MD_PALETTE_SIZE];
     memset(words, 0, sizeof(words));
 
@@ -514,7 +502,7 @@ PUBLIC STATIC void SegaVDPConverter::PaletteBytes(vector<Uint8>* out) {
     }
 }
 
-PUBLIC STATIC void SegaVDPConverter::TileBytes(vector<Uint8>* out) {
+void SegaVDPConverter::TileBytes(vector<Uint8>* out) {
     out->clear();
 
     for (size_t i = 0; i < Patterns.size(); i++) {
@@ -523,7 +511,7 @@ PUBLIC STATIC void SegaVDPConverter::TileBytes(vector<Uint8>* out) {
     }
 }
 
-PUBLIC STATIC void SegaVDPConverter::NametableBytes(vector<Uint8>* out) {
+void SegaVDPConverter::NametableBytes(vector<Uint8>* out) {
     out->clear();
 
     for (size_t i = 0; i < Nametable.size(); i++) {

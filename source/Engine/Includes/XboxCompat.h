@@ -56,4 +56,67 @@ static inline int _chdir(const char* path) {
     return 0;
 }
 
+// nxdk builds everything without C++ exceptions: its C++ library has no
+// unwinder to give, and the compiler will not accept try, catch or throw at
+// all. The engine reports script errors by throwing, so those three are given
+// meanings it can compile here.
+//
+// A try block always runs, and its handlers never do -- nothing can be caught
+// that was never thrown. A throw cannot unwind, so it says what went wrong and
+// stops the title, which is what an uncaught exception would have done; the
+// difference is that a script error the engine would have recovered from
+// elsewhere stops the game on the Xbox.
+#ifdef __cplusplus
+
+// nxdk's C++ library still spells some exception specifications throw(), so
+// every standard header that does is read before throw means anything else.
+// Their include guards keep them from being read again afterwards.
+// clang-format off
+#include <algorithm>
+#include <codecvt>
+#include <deque>
+#include <filesystem>
+#include <functional>
+#include <iomanip>
+#include <ios>
+#include <map>
+#include <memory>
+#include <ostream>
+#include <regex>
+#include <sstream>
+#include <stack>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+// clang-format on
+
+[[noreturn]] void XboxThrowFailed(const char* message);
+
+struct XboxThrow {};
+
+template<typename T>
+[[noreturn]] inline void operator<<(XboxThrow, const T& exception) {
+    XboxThrowFailed(exception.what());
+}
+
+// Only ever named in a handler that cannot run, so it is never called; it
+// exists to give a handler's declaration something to be initialised from.
+struct XboxCaught {
+    template<typename T>
+    operator T&() const {
+        __builtin_unreachable();
+    }
+};
+
+#define try if (true)
+#define catch(declaration) else if (false) for (declaration = XboxCaught(); false;)
+#define throw XboxThrow() <<
+
+#endif /* __cplusplus */
+
+// stb_image's SSE2 paths: the Xbox's Pentium III has SSE, but not SSE2.
+#define STBI_NO_SIMD
+
 #endif /* XBOXCOMPAT_H */

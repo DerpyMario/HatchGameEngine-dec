@@ -1,20 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/DreamcastTypes.h>
-#include <Engine/Rendering/Scene3DTypes.h>
-
-need_t SceneLayer;
-need_t Scene3DObject;
-need_t Scene3DSettings;
-need_t Mesh;
-need_t IModel;
-
-class DreamcastExporter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/DreamcastExporter.h>
 #include <Engine/Exporters/SegaSceneArt.h>
 
@@ -23,13 +6,16 @@ public:
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/IO/ResourceStream.h>
 #include <Engine/Math/Matrix4x4.h>
+#include <Engine/Rendering/Enums.h>
 #include <Engine/Rendering/Material.h>
 #include <Engine/Rendering/Mesh.h>
 #include <Engine/Rendering/Scene3DTypes.h>
 #include <Engine/ResourceTypes/IModel.h>
+#include <Engine/ResourceTypes/ResourceManager.h>
 #include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
 #include <Engine/Scene.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
+#include <Engine/Utilities/ColorUtils.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a SEGA Dreamcast can show.
@@ -56,7 +42,7 @@ static int                     DroppedFaces;
 // Five bits of red, six of green, five of blue -- the format the PVR reads a
 // texture in, and the one that costs the least of the colour a scene was drawn
 // with. Green gets the extra bit because the eye does.
-PRIVATE STATIC Uint16 DreamcastExporter::ToRGB565(Uint32 argb) {
+Uint16 DreamcastExporter::ToRGB565(Uint32 argb) {
     Uint32 r = (argb >> 16) & 0xFF;
     Uint32 g = (argb >> 8) & 0xFF;
     Uint32 b = argb & 0xFF;
@@ -69,7 +55,7 @@ PRIVATE STATIC Uint16 DreamcastExporter::ToRGB565(Uint32 argb) {
 // A tile that hangs off the edge of the layer is still a whole texture; the
 // part past the edge is left black rather than left uninitialised, so what runs
 // off the end of a scene looks deliberate.
-PRIVATE STATIC void DreamcastExporter::BuildTextures(SceneLayer* layer, int width, int height) {
+void DreamcastExporter::BuildTextures(TileLayer* layer, int width, int height) {
     TileColumns = (width + DREAMCAST_TILE_SIZE - 1) / DREAMCAST_TILE_SIZE;
     TileRows = (height + DREAMCAST_TILE_SIZE - 1) / DREAMCAST_TILE_SIZE;
 
@@ -108,7 +94,7 @@ PRIVATE STATIC void DreamcastExporter::BuildTextures(SceneLayer* layer, int widt
     }
 }
 
-PRIVATE STATIC bool DreamcastExporter::WriteBinary(const char* path, const void* data, size_t size) {
+bool DreamcastExporter::WriteBinary(const char* path, const void* data, size_t size) {
     FILE* f = fopen(path, "wb");
     if (!f)
         return false;
@@ -119,7 +105,7 @@ PRIVATE STATIC bool DreamcastExporter::WriteBinary(const char* path, const void*
     return ok;
 }
 
-PRIVATE STATIC bool DreamcastExporter::WriteText(const char* path, const char* text) {
+bool DreamcastExporter::WriteText(const char* path, const char* text) {
     FILE* f = fopen(path, "w");
     if (!f)
         return false;
@@ -130,7 +116,7 @@ PRIVATE STATIC bool DreamcastExporter::WriteText(const char* path, const char* t
     return ok;
 }
 
-PRIVATE STATIC bool DreamcastExporter::CopyFile(const char* from, const char* to) {
+bool DreamcastExporter::CopyFile(const char* from, const char* to) {
     FILE* in = fopen(from, "rb");
     if (!in)
         return false;
@@ -158,7 +144,7 @@ PRIVATE STATIC bool DreamcastExporter::CopyFile(const char* from, const char* to
     return ok;
 }
 
-PRIVATE STATIC bool DreamcastExporter::FindRuntime(char* out, size_t outSize) {
+bool DreamcastExporter::FindRuntime(char* out, size_t outSize) {
     if (Application::DreamcastRuntimePath.size()) {
         StringUtils::Copy(out, Application::DreamcastRuntimePath.c_str(), outSize);
         return Directory::Exists(out);
@@ -186,15 +172,18 @@ PRIVATE STATIC bool DreamcastExporter::FindRuntime(char* out, size_t outSize) {
 // ------------------------------------------------------------ 3D scenes ---
 
 // The colour a face is drawn in, as the PVR wants it: alpha in the top byte.
-PRIVATE STATIC Uint32 DreamcastExporter::FaceColor(Mesh* mesh, IModel* model, Sint32* corners, int cornerCount) {
+Uint32 DreamcastExporter::FaceColor(Mesh* mesh, IModel* model, Sint32* corners, int cornerCount) {
     if (mesh->ColorBuffer) {
         Uint32 r = 0, g = 0, b = 0;
 
+        // A model's colours are packed the way ColorUtils::ToRGB packs them,
+        // which is in RGBA byte order rather than as 0xAARRGGBB.
         for (int i = 0; i < cornerCount; i++) {
-            Uint32 c = mesh->ColorBuffer[corners[i]];
-            r += (c >> 16) & 0xFF;
-            g += (c >> 8) & 0xFF;
-            b += c & 0xFF;
+            Uint8 cr, cg, cb, ca;
+            ColorUtils::GetChannels(mesh->ColorBuffer[corners[i]], PixelFormat_RGBA8888, cr, cg, cb, ca);
+            r += cr;
+            g += cg;
+            b += cb;
         }
 
         r /= (Uint32)cornerCount;
@@ -204,8 +193,8 @@ PRIVATE STATIC Uint32 DreamcastExporter::FaceColor(Mesh* mesh, IModel* model, Si
         return 0xFF000000U | (r << 16) | (g << 8) | b;
     }
 
-    if (mesh->MaterialIndex >= 0 && model->Materials &&
-        (size_t)mesh->MaterialIndex < model->MaterialCount) {
+    if (mesh->MaterialIndex >= 0 &&
+        (size_t)mesh->MaterialIndex < model->Materials.size()) {
         Material* material = model->Materials[mesh->MaterialIndex];
         if (material) {
             Uint32 r = (Uint32)(material->ColorDiffuse[0] * 255.0f);
@@ -226,7 +215,7 @@ PRIVATE STATIC Uint32 DreamcastExporter::FaceColor(Mesh* mesh, IModel* model, Si
 
 // Walks one placed model into the shared vertex and face tables, with its
 // position, rotation and scale already applied.
-PRIVATE STATIC void DreamcastExporter::CollectModel(IModel* model, Scene3DObject* object) {
+void DreamcastExporter::CollectModel(IModel* model, Scene3DObject* object) {
     Matrix4x4 rotation, scale, transform;
 
     Matrix4x4::IdentityRotationXYZ(&rotation, object->RotationX, object->RotationY, object->RotationZ);
@@ -234,7 +223,7 @@ PRIVATE STATIC void DreamcastExporter::CollectModel(IModel* model, Scene3DObject
     Matrix4x4::Multiply(&transform, &rotation, &scale);
     Matrix4x4::Translate(&transform, &transform, object->X, object->Y, object->Z);
 
-    for (size_t m = 0; m < model->MeshCount; m++) {
+    for (size_t m = 0; m < model->Meshes.size(); m++) {
         Mesh* mesh = model->Meshes[m];
         if (!mesh || !mesh->PositionBuffer || !mesh->VertexIndexBuffer)
             continue;
@@ -308,7 +297,7 @@ PRIVATE STATIC void DreamcastExporter::CollectModel(IModel* model, Scene3DObject
 
 // How far out the geometry reaches, so the generated program can put the camera
 // somewhere the scene is visible rather than at a distance picked in advance.
-PRIVATE STATIC int DreamcastExporter::CameraDistance() {
+int DreamcastExporter::CameraDistance() {
     double worst = 0.0;
 
     for (size_t i = 0; i < Vertices.size(); i++) {
@@ -329,7 +318,7 @@ PRIVATE STATIC int DreamcastExporter::CameraDistance() {
     return distance;
 }
 
-PUBLIC STATIC DreamcastExportResult DreamcastExporter::ExportScene3D(const char* outputPath, const char* scenePath) {
+DreamcastExportResult DreamcastExporter::ExportScene3D(const char* outputPath, const char* scenePath) {
     DreamcastExportResult result;
     memset(&result, 0, sizeof(result));
     result.Is3D = true;
@@ -354,15 +343,13 @@ PUBLIC STATIC DreamcastExportResult DreamcastExporter::ExportScene3D(const char*
     int loaded = 0;
 
     for (size_t i = 0; i < objects.size(); i++) {
-        ResourceStream* stream = ResourceStream::New(objects[i].Source);
-        if (!stream) {
+        if (!ResourceManager::ResourceExists(objects[i].Source)) {
             Log::Print(Log::LOG_WARN, "Dreamcast export: could not open model \"%s\".", objects[i].Source);
             continue;
         }
 
-        IModel* model = new IModel();
-        bool ok = model->Load(stream, objects[i].Source);
-        stream->Close();
+        IModel* model = new IModel(objects[i].Source);
+        bool ok = !model->LoadFailed;
 
         if (!ok) {
             Log::Print(Log::LOG_WARN, "Dreamcast export: could not read model \"%s\".", objects[i].Source);
@@ -409,11 +396,11 @@ PUBLIC STATIC DreamcastExportResult DreamcastExporter::ExportScene3D(const char*
 
 // ------------------------------------------------------------ 2D scenes ---
 
-PUBLIC STATIC DreamcastExportResult DreamcastExporter::ExportScene(const char* outputPath) {
+DreamcastExportResult DreamcastExporter::ExportScene(const char* outputPath) {
     DreamcastExportResult result;
     memset(&result, 0, sizeof(result));
 
-    SceneLayer* layer = SegaSceneArt::PickLayer();
+    TileLayer* layer = SegaSceneArt::PickLayer();
     if (!layer) {
         StringUtils::Copy(result.Message, "The scene has no visible tile layer to export.", sizeof(result.Message));
         return result;
@@ -481,7 +468,7 @@ PUBLIC STATIC DreamcastExportResult DreamcastExporter::ExportScene(const char* o
 
 // -------------------------------------------------------------- writing ---
 
-PRIVATE STATIC void DreamcastExporter::PushU32(vector<Uint8>* out, Uint32 value) {
+void DreamcastExporter::PushU32(vector<Uint8>* out, Uint32 value) {
     // Little endian: the Dreamcast's SH-4 runs that way round, which is the
     // opposite of every other SEGA machine this engine exports to.
     out->push_back((Uint8)(value & 0xFF));
@@ -490,18 +477,18 @@ PRIVATE STATIC void DreamcastExporter::PushU32(vector<Uint8>* out, Uint32 value)
     out->push_back((Uint8)((value >> 24) & 0xFF));
 }
 
-PRIVATE STATIC void DreamcastExporter::PushU16(vector<Uint8>* out, Uint16 value) {
+void DreamcastExporter::PushU16(vector<Uint8>* out, Uint16 value) {
     out->push_back((Uint8)(value & 0xFF));
     out->push_back((Uint8)((value >> 8) & 0xFF));
 }
 
-PRIVATE STATIC void DreamcastExporter::PushFloat(vector<Uint8>* out, float value) {
+void DreamcastExporter::PushFloat(vector<Uint8>* out, float value) {
     Uint32 bits;
     memcpy(&bits, &value, sizeof(bits));
     DreamcastExporter::PushU32(out, bits);
 }
 
-PRIVATE STATIC bool DreamcastExporter::WriteProject(const char* outputPath, DreamcastExportResult* result) {
+bool DreamcastExporter::WriteProject(const char* outputPath, DreamcastExportResult* result) {
     char path[1024];
     char runtime[1024];
 
@@ -583,7 +570,7 @@ PRIVATE STATIC bool DreamcastExporter::WriteProject(const char* outputPath, Drea
     return DreamcastExporter::WriteSources(outputPath, result);
 }
 
-PRIVATE STATIC bool DreamcastExporter::WriteSources(const char* outputPath, DreamcastExportResult* result) {
+bool DreamcastExporter::WriteSources(const char* outputPath, DreamcastExportResult* result) {
     char path[1024];
     char text[8192];
 
@@ -757,7 +744,7 @@ PRIVATE STATIC bool DreamcastExporter::WriteSources(const char* outputPath, Drea
     return DreamcastExporter::WriteReadme(outputPath, result);
 }
 
-PRIVATE STATIC bool DreamcastExporter::WriteReadme(const char* outputPath, DreamcastExportResult* result) {
+bool DreamcastExporter::WriteReadme(const char* outputPath, DreamcastExportResult* result) {
     char path[1024];
     char text[8192];
 

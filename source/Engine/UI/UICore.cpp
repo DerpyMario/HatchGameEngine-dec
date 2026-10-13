@@ -1,22 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/StandardSDL2.h>
-
-class UICore {
-public:
-    static float MouseX;
-    static float MouseY;
-    static bool  MouseIsDown;
-    static bool  MouseWasPressed;
-    static bool  MouseWasReleased;
-    static float MouseWheel;
-
-    // True while a text field has focus, so the caller knows to keep key
-    // presses away from the game.
-    static bool  WantsKeyboard;
-};
-#endif
-
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
 #include <Engine/UI/UITheme.h>
@@ -98,19 +79,19 @@ static const char*  PendingTooltip = NULL;
 static int    EditCaret = 0;
 static Uint32 CaretBlinkStart = 0;
 
-PUBLIC STATIC float UICore::Pad() {
+float UICore::Pad() {
     return 4.0f * UIDraw::Scale;
 }
 
-PUBLIC STATIC float UICore::RowHeight() {
+float UICore::RowHeight() {
     return UIDraw::LineHeight() + 6.0f * UIDraw::Scale;
 }
 
-PUBLIC STATIC float UICore::TitleBarHeight() {
+float UICore::TitleBarHeight() {
     return UIDraw::LineHeight() + 8.0f * UIDraw::Scale;
 }
 
-PRIVATE STATIC Uint32 UICore::Hash(const char* text, Uint32 seed) {
+Uint32 UICore::Hash(const char* text, Uint32 seed) {
     Uint32 hash = seed ? seed : 2166136261U;
     for (const char* i = text; i && *i; i++) {
         hash ^= (Uint32)(unsigned char)*i;
@@ -120,24 +101,24 @@ PRIVATE STATIC Uint32 UICore::Hash(const char* text, Uint32 seed) {
     return hash ? hash : 1U;
 }
 
-PRIVATE STATIC Uint32 UICore::ItemID(const char* label) {
+Uint32 UICore::ItemID(const char* label) {
     return UICore::Hash(label, PanelID);
 }
 
 // An ID for widgets that live outside any panel, such as the menu bar.
-PUBLIC STATIC Uint32 UICore::MakeID(const char* label) {
+Uint32 UICore::MakeID(const char* label) {
     return UICore::Hash(label, 0);
 }
 
 // The same, but scoped to an enclosing widget so that rows sharing a label in
 // two different menus do not collide.
-PUBLIC STATIC Uint32 UICore::MakeID(const char* label, Uint32 scope) {
+Uint32 UICore::MakeID(const char* label, Uint32 scope) {
     return UICore::Hash(label, scope);
 }
 
 // Labels may carry a "##suffix" that makes the widget's ID unique without
 // showing up on screen, the same convention Dear ImGui uses.
-PRIVATE STATIC const char* UICore::VisibleLabel(const char* label, char* buffer, size_t bufferSize) {
+const char* UICore::VisibleLabel(const char* label, char* buffer, size_t bufferSize) {
     if (!label)
         return "";
 
@@ -156,7 +137,7 @@ PRIVATE STATIC const char* UICore::VisibleLabel(const char* label, char* buffer,
 
 // ---------------------------------------------------------------- input ----
 
-PUBLIC STATIC bool UICore::HandleEvent(SDL_Event* event) {
+bool UICore::HandleEvent(SDL_Event* event) {
     switch (event->type) {
         case SDL_MOUSEMOTION:
             UICore::MouseX = (float)event->motion.x;
@@ -205,7 +186,7 @@ PUBLIC STATIC bool UICore::HandleEvent(SDL_Event* event) {
     return false;
 }
 
-PUBLIC STATIC void UICore::ClearFocus() {
+void UICore::ClearFocus() {
     if (FocusItem) {
         FocusItem = 0;
         SDL_StopTextInput();
@@ -214,7 +195,7 @@ PUBLIC STATIC void UICore::ClearFocus() {
     UICore::WantsKeyboard = false;
 }
 
-PUBLIC STATIC void UICore::Reset() {
+void UICore::Reset() {
     UICore::ClearFocus();
 
     HotItem = ActiveItem = HoveredThisFrame = 0;
@@ -227,14 +208,14 @@ PUBLIC STATIC void UICore::Reset() {
     TypedText.clear();
 }
 
-PUBLIC STATIC void UICore::NewFrame() {
+void UICore::NewFrame() {
     HotItem = HoveredThisFrame;
     HoveredThisFrame = 0;
 
     UIDraw::Begin();
 }
 
-PUBLIC STATIC void UICore::EndFrame() {
+void UICore::EndFrame() {
     UIDraw::End();
 
     if (!UICore::MouseIsDown)
@@ -250,7 +231,7 @@ PUBLIC STATIC void UICore::EndFrame() {
     UICore::WantsKeyboard = FocusItem != 0;
 }
 
-PUBLIC STATIC bool UICore::IsOver(float x, float y, float w, float h) {
+bool UICore::IsOver(float x, float y, float w, float h) {
     if (InputBlocked)
         return false;
 
@@ -270,7 +251,7 @@ PUBLIC STATIC bool UICore::IsOver(float x, float y, float w, float h) {
 // on press, and reports a click when the mouse comes back up over it. Public so
 // that the menu bar, which draws itself outside the panel layout, behaves the
 // same way as everything else.
-PUBLIC STATIC bool UICore::ClickableRegion(Uint32 id, float x, float y, float w, float h, bool* outHovered, bool* outHeld) {
+bool UICore::ClickableRegion(Uint32 id, float x, float y, float w, float h, bool* outHovered, bool* outHeld) {
     bool hovered = UICore::IsOver(x, y, w, h);
     if (hovered)
         HoveredThisFrame = id;
@@ -294,18 +275,18 @@ PUBLIC STATIC bool UICore::ClickableRegion(Uint32 id, float x, float y, float w,
 }
 
 // Keeps everything under an open popup from reacting to the mouse.
-PUBLIC STATIC void UICore::SetInputBlocked(bool blocked) {
+void UICore::SetInputBlocked(bool blocked) {
     InputBlocked = blocked;
 }
 
 // True when the widget placed just before this call had the mouse over it.
-PUBLIC STATIC bool UICore::IsItemHovered() {
+bool UICore::IsItemHovered() {
     return LastItemHovered;
 }
 
 // Reports a key press with an exact modifier combination, for menu shortcuts.
 // Only Ctrl, Shift and Alt are considered; Command stands in for Ctrl on macOS.
-PUBLIC STATIC bool UICore::WasShortcutPressed(SDL_Keycode key, Uint16 modifiers) {
+bool UICore::WasShortcutPressed(SDL_Keycode key, Uint16 modifiers) {
     for (size_t i = 0; i < KeyPresses.size(); i++) {
         if (KeyPresses[i].Key != key)
             continue;
@@ -328,7 +309,7 @@ PUBLIC STATIC bool UICore::WasShortcutPressed(SDL_Keycode key, Uint16 modifiers)
 // --------------------------------------------------------------- layout ----
 
 // Closes off the line being built so the next item starts below it.
-PRIVATE STATIC void UICore::FlushLine() {
+void UICore::FlushLine() {
     if (LineHeightUsed <= 0.0f)
         return;
 
@@ -338,7 +319,7 @@ PRIVATE STATIC void UICore::FlushLine() {
 }
 
 // Reserves a rectangle for the next widget and advances the layout cursor.
-PRIVATE STATIC void UICore::PlaceItem(float width, float height, float* outX, float* outY) {
+void UICore::PlaceItem(float width, float height, float* outX, float* outY) {
     if (!SameLineFlag)
         UICore::FlushLine();
     SameLineFlag = false;
@@ -355,17 +336,17 @@ PRIVATE STATIC void UICore::PlaceItem(float width, float height, float* outX, fl
 
 // Reserves a block of the panel for a caller that draws its own contents, such
 // as the scene editor's tile palette.
-PUBLIC STATIC void UICore::PlaceCustomItem(float width, float height, float* outX, float* outY) {
+void UICore::PlaceCustomItem(float width, float height, float* outX, float* outY) {
     UICore::PlaceItem(width, height, outX, outY);
 }
 
-PUBLIC STATIC void UICore::SetNextItemWidth(float width) {
+void UICore::SetNextItemWidth(float width) {
     NextItemWidth = width;
 }
 
 // How wide a widget should be when the caller didn't say: the rest of the
 // current line.
-PRIVATE STATIC float UICore::TakeItemWidth() {
+float UICore::TakeItemWidth() {
     if (NextItemWidth > 0.0f) {
         float width = NextItemWidth;
         NextItemWidth = 0.0f;
@@ -378,15 +359,15 @@ PRIVATE STATIC float UICore::TakeItemWidth() {
 }
 
 // Keeps the next widget on the same line as the one just placed.
-PUBLIC STATIC void UICore::SameLine() {
+void UICore::SameLine() {
     SameLineFlag = true;
 }
 
-PUBLIC STATIC float UICore::ContentWidth() {
+float UICore::ContentWidth() {
     return ContentW;
 }
 
-PUBLIC STATIC void UICore::Separator() {
+void UICore::Separator() {
     UICore::FlushLine();
 
     float y = CursorY + UICore::Pad();
@@ -396,7 +377,7 @@ PUBLIC STATIC void UICore::Separator() {
 
 // ---------------------------------------------------------------- panel ----
 
-PUBLIC STATIC void UICore::BeginPanel(const char* title, float x, float y, float w, float h) {
+void UICore::BeginPanel(const char* title, float x, float y, float w, float h) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(title, labelBuffer, sizeof(labelBuffer));
 
@@ -456,7 +437,7 @@ PUBLIC STATIC void UICore::BeginPanel(const char* title, float x, float y, float
     UIDraw::PushClip(x + 1.0f, ContentTop, w - 2.0f, viewHeight);
 }
 
-PUBLIC STATIC void UICore::EndPanel() {
+void UICore::EndPanel() {
     UICore::FlushLine();
 
     UIPanelState& state = PanelStates[PanelID];
@@ -506,13 +487,13 @@ PUBLIC STATIC void UICore::EndPanel() {
 
 // Pins the panel being built to the end of its content, so the console keeps
 // following new log lines.
-PUBLIC STATIC void UICore::ScrollToBottom() {
+void UICore::ScrollToBottom() {
     PanelStates[PanelID].Scroll = PanelStates[PanelID].ContentHeight;
 }
 
 // --------------------------------------------------------------- widgets ---
 
-PUBLIC STATIC void UICore::Text(const char* text, Uint32 color) {
+void UICore::Text(const char* text, Uint32 color) {
     float width = UICore::TakeItemWidth();
     float x, y;
     UICore::PlaceItem(width, UIDraw::LineHeight(), &x, &y);
@@ -520,11 +501,11 @@ PUBLIC STATIC void UICore::Text(const char* text, Uint32 color) {
     UIDraw::TextClipped(x, y, text, color, UIDraw::Scale, width);
 }
 
-PUBLIC STATIC void UICore::Text(const char* text) {
+void UICore::Text(const char* text) {
     UICore::Text(text, UI_COL_TEXT);
 }
 
-PUBLIC STATIC void UICore::Heading(const char* text) {
+void UICore::Heading(const char* text) {
     float width = UICore::TakeItemWidth();
     float x, y;
     UICore::PlaceItem(width, UIDraw::LineHeight() + 3.0f * UIDraw::Scale, &x, &y);
@@ -535,7 +516,7 @@ PUBLIC STATIC void UICore::Heading(const char* text) {
 
 // Draws a "name  value" row with the value right-aligned, used all over the
 // inspector panels.
-PUBLIC STATIC void UICore::Field(const char* name, const char* value) {
+void UICore::Field(const char* name, const char* value) {
     float width = UICore::TakeItemWidth();
     float x, y;
     UICore::PlaceItem(width, UIDraw::LineHeight(), &x, &y);
@@ -552,7 +533,7 @@ PUBLIC STATIC void UICore::Field(const char* name, const char* value) {
         UIDraw::Text(x + width - valueWidth, y, value, UI_COL_TEXT);
 }
 
-PUBLIC STATIC void UICore::FieldFormatted(const char* name, const char* format, ...) {
+void UICore::FieldFormatted(const char* name, const char* format, ...) {
     char buffer[512];
     va_list args;
     va_start(args, format);
@@ -562,7 +543,7 @@ PUBLIC STATIC void UICore::FieldFormatted(const char* name, const char* format, 
     UICore::Field(name, buffer);
 }
 
-PUBLIC STATIC bool UICore::Button(const char* label, float width) {
+bool UICore::Button(const char* label, float width) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
 
@@ -590,12 +571,12 @@ PUBLIC STATIC bool UICore::Button(const char* label, float width) {
     return clicked;
 }
 
-PUBLIC STATIC bool UICore::Button(const char* label) {
+bool UICore::Button(const char* label) {
     return UICore::Button(label, UICore::TakeItemWidth());
 }
 
 // A button that is dimmed and unclickable, for actions that don't apply yet.
-PUBLIC STATIC bool UICore::ButtonEnabled(const char* label, bool enabled) {
+bool UICore::ButtonEnabled(const char* label, bool enabled) {
     float width = UICore::TakeItemWidth();
 
     if (enabled)
@@ -615,7 +596,7 @@ PUBLIC STATIC bool UICore::ButtonEnabled(const char* label, bool enabled) {
     return false;
 }
 
-PUBLIC STATIC bool UICore::Checkbox(const char* label, bool* value) {
+bool UICore::Checkbox(const char* label, bool* value) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
 
@@ -649,7 +630,7 @@ PUBLIC STATIC bool UICore::Checkbox(const char* label, bool* value) {
     return clicked;
 }
 
-PUBLIC STATIC bool UICore::SliderInt(const char* label, int* value, int minimum, int maximum) {
+bool UICore::SliderInt(const char* label, int* value, int minimum, int maximum) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
 
@@ -701,7 +682,7 @@ PUBLIC STATIC bool UICore::SliderInt(const char* label, int* value, int minimum,
 }
 
 // A full-width row that reports a click, used for scene and project lists.
-PUBLIC STATIC bool UICore::ListItem(const char* label, bool selected) {
+bool UICore::ListItem(const char* label, bool selected) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
 
@@ -730,7 +711,7 @@ PUBLIC STATIC bool UICore::ListItem(const char* label, bool selected) {
     return clicked;
 }
 
-PUBLIC STATIC void UICore::ResetRowStriping() {
+void UICore::ResetRowStriping() {
     RowIndex = 0;
 }
 
@@ -746,7 +727,7 @@ PUBLIC STATIC void UICore::ResetRowStriping() {
 static char   NumberFocusText[64];
 static Uint32 NumberFocusOwner = 0;
 
-PRIVATE STATIC char* UICore::NumberBuffer(Uint32 id, const char* formatted, char* scratch, size_t scratchSize) {
+char* UICore::NumberBuffer(Uint32 id, const char* formatted, char* scratch, size_t scratchSize) {
     // Focus leaving gives up the kept text. Without this a field that regains
     // focus keeps whatever was typed into it last, and since a field's ID is
     // its label inside its panel, two objects of the same kind share one: click
@@ -769,7 +750,7 @@ PRIVATE STATIC char* UICore::NumberBuffer(Uint32 id, const char* formatted, char
     return scratch;
 }
 
-PUBLIC STATIC bool UICore::FloatField(const char* label, float* value) {
+bool UICore::FloatField(const char* label, float* value) {
     Uint32 id = UICore::ItemID(label);
 
     char formatted[64];
@@ -802,7 +783,7 @@ PUBLIC STATIC bool UICore::FloatField(const char* label, float* value) {
     return true;
 }
 
-PUBLIC STATIC bool UICore::IntField(const char* label, int* value) {
+bool UICore::IntField(const char* label, int* value) {
     Uint32 id = UICore::ItemID(label);
 
     char formatted[64];
@@ -830,7 +811,7 @@ PUBLIC STATIC bool UICore::IntField(const char* label, int* value) {
     return true;
 }
 
-PUBLIC STATIC bool UICore::TextField(const char* label, char* buffer, size_t bufferSize) {
+bool UICore::TextField(const char* label, char* buffer, size_t bufferSize) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
 
@@ -983,7 +964,7 @@ PUBLIC STATIC bool UICore::TextField(const char* label, char* buffer, size_t buf
 
 // A horizontal row of tabs; returns true when the selection changes. Drawn at
 // an explicit position because it sits outside any panel.
-PUBLIC STATIC bool UICore::TabBar(const char** names, int count, int* current, float x, float y, float width, float height) {
+bool UICore::TabBar(const char** names, int count, int* current, float x, float y, float width, float height) {
     bool changed = false;
     float tabWidth = count > 0 ? width / count : width;
 
@@ -1026,7 +1007,7 @@ PUBLIC STATIC bool UICore::TabBar(const char** names, int count, int* current, f
 //
 // The options array is read again after this call returns, so it has to outlive
 // the frame -- pass a static table, not a local one.
-PUBLIC STATIC bool UICore::Dropdown(const char* label, const char* const* options, int count, int* current) {
+bool UICore::Dropdown(const char* label, const char* const* options, int count, int* current) {
     char labelBuffer[256];
     const char* visible = UICore::VisibleLabel(label, labelBuffer, sizeof(labelBuffer));
 
@@ -1089,22 +1070,22 @@ PUBLIC STATIC bool UICore::Dropdown(const char* label, const char* const* option
 // Registers hover help for the widget placed just before this call. The text is
 // read again when the overlay is painted, so pass something that outlives the
 // frame.
-PUBLIC STATIC void UICore::Tooltip(const char* text) {
+void UICore::Tooltip(const char* text) {
     if (LastItemHovered)
         PendingTooltip = text;
 }
 
-PUBLIC STATIC bool UICore::IsDropdownOpen() {
+bool UICore::IsDropdownOpen() {
     return OpenDropdownID != 0;
 }
 
-PUBLIC STATIC void UICore::CloseDropdown() {
+void UICore::CloseDropdown() {
     OpenDropdownID = 0;
 }
 
 // Paints the deferred dropdown list and tooltip, on top of everything else.
 // Must be called with no panel open and no clip rectangle in force.
-PUBLIC STATIC void UICore::DrawOverlays() {
+void UICore::DrawOverlays() {
     if (OpenDropdownID && DropdownOptions && DropdownCount > 0) {
         float rowHeight = UIDraw::LineHeight() + 4.0f * UIDraw::Scale;
         float listHeight = DropdownCount * rowHeight + 2.0f;
@@ -1175,6 +1156,6 @@ PUBLIC STATIC void UICore::DrawOverlays() {
 }
 
 // Dims the whole window so a panel drawn on top reads as the focus.
-PUBLIC STATIC void UICore::Backdrop() {
+void UICore::Backdrop() {
     UIDraw::FillRect(0.0f, 0.0f, (float)UIDraw::ViewWidth, (float)UIDraw::ViewHeight, UI_COL_BACKDROP);
 }

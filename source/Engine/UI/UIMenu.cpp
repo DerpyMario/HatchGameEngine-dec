@@ -1,11 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/StandardSDL2.h>
-
-class UIMenu {
-};
-#endif
-
 #include <Engine/UI/UIMenu.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
@@ -61,21 +53,21 @@ static float  SubmenuWidth = 0.0f;
 static float  SubmenuCursorY = 0.0f;
 static float  SubmenuMeasured = 0.0f;
 
-PUBLIC STATIC bool UIMenu::IsOpen() {
+bool UIMenu::IsOpen() {
     return OpenMenu != 0;
 }
 
-PUBLIC STATIC void UIMenu::Close() {
+void UIMenu::Close() {
     OpenMenu = 0;
     OpenSubmenu = 0;
 }
 
-PRIVATE STATIC float UIMenu::RowHeight() {
+float UIMenu::RowHeight() {
     return UIDraw::LineHeight() + 5.0f * UIDraw::Scale;
 }
 
 // How wide an entry wants to be, with room for its tick column and shortcut.
-PRIVATE STATIC float UIMenu::MeasureItem(const char* label, const char* shortcut) {
+float UIMenu::MeasureItem(const char* label, const char* shortcut) {
     float width = UIDraw::TextWidth(label) + UIDraw::CharWidth() * 4.0f;
 
     if (shortcut && *shortcut)
@@ -86,7 +78,7 @@ PRIVATE STATIC float UIMenu::MeasureItem(const char* label, const char* shortcut
 
 // ------------------------------------------------------------------- bar ----
 
-PUBLIC STATIC void UIMenu::Begin(float x, float y, float width, float height) {
+void UIMenu::Begin(float x, float y, float width, float height) {
     InBar = true;
     BarX = x;
     BarY = y;
@@ -99,7 +91,7 @@ PUBLIC STATIC void UIMenu::Begin(float x, float y, float width, float height) {
     UIDraw::FillRect(x, y + height - 1.0f, width, 1.0f, UI_COL_BORDER);
 }
 
-PUBLIC STATIC void UIMenu::End() {
+void UIMenu::End() {
     // A press that missed every title and every open item closes the menu,
     // which is what clicking away from a menu is expected to do.
     if (OpenMenu && UICore::MouseWasPressed && !ClickedInsideMenu)
@@ -109,7 +101,7 @@ PUBLIC STATIC void UIMenu::End() {
 }
 
 // Opens the named menu and returns true while its contents should be declared.
-PUBLIC STATIC bool UIMenu::BeginMenu(const char* label) {
+bool UIMenu::BeginMenu(const char* label) {
     if (!InBar)
         return false;
 
@@ -167,7 +159,7 @@ PUBLIC STATIC bool UIMenu::BeginMenu(const char* label) {
     return true;
 }
 
-PUBLIC STATIC void UIMenu::EndMenu() {
+void UIMenu::EndMenu() {
     if (!InMenu)
         return;
 
@@ -193,7 +185,7 @@ PUBLIC STATIC void UIMenu::EndMenu() {
 
 // ----------------------------------------------------------------- items ----
 
-PRIVATE STATIC void UIMenu::TrackWidth(float width) {
+void UIMenu::TrackWidth(float width) {
     if (InSubmenu) {
         if (width > SubmenuMeasured)
             SubmenuMeasured = width;
@@ -203,7 +195,7 @@ PRIVATE STATIC void UIMenu::TrackWidth(float width) {
 }
 
 // Reserves the next row of whichever list is being built.
-PRIVATE STATIC void UIMenu::PlaceRow(float height, float* outX, float* outY, float* outWidth) {
+void UIMenu::PlaceRow(float height, float* outX, float* outY, float* outWidth) {
     if (InSubmenu) {
         *outX = SubmenuX;
         *outY = SubmenuCursorY;
@@ -220,7 +212,7 @@ PRIVATE STATIC void UIMenu::PlaceRow(float height, float* outX, float* outY, flo
 
 // Shared drawing and hit testing for every kind of entry. `mark` is the glyph
 // shown in the column on the left, for ticks and radio dots.
-PRIVATE STATIC bool UIMenu::DrawRow(const char* label, const char* shortcut, const char* mark, bool enabled, bool submenuArrow) {
+bool UIMenu::DrawRow(const char* label, const char* shortcut, const char* mark, bool enabled, bool submenuArrow) {
     if (!InMenu)
         return false;
 
@@ -277,19 +269,19 @@ PRIVATE STATIC bool UIMenu::DrawRow(const char* label, const char* shortcut, con
     return clicked;
 }
 
-PUBLIC STATIC bool UIMenu::Item(const char* label, const char* shortcut, bool enabled) {
+bool UIMenu::Item(const char* label, const char* shortcut, bool enabled) {
     return UIMenu::DrawRow(label, shortcut, NULL, enabled, false);
 }
 
-PUBLIC STATIC bool UIMenu::CheckItem(const char* label, const char* shortcut, bool checked, bool enabled) {
+bool UIMenu::CheckItem(const char* label, const char* shortcut, bool checked, bool enabled) {
     return UIMenu::DrawRow(label, shortcut, checked ? "x" : " ", enabled, false);
 }
 
-PUBLIC STATIC bool UIMenu::RadioItem(const char* label, bool selected, bool enabled) {
+bool UIMenu::RadioItem(const char* label, bool selected, bool enabled) {
     return UIMenu::DrawRow(label, NULL, selected ? "*" : " ", enabled, false);
 }
 
-PUBLIC STATIC void UIMenu::Separator() {
+void UIMenu::Separator() {
     if (!InMenu)
         return;
 
@@ -303,7 +295,7 @@ PUBLIC STATIC void UIMenu::Separator() {
 
 // A row that opens a second list beside it. Returns true while that list's
 // contents should be declared.
-PUBLIC STATIC bool UIMenu::BeginSubmenu(const char* label) {
+bool UIMenu::BeginSubmenu(const char* label) {
     if (!InMenu || InSubmenu)
         return false;
 
@@ -363,7 +355,7 @@ PUBLIC STATIC bool UIMenu::BeginSubmenu(const char* label) {
     return true;
 }
 
-PUBLIC STATIC void UIMenu::EndSubmenu() {
+void UIMenu::EndSubmenu() {
     if (!InSubmenu)
         return;
 

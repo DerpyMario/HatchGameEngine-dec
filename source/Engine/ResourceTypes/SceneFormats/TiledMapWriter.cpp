@@ -1,20 +1,12 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Scene/SceneLayer.h>
-
-need_t SceneLayer;
-
-class TiledMapWriter {
-};
-#endif
-
 #include <Engine/ResourceTypes/SceneFormats/TiledMapWriter.h>
 
 #include <Engine/Diagnostics/Log.h>
+#include <Engine/Diagnostics/Memory.h>
 #include <Engine/Filesystem/File.h>
 #include <Engine/Scene.h>
 #include <Engine/Scene/SceneEnums.h>
 #include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Types/Tileset.h>
 
 // Writes tile layers back into a Tiled map.
@@ -31,7 +23,7 @@ class TiledMapWriter {
 // a file people care about.
 
 // Finds the offset of the n-th occurrence of an element's opening tag.
-PRIVATE STATIC size_t TiledMapWriter::FindElement(const string& text, const char* element, size_t from) {
+size_t TiledMapWriter::FindElement(const string& text, const char* element, size_t from) {
     std::string openTag = std::string("<") + element;
 
     while (true) {
@@ -51,7 +43,7 @@ PRIVATE STATIC size_t TiledMapWriter::FindElement(const string& text, const char
 
 // Turns one of the engine's live layers into the comma separated list of tile
 // IDs that Tiled stores, one row per line.
-PRIVATE STATIC string TiledMapWriter::MakeTileCSV(SceneLayer& layer) {
+string TiledMapWriter::MakeTileCSV(TileLayer& layer) {
     std::string csv = "\n";
     char number[24];
 
@@ -84,7 +76,7 @@ PRIVATE STATIC string TiledMapWriter::MakeTileCSV(SceneLayer& layer) {
 
 // Replaces the contents of one <data> element, and makes sure its attributes
 // say the data is now plain CSV.
-PRIVATE STATIC bool TiledMapWriter::ReplaceLayerData(string& text, size_t layerAt, SceneLayer& layer) {
+bool TiledMapWriter::ReplaceLayerData(string& text, size_t layerAt, TileLayer& layer) {
     size_t dataAt = TiledMapWriter::FindElement(text, "data", layerAt);
     if (dataAt == std::string::npos)
         return false;
@@ -108,7 +100,7 @@ PRIVATE STATIC bool TiledMapWriter::ReplaceLayerData(string& text, size_t layerA
 
 // Rewrites originalPath's tile data from the live scene and saves it to
 // outPath. The two may be the same file.
-PUBLIC STATIC bool TiledMapWriter::Write(const char* originalPath, const char* outPath) {
+bool TiledMapWriter::Write(const char* originalPath, const char* outPath) {
     char* original = NULL;
     size_t originalSize = File::ReadAllBytes(originalPath, &original);
     if (!originalSize || !original) {
@@ -117,7 +109,7 @@ PUBLIC STATIC bool TiledMapWriter::Write(const char* originalPath, const char* o
     }
 
     std::string text(original, originalSize);
-    free(original);
+    Memory::Free(original);
 
     if (text.find("<map") == std::string::npos) {
         Log::Print(Log::LOG_ERROR, "\"%s\" is not a Tiled map.", originalPath);
@@ -128,6 +120,11 @@ PUBLIC STATIC bool TiledMapWriter::Write(const char* originalPath, const char* o
     size_t searchFrom = 0;
 
     for (size_t i = 0; i < Scene::Layers.size(); i++) {
+        // Image layers are <imagelayer> elements of their own, with no tiles to
+        // write, so only tile layers line up with the <layer> elements.
+        if (!Scene::Layers[i] || Scene::Layers[i]->Type != SceneLayer::TYPE_TILE)
+            continue;
+
         size_t layerAt = TiledMapWriter::FindElement(text, "layer", searchFrom);
         if (layerAt == std::string::npos) {
             Log::Print(Log::LOG_WARN,
@@ -136,7 +133,7 @@ PUBLIC STATIC bool TiledMapWriter::Write(const char* originalPath, const char* o
             break;
         }
 
-        if (!TiledMapWriter::ReplaceLayerData(text, layerAt, Scene::Layers[i])) {
+        if (!TiledMapWriter::ReplaceLayerData(text, layerAt, *(TileLayer*)Scene::Layers[i])) {
             Log::Print(Log::LOG_ERROR, "Layer %d in \"%s\" has no tile data to replace.",
                 (int)i, originalPath);
             return false;
@@ -165,7 +162,7 @@ PUBLIC STATIC bool TiledMapWriter::Write(const char* originalPath, const char* o
 // Tiled keeps a tileset's image as a path relative to the map that uses it, and
 // both paths here are relative to the resources folder, so this walks back out
 // of the new scene's folder and down into wherever the image is.
-PRIVATE STATIC string TiledMapWriter::MakeRelativePath(const char* fromFolder, const char* toPath) {
+string TiledMapWriter::MakeRelativePath(const char* fromFolder, const char* toPath) {
     std::string from = fromFolder ? fromFolder : "";
     std::string to = toPath ? toPath : "";
 
@@ -202,7 +199,7 @@ PRIVATE STATIC string TiledMapWriter::MakeRelativePath(const char* fromFolder, c
 // to know an image's tile size and how many tiles are in it without going and
 // reading the image. With no scene loaded the map is written without any, and
 // the layers are still there to be painted once a tileset is added.
-PUBLIC STATIC bool TiledMapWriter::WriteNew(const char* outPath, const char* sceneFolder, int width, int height, int tileWidth, int tileHeight, int layerCount, bool withTilesets) {
+bool TiledMapWriter::WriteNew(const char* outPath, const char* sceneFolder, int width, int height, int tileWidth, int tileHeight, int layerCount, bool withTilesets) {
     if (width < 1 || height < 1 || tileWidth < 1 || tileHeight < 1 || layerCount < 1) {
         Log::Print(Log::LOG_ERROR, "A scene needs a size, a tile size and at least one layer.");
         return false;

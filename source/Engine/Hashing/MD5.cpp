@@ -1,31 +1,18 @@
-#if INTERFACE
-
-#include <Engine/Includes/Standard.h>
-
-class MD5 {
-public:
-
-};
-#endif
-
 #include <Engine/Hashing/MD5.h>
 
-#define F(x, y, z)			((z) ^ ((x) & ((y) ^ (z))))
-#define G(x, y, z)			((y) ^ ((z) & ((x) ^ (y))))
-#define H(x, y, z)			(((x) ^ (y)) ^ (z))
-#define H2(x, y, z)			((x) ^ ((y) ^ (z)))
-#define I(x, y, z)			((y) ^ ((x) | ~(z)))
+#define F(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
+#define G(x, y, z) ((y) ^ ((z) & ((x) ^ (y))))
+#define H(x, y, z) (((x) ^ (y)) ^ (z))
+#define H2(x, y, z) ((x) ^ ((y) ^ (z)))
+#define I(x, y, z) ((y) ^ ((x) | ~(z)))
 
 #define STEP(f, a, b, c, d, x, t, s) \
 	(a) += f((b), (c), (d)) + (x) + (t); \
 	(a) = (((a) << (s)) | (((a) & 0xffffffff) >> (32 - (s)))); \
 	(a) += (b);
 
-// Fails if not little-endian
-#define SET(n) \
-	(*(Uint32*)&ptr[(n) * 4])
-#define GET(n) \
-	SET(n)
+#define SET(n) TO_LE32(*(Uint32*)&ptr[(n) * 4])
+#define GET(n) SET(n)
 
 #define OUT(dst, src) \
 	(dst)[0] = (Uint8)(src); \
@@ -33,12 +20,12 @@ public:
 	(dst)[2] = (Uint8)((src) >> 16); \
 	(dst)[3] = (Uint8)((src) >> 24);
 
-PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, void *data, unsigned long size) {
+void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, void* data, unsigned long size) {
 	Uint32 saved_a, saved_b, saved_c, saved_d;
 
 	Uint8* ptr = (Uint8*)data;
 
-    Uint32 a, b, c, d;
+	Uint32 a, b, c, d;
 
 	a = *pa;
 	b = *pb;
@@ -51,7 +38,7 @@ PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, v
 		saved_c = c;
 		saved_d = d;
 
-        /* Round 1 */
+		/* Round 1 */
 		STEP(F, a, b, c, d, SET(0), 0xd76aa478, 7)
 		STEP(F, d, a, b, c, SET(1), 0xe8c7b756, 12)
 		STEP(F, c, d, a, b, SET(2), 0x242070db, 17)
@@ -69,7 +56,7 @@ PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, v
 		STEP(F, c, d, a, b, SET(14), 0xa679438e, 17)
 		STEP(F, b, c, d, a, SET(15), 0x49b40821, 22)
 
-        /* Round 2 */
+		/* Round 2 */
 		STEP(G, a, b, c, d, GET(1), 0xf61e2562, 5)
 		STEP(G, d, a, b, c, GET(6), 0xc040b340, 9)
 		STEP(G, c, d, a, b, GET(11), 0x265e5a51, 14)
@@ -87,7 +74,7 @@ PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, v
 		STEP(G, c, d, a, b, GET(7), 0x676f02d9, 14)
 		STEP(G, b, c, d, a, GET(12), 0x8d2a4c8a, 20)
 
-        /* Round 3 */
+		/* Round 3 */
 		STEP(H, a, b, c, d, GET(5), 0xfffa3942, 4)
 		STEP(H2, d, a, b, c, GET(8), 0x8771f681, 11)
 		STEP(H, c, d, a, b, GET(11), 0x6d9d6122, 16)
@@ -105,7 +92,7 @@ PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, v
 		STEP(H, c, d, a, b, GET(15), 0x1fa27cf8, 16)
 		STEP(H2, b, c, d, a, GET(2), 0xc4ac5665, 23)
 
-        /* Round 4 */
+		/* Round 4 */
 		STEP(I, a, b, c, d, GET(0), 0xf4292244, 6)
 		STEP(I, d, a, b, c, GET(7), 0x432aff97, 10)
 		STEP(I, c, d, a, b, GET(14), 0xab9423a7, 15)
@@ -129,8 +116,7 @@ PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, v
 		d += saved_d;
 
 		ptr += 64;
-	}
-    while (size -= 64);
+	} while (size -= 64);
 
 	*pa = a;
 	*pb = b;
@@ -140,24 +126,25 @@ PRIVATE STATIC void* MD5::Body(Uint32* pa, Uint32* pb, Uint32* pc, Uint32* pd, v
 	return ptr;
 }
 
-PUBLIC STATIC Uint8* MD5::EncryptString(Uint8* dest, char* message) {
-    return MD5::EncryptData(dest, message, strlen(message));
+Uint8* MD5::EncryptString(Uint8* dest, char* message) {
+	return MD5::EncryptData(dest, message, strlen(message));
 }
-PUBLIC STATIC Uint8* MD5::EncryptString(Uint8* dest, const char* message) {
-    return MD5::EncryptString(dest, (char*)message);
+Uint8* MD5::EncryptString(Uint8* dest, const char* message) {
+	return MD5::EncryptString(dest, (char*)message);
 }
 
-PUBLIC STATIC Uint8* MD5::EncryptData(Uint8* dest, void* data, size_t size) {
-    // Init
-    Uint8  buffer[64];
-    size_t lo = 0, hi = 0;
+Uint8* MD5::EncryptData(Uint8* dest, void* data, size_t size) {
+	// Init
+	Uint8 buffer[64];
+	size_t lo = 0, hi = 0;
 	Uint32 a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
 
-    // Update
+	// Update
 	size_t used, available;
 	size_t saved_lo = lo;
-	if ((lo = (saved_lo + size) & 0x1fffffff) < saved_lo)
+	if ((lo = (saved_lo + size) & 0x1fffffff) < saved_lo) {
 		hi++;
+	}
 	hi += size >> 29;
 
 	used = saved_lo & 0x3f;
@@ -183,7 +170,7 @@ PUBLIC STATIC Uint8* MD5::EncryptData(Uint8* dest, void* data, size_t size) {
 
 	memcpy(buffer, data, size);
 
-    // Final
+	// Final
 	used = lo & 0x3f;
 
 	buffer[used++] = 0x80;
@@ -209,5 +196,5 @@ PUBLIC STATIC Uint8* MD5::EncryptData(Uint8* dest, void* data, size_t size) {
 	OUT(&dest[4], b)
 	OUT(&dest[8], c)
 	OUT(&dest[12], d)
-    return dest;
+	return dest;
 }

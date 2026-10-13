@@ -36,13 +36,6 @@ jobs:
             libdrm-dev libgbm-dev \
             libasound2-dev libpulse-dev libudev-dev libdbus-1-dev libibus-1.0-dev
 
-      # The makeheaders that comes with the repository is an x86-64 binary, so
-      # it is built from source instead of run as it is. tools/makeheaders2-src
-      # is the copy that binary was built from, and gives back byte-identical
-      # headers; the older tools/makeheaders-src only fills in headers that are
-      # already there, and leaves a fresh checkout with broken ones.
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build SDL2 as a static library
         env:
@@ -81,7 +74,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "$(nproc)"
 
       - name: Package
         run: |
@@ -105,13 +98,14 @@ jobs:
 
   macos:
     name: macOS (universal)
-    runs-on: macos-14
+    # GitHub's Xcode 27 image, which is named after its Xcode rather than its
+    # macOS. It only comes on Apple silicon; the Intel half of the universal
+    # binary is cross-compiled by Xcode alongside the arm64 one.
+    runs-on: xcode-27
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       # Both architectures in the one library, so the one application covers
       # Apple silicon and Intel Macs alike.
@@ -142,7 +136,7 @@ jobs:
             -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Assemble the application bundle
         run: |
@@ -172,9 +166,9 @@ jobs:
               <key>CFBundleInfoDictionaryVersion</key>
               <string>6.0</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.2.2</string>
+              <string>1.4.0</string>
               <key>CFBundleVersion</key>
-              <string>1.2.2</string>
+              <string>1.4.0</string>
               <key>LSMinimumSystemVersion</key>
               <string>11.0</string>
               <key>NSHighResolutionCapable</key>
@@ -284,6 +278,32 @@ jobs:
           path: dist/HatchGameEngine.exe
           if-no-files-found: error
 
+  switch:
+    name: Nintendo Switch
+    runs-on: ubuntu-22.04
+    container: devkitpro/devkita64:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # github.workspace does not work in a container job, so GITHUB_WORKSPACE
+      # is used instead.
+      - name: Configure
+        run: >
+          cmake -B "${GITHUB_WORKSPACE}/build"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/Switch.cmake
+          -S "${GITHUB_WORKSPACE}"
+
+      - name: Build
+        run: cmake --build "${GITHUB_WORKSPACE}/build" --config Release --parallel 4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-switch
+          path: build/*.nro
+          if-no-files-found: error
+
   xbox:
     # 24.04 rather than the 22.04 the other Linux jobs use: nxdk tests itself
     # against the clang of the current Ubuntu, and 22.04's clang 14 is behind
@@ -302,8 +322,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake clang lld llvm pkgconf bison flex
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Check out nxdk
         run: |
@@ -338,7 +356,7 @@ jobs:
         run: |
           export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk"
           export PATH="${NXDK_DIR}/bin:${PATH}"
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Package
         run: |
@@ -372,8 +390,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential cmake
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       # Pinned rather than tracking latest, the same way SDL2 and GLEW are
       # above: a toolchain that changes underneath the build is a build that
@@ -396,7 +412,7 @@ jobs:
       - name: Build
         run: |
           . "${GITHUB_WORKSPACE}/emsdk/emsdk_env.sh"
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Package
         run: |
@@ -451,13 +467,11 @@ jobs:
             gcc-m68k-linux-gnu binutils-m68k-linux-gnu \
             xvfb libglew-dev libgl1-mesa-dev libsdl2-dev
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Check out SGDK
         run: git clone --depth 1 https://github.com/Stephane-D/SGDK.git "${GITHUB_WORKSPACE}/sgdk"
@@ -472,7 +486,7 @@ jobs:
           for tool in sjasm bintos; do
             cmake -S "${sgdk}/tools/${tool}" -B "build-${tool}" \
               -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-            cmake --build "build-${tool}" --parallel
+            cmake --build "build-${tool}" --parallel "$(nproc)"
             find "build-${tool}" -maxdepth 2 -type f -executable -name "${tool}*" \
               -exec cp {} "${GITHUB_WORKSPACE}/mdbin/" \;
           done
@@ -580,13 +594,11 @@ jobs:
           command -v mkisofs >/dev/null || \
             sudo ln -s "$(command -v genisoimage)" /usr/local/bin/mkisofs
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Check out Megadev
         run: git clone --depth 1 https://github.com/drojaazu/megadev.git "${GITHUB_WORKSPACE}/megadev"
@@ -735,13 +747,11 @@ jobs:
             exit 1
           fi
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       - name: Export the sample scene
         run: |
@@ -803,27 +813,31 @@ jobs:
             build-essential cmake xvfb sdcc sdcc-libraries \
             libglew-dev libgl1-mesa-dev libsdl2-dev
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       # devkitSMS ships its library, its startup code and its ihx2sms converter
       # prebuilt, and those binaries do not necessarily match the SDCC in front
       # of them. They are built from the sources beside them instead. This is
       # not belt and braces: with the shipped ihx2sms the cartridge came out
       # with tile data where its reset vector belongs and ran as a black screen.
+      # Pinned, the way KallistiOS is for the Dreamcast: devkitSMS rearranges
+      # itself from time to time -- ihx2sms moved under tools/legacy -- and a
+      # job that follows its head breaks when it does.
       - name: Check out and build devkitSMS
+        env:
+          DEVKITSMS_COMMIT: 533ae572c897cf44f1da865013ebf690134301a3
         run: |
-          git clone --depth 1 https://github.com/sverx/devkitSMS.git "${GITHUB_WORKSPACE}/devkitSMS"
+          git clone https://github.com/sverx/devkitSMS.git "${GITHUB_WORKSPACE}/devkitSMS"
           dk="${GITHUB_WORKSPACE}/devkitSMS"
+          git -C "${dk}" checkout --quiet "${DEVKITSMS_COMMIT}"
 
           make -C "${dk}/crt0/src"
           make -C "${dk}/SMSlib/src"
-          cc -O2 -o "${GITHUB_WORKSPACE}/ihx2sms" "${dk}/ihx2sms/src/ihx2sms.c"
+          cc -O2 -o "${GITHUB_WORKSPACE}/ihx2sms" "${dk}/tools/legacy/ihx2sms/src/ihx2sms.c"
 
       - name: Export the sample scene
         run: |
@@ -937,13 +951,11 @@ jobs:
           make -j"$(nproc)" all-gcc all-target-libgcc MAKEINFO=true
           make install-gcc install-target-libgcc MAKEINFO=true
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       # ---- the tile scene, through VDP2 ----
 
@@ -1085,7 +1097,7 @@ jobs:
         if: steps.sh4cache.outputs.cache-hit != 'true'
         run: |
           cd /opt/toolchains/dc/kos/utils/kos-chain
-          cp Makefile.dreamcast.cfg.sample Makefile.cfg
+          cp Makefile.dreamcast.cfg Makefile.cfg
 
           # legacy is GCC 13, which is what this was developed against.
           sed -i 's/^toolchain_profile=.*/toolchain_profile=legacy/' Makefile.cfg
@@ -1105,13 +1117,11 @@ jobs:
             exit 1
           fi
 
-      - name: Build makeheaders
-        run: c++ -O2 -std=c++17 -o tools/makeheaders tools/makeheaders2-src/makeheaders.cpp
 
       - name: Build the engine
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
-          cmake --build build --parallel
+          cmake --build build --parallel "$(nproc)"
 
       # ---- the tile scene, as PowerVR textures ----
 

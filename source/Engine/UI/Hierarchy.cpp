@@ -1,12 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-class Hierarchy {
-public:
-
-};
-#endif
-
 #include <Engine/UI/Hierarchy.h>
 
 #include <Engine/Scene.h>
@@ -28,7 +19,7 @@ public:
 
 static char Filter[64] = "";
 
-PRIVATE STATIC bool Hierarchy::Matches(const char* name) {
+bool Hierarchy::Matches(const char* name) {
     if (!Filter[0])
         return true;
 
@@ -59,7 +50,7 @@ PRIVATE STATIC bool Hierarchy::Matches(const char* name) {
     return false;
 }
 
-PUBLIC STATIC void Hierarchy::Draw() {
+void Hierarchy::Draw() {
     if (!Scene::CurrentScene[0]) {
         UICore::Text("No scene is loaded.", UI_COL_TEXT_FAINT);
         UICore::Text("Open one from the Scenes tab.", UI_COL_TEXT_FAINT);
@@ -78,8 +69,8 @@ PUBLIC STATIC void Hierarchy::Draw() {
     int layersShown = 0;
 
     for (size_t i = 0; i < Scene::Layers.size(); i++) {
-        SceneLayer& layer = Scene::Layers[i];
-        const char* name = layer.Name[0] ? layer.Name : "Unnamed";
+        SceneLayer& layer = *Scene::Layers[i];
+        const char* name = layer.Name && layer.Name[0] ? layer.Name : "Unnamed";
 
         if (!Hierarchy::Matches(name))
             continue;

@@ -1,216 +1,537 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/Token.h>
-
-class StringUtils {
-public:
-};
-#endif
-
+#include <Engine/Diagnostics/Memory.h>
+#include <Engine/Filesystem/Path.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // ToNumber reads errno to tell a number that was too big from one that was not.
 #include <errno.h>
-#include <Engine/Diagnostics/Memory.h>
 
-PUBLIC STATIC char* StringUtils::Create(void* src, size_t length) {
-    char* string = (char*)Memory::Malloc(length + 1);
-    memcpy(string, src, length);
-    string[length] = '\0';
-    return string;
+char* StringUtils::Create(void* src, size_t length) {
+	char* string = (char*)Memory::Malloc(length + 1);
+	memcpy(string, src, length);
+	string[length] = '\0';
+	return string;
 }
-PUBLIC STATIC char* StringUtils::Create(string src) {
-    return StringUtils::Duplicate(src.c_str());
+char* StringUtils::Create(std::string src) {
+	return StringUtils::Duplicate(src.c_str());
 }
-PUBLIC STATIC char* StringUtils::Create(Token token) {
-    char* string = (char*)Memory::Malloc(token.Length + 1);
-    memcpy(string, token.Start, token.Length);
-    string[token.Length] = '\0';
-    return string;
+char* StringUtils::Create(Token token) {
+	char* string = (char*)Memory::Malloc(token.Length + 1);
+	memcpy(string, token.Start, token.Length);
+	string[token.Length] = '\0';
+	return string;
 }
-PUBLIC STATIC char* StringUtils::Duplicate(const char* src) {
-    size_t length = strlen(src) + 1;
-    char* string = (char*)Memory::Malloc(length);
-    memcpy(string, src, length);
-    return string;
+char* StringUtils::Duplicate(const char* src) {
+	size_t length = strlen(src) + 1;
+	char* string = (char*)Memory::Malloc(length);
+	memcpy(string, src, length);
+	return string;
 }
-PUBLIC STATIC char* StringUtils::Duplicate(const char* src, size_t length) {
-    size_t srcLength = strlen(src);
-    if (length > srcLength)
-        length = srcLength;
-    char* string = (char*)Memory::Malloc(length + 1);
-    memcpy(string, src, length);
-    string[length] = '\0';
-    return string;
+char* StringUtils::Duplicate(const char* src, size_t length) {
+	size_t srcLength = strlen(src);
+	if (length > srcLength) {
+		length = srcLength;
+	}
+	char* string = (char*)Memory::Malloc(length + 1);
+	memcpy(string, src, length);
+	string[length] = '\0';
+	return string;
 }
-PUBLIC STATIC char* StringUtils::Resize(char* src, size_t length) {
-    size_t originalSize = strlen(src);
-    char* string = (char *)Memory::Realloc(src, length + 1);
-    if (length > originalSize)
-        memset(&string[originalSize], 0x00, (length - originalSize) + 1);
-    else
-        string[length] = '\0';
-    return string;
+char* StringUtils::Resize(char* src, size_t length) {
+	size_t originalSize = strlen(src);
+	char* string = (char*)Memory::Realloc(src, length + 1);
+	if (length > originalSize) {
+		memset(&string[originalSize], 0x00, (length - originalSize) + 1);
+	}
+	else {
+		string[length] = '\0';
+	}
+	return string;
 }
-PUBLIC STATIC bool StringUtils::WildcardMatch(const char* first, const char* second) {
-    if (*first == 0 && *second == 0)
-        return true;
-    if (*first == 0 && *second == '*' && *(second + 1) != 0)
-        return false;
-    if (*first == *second || *second == '?')
-        return StringUtils::WildcardMatch(first + 1, second + 1);
-    if (*second == '*')
-        return StringUtils::WildcardMatch(first, second + 1) || StringUtils::WildcardMatch(first + 1, second);
-    return false;
+bool StringUtils::WildcardMatch(const char* first, const char* second) {
+	if (*first == 0 && *second == 0) {
+		return true;
+	}
+	if (*first == 0 && *second == '*' && *(second + 1) != 0) {
+		return false;
+	}
+	if (*first == *second || *second == '?') {
+		return StringUtils::WildcardMatch(first + 1, second + 1);
+	}
+	if (*second == '*') {
+		return StringUtils::WildcardMatch(first, second + 1) ||
+			StringUtils::WildcardMatch(first + 1, second);
+	}
+	return false;
 }
-PUBLIC STATIC bool StringUtils::StartsWith(const char* string, const char* compare) {
-    size_t cmpLen = strlen(compare);
-    if (strlen(string) < cmpLen)
-        return false;
+bool StringUtils::StartsWith(const char* string, const char* compare) {
+	size_t cmpLen = strlen(compare);
+	if (strlen(string) < cmpLen) {
+		return false;
+	}
 
-    return memcmp(string, compare, cmpLen) == 0;
+	return memcmp(string, compare, cmpLen) == 0;
 }
-PUBLIC STATIC char* StringUtils::StrCaseStr(const char* haystack, const char* needle) {
-    if (!needle[0]) return (char*)haystack;
+bool StringUtils::StartsWith(std::string string, std::string compare) {
+	size_t cmpLen = compare.size();
+	if (string.size() < cmpLen) {
+		return false;
+	}
 
-    /* Loop over all possible start positions. */
-    for (size_t i = 0; haystack[i]; i++) {
-        bool matches = true;
-        /* See if the string matches here. */
-        for (size_t j = 0; needle[j]; j++) {
-            /* If we're out of room in the haystack, give up. */
-            if (!haystack[i + j]) return NULL;
-
-            /* If there's a character mismatch, the needle doesn't fit here. */
-            if (tolower((unsigned char)needle[j]) !=
-                tolower((unsigned char)haystack[i + j])) {
-                matches = false;
-                break;
-            }
-        }
-        if (matches) return (char *)(haystack + i);
-    }
-    return NULL;
+	return memcmp(string.c_str(), compare.c_str(), cmpLen) == 0;
 }
-PUBLIC STATIC size_t StringUtils::Copy(char* dst, const char* src, size_t sz) {
-    char* d = dst;
-    const char* s = src;
-    size_t n = sz;
+bool StringUtils::StartsWithCaseInsensitive(const char* string, const char* compare) {
+	size_t cmpLen = strlen(compare);
+	if (strlen(string) < cmpLen) {
+		return false;
+	}
 
-    // Copy as many bytes as will fit
-    if (n != 0) {
-        while (--n != 0) {
-            if ((*d++ = *s++) == '\0')
-            break;
-        }
-    }
+	for (size_t i = 0; i < cmpLen; i++) {
+		if (tolower(string[i]) != tolower(compare[i])) {
+			return false;
+		}
+	}
 
-    // Not enough room in dst, add NUL and traverse rest of src
-    if (n == 0) {
-        if (sz != 0)
-            *d = '\0'; // NUL-terminate dst
-        while (*s++)
-            ;
-    }
-
-    return s - src - 1; // count does not include NUL
+	return true;
 }
-PUBLIC STATIC size_t StringUtils::Concat(char* dst, const char* src, size_t sz) {
-    char *d = dst;
-    const char *s = src;
-    size_t n = sz;
-    size_t dlen;
+bool StringUtils::StartsWithCaseInsensitive(std::string string, std::string compare) {
+	size_t cmpLen = compare.size();
+	if (string.size() < cmpLen) {
+		return false;
+	}
 
-    // Find the end of dst and adjust bytes left but don't go past end
-    while (n-- != 0 && *d != '\0')
-        d++;
-    dlen = d - dst;
-    n = sz - dlen;
+	const char* a = string.c_str();
+	const char* b = compare.c_str();
 
-    if (n == 0)
-        return dlen + strlen(s);
-    while (*s != '\0') {
-        if (n != 1) {
-            *d++ = *s;
-            n--;
-        }
-        s++;
-    }
-    *d = '\0';
+	for (size_t i = 0; i < cmpLen; i++) {
+		if (tolower(a[i]) != tolower(b[i])) {
+			return false;
+		}
+	}
 
-    return dlen + (s - src); // count does not include NUL
+	return true;
 }
-PUBLIC STATIC bool StringUtils::ToNumber(int* dst, const char* src) {
-    char* end;
-    long num = strtol(src, &end, 10);
+char* StringUtils::StrCaseStr(const char* haystack, const char* needle) {
+	if (!needle[0]) {
+		return (char*)haystack;
+	}
 
-    if (*end != '\0')
-        return false;
-    else if (num > INT_MAX || (errno == ERANGE && num == LONG_MAX))
-        return false;
-    else if (num < INT_MIN || (errno == ERANGE && num == LONG_MIN))
-        return false;
+	/* Loop over all possible start positions. */
+	for (size_t i = 0; haystack[i]; i++) {
+		bool matches = true;
+		/* See if the string matches here. */
+		for (size_t j = 0; needle[j]; j++) {
+			/* If we're out of room in the haystack, give
+			 * up. */
+			if (!haystack[i + j]) {
+				return NULL;
+			}
 
-    (*dst) = num;
-    return true;
+			/* If there's a character mismatch, the needle
+			 * doesn't fit here. */
+			if (tolower((unsigned char)needle[j]) !=
+				tolower((unsigned char)haystack[i + j])) {
+				matches = false;
+				break;
+			}
+		}
+		if (matches) {
+			return (char*)(haystack + i);
+		}
+	}
+	return NULL;
 }
-PUBLIC STATIC bool StringUtils::ToDecimal(double* dst, const char* src) {
-    char* end;
-    double num = strtod(src, &end);
+size_t StringUtils::Copy(char* dst, const char* src, size_t sz) {
+	char* d = dst;
+	const char* s = src;
+	size_t n = sz;
 
-    if (*end != '\0')
-        return false;
-    if (errno == ERANGE && (num == HUGE_VAL || num == -HUGE_VAL))
-        return false;
+	// Copy as many bytes as will fit
+	if (n != 0) {
+		while (--n != 0) {
+			if ((*d++ = *s++) == '\0') {
+				break;
+			}
+		}
+	}
 
-    (*dst) = num;
-    return true;
+	// Not enough room in dst, add NUL and traverse rest of src
+	if (n == 0) {
+		if (sz != 0) {
+			*d = '\0'; // NUL-terminate dst
+		}
+		while (*s++)
+			;
+	}
+
+	return s - src - 1; // count does not include NUL
 }
-PUBLIC STATIC char* StringUtils::GetPath(const char* filename) {
-    if (!filename)
-        return nullptr;
-
-    const char* sep = strrchr(filename, '/');
-    if (!sep)
-        sep = strrchr(filename, '\\');
-    if (!sep)
-        return nullptr;
-
-    size_t len = sep - filename;
-    char* path = (char*)Memory::Malloc(len + 1);
-    if (!path)
-        return nullptr;
-
-    memcpy(path, filename, len);
-    path[len] = '\0';
-
-    return path;
+size_t StringUtils::Copy(char* dst, std::string src, size_t sz) {
+	return Copy(dst, src.c_str(), sz);
 }
-PUBLIC STATIC char* StringUtils::ConcatPaths(const char* pathA, const char* pathB) {
-    if (!pathA || !pathB)
-        return nullptr;
+size_t StringUtils::Concat(char* dst, const char* src, size_t sz) {
+	char* d = dst;
+	const char* s = src;
+	size_t n = sz;
+	size_t dlen;
 
-    size_t lenA = strlen(pathA);
-    size_t lenB = strlen(pathB) + 1;
-    size_t totalLen = lenA + lenB;
+	// Find the end of dst and adjust bytes left but don't go past
+	// end
+	while (n-- != 0 && *d != '\0') {
+		d++;
+	}
+	dlen = d - dst;
+	n = sz - dlen;
 
-    bool hasSep = pathA[lenA - 1] == '/' || pathA[lenA - 1] == '\\';
-    if (!hasSep)
-        totalLen++;
+	if (n == 0) {
+		return dlen + strlen(s);
+	}
+	while (*s != '\0') {
+		if (n != 1) {
+			*d++ = *s;
+			n--;
+		}
+		s++;
+	}
+	*d = '\0';
 
-    char* newPath = (char*)Memory::Malloc(totalLen);
-    char* out = newPath;
-    if (!newPath)
-        return nullptr;
+	return dlen + (s - src); // count does not include NUL
+}
+bool StringUtils::ToNumber(int* dst, const char* src) {
+	char* end;
+	long num = strtol(src, &end, 10);
 
-    memcpy(newPath, pathA, lenA);
-    newPath += lenA;
+	if (*end != '\0') {
+		return false;
+	}
+	else if (num > INT_MAX || (errno == ERANGE && num == LONG_MAX)) {
+		return false;
+	}
+	else if (num < INT_MIN || (errno == ERANGE && num == LONG_MIN)) {
+		return false;
+	}
 
-    if (!hasSep) {
-        newPath[0] = '/';
-        newPath++;
-    }
+	(*dst) = num;
+	return true;
+}
+bool StringUtils::ToDecimal(double* dst, const char* src) {
+	char* end;
+	double num = strtod(src, &end);
 
-    memcpy(newPath, pathB, lenB);
-    return out;
+	if (*end != '\0') {
+		return false;
+	}
+	if (errno == ERANGE && (num == HUGE_VAL || num == -HUGE_VAL)) {
+		return false;
+	}
+
+	(*dst) = num;
+	return true;
+}
+bool StringUtils::ToNumber(int* dst, string src) {
+	return ToNumber(dst, src.c_str());
+}
+bool StringUtils::ToDecimal(double* dst, string src) {
+	return ToDecimal(dst, src.c_str());
+}
+bool StringUtils::HexToUint32(Uint32* dst, const char* hexstr) {
+	if (hexstr == nullptr || *hexstr == '\0') {
+		return false;
+	}
+
+	Uint32 result = 0;
+
+	do {
+		char chr = *hexstr;
+		unsigned val;
+
+		if (chr >= '0' && chr <= '9') {
+			val = chr - '0';
+		}
+		else if (chr >= 'A' && chr <= 'F') {
+			val = chr - 'A' + 10;
+		}
+		else if (chr >= 'a' && chr <= 'f') {
+			val = chr - 'a' + 10;
+		}
+		else {
+			return false;
+		}
+
+		result = (result << 4) | (val & 0xF);
+		hexstr++;
+	} while (*hexstr != '\0');
+
+	*dst = result;
+
+	return true;
+}
+char* StringUtils::GetPath(const char* filename) {
+	if (!filename) {
+		return nullptr;
+	}
+
+	const char* sep = strrchr(filename, '/');
+	if (!sep) {
+		sep = strrchr(filename, '\\');
+	}
+	if (!sep) {
+		return nullptr;
+	}
+
+	size_t len = sep - filename;
+	char* path = (char*)Memory::Malloc(len + 1);
+	if (!path) {
+		return nullptr;
+	}
+
+	memcpy(path, filename, len);
+	path[len] = '\0';
+
+	return path;
+}
+bool StringUtils::GetPathInPlace(char* filename) {
+	if (!filename) {
+		return false;
+	}
+
+	char* sep = strrchr(filename, '/');
+	if (!sep) {
+		sep = strrchr(filename, '\\');
+	}
+	if (!sep) {
+		return false;
+	}
+
+	sep[1] = '\0';
+
+	return true;
+}
+const char* StringUtils::GetFilename(const char* filename) {
+	if (!filename) {
+		return nullptr;
+	}
+
+	const char* sep = strrchr(filename, '/');
+	if (!sep) {
+		sep = strrchr(filename, '\\');
+	}
+	if (!sep) {
+		return filename;
+	}
+
+	return sep + 1;
+}
+const char* StringUtils::GetExtension(const char* filename) {
+	if (!filename) {
+		return nullptr;
+	}
+
+	const char* dot = strrchr(filename, '.');
+	if (!dot) {
+		return nullptr;
+	}
+
+	return dot + 1;
+}
+char* StringUtils::ReplacePathSeparators(const char* path) {
+	if (!path) {
+		return nullptr;
+	}
+
+	char* newPath = (char*)Memory::Malloc(strlen(path) + 1);
+	if (!newPath) {
+		return nullptr;
+	}
+
+	char* out = newPath;
+	while (*path) {
+		char c = *path;
+		if (c == '\\') {
+			*out = '/';
+		}
+		else {
+			*out = c;
+		}
+		out++;
+		path++;
+	}
+	*out = '\0';
+
+	return newPath;
+}
+char* StringUtils::NormalizePath(const char* path) {
+	if (path == nullptr) {
+		return nullptr;
+	}
+
+	std::string normalized = Path::Normalize(path);
+
+	char* normalizedPath = StringUtils::Create(normalized);
+	if (normalizedPath != nullptr) {
+		StringUtils::ReplacePathSeparatorsInPlace(normalizedPath);
+	}
+
+	return normalizedPath;
+}
+void StringUtils::NormalizePath(const char* path, char* dest, size_t destSize) {
+	if (path == nullptr || dest == nullptr) {
+		return;
+	}
+
+	std::string normalized = Path::Normalize(path);
+
+	snprintf(dest, destSize, "%s", normalized.c_str());
+}
+void StringUtils::ReplacePathSeparatorsInPlace(char* path) {
+	if (!path) {
+		return;
+	}
+
+	while (*path) {
+		if (*path == '\\') {
+			*path = '/';
+		}
+		path++;
+	}
+}
+
+int StringUtils::DecodeUTF8Char(const char* chr, int& numBytes) {
+	numBytes = 1;
+
+	if (!chr) {
+		return 0;
+	}
+
+	unsigned char c = *chr;
+	if (c <= 0x7F) {
+		return c;
+	}
+
+	if ((c & 0xE0) == 0xC0) {
+		numBytes = 2;
+
+		if ((chr[1] & 0xC0) != 0x80) {
+			return -1;
+		}
+
+		int decoded = (chr[0] & 0x1F) << 6;
+		decoded |= chr[1] & 0x3F;
+
+		if (decoded < 0x80) {
+			return -1;
+		}
+
+		return decoded;
+	}
+	else if ((c & 0xF0) == 0xE0) {
+		numBytes = 3;
+
+		if ((chr[1] & 0xC0) != 0x80) {
+			return -1;
+		}
+		else if ((chr[2] & 0xC0) != 0x80) {
+			return -1;
+		}
+
+		int decoded = (chr[0] & 0x0F) << 12;
+		decoded |= (chr[1] & 0x3F) << 6;
+		decoded |= chr[2] & 0x3F;
+
+		if (decoded < 0x800 || (decoded >= 0xD800 && decoded <= 0xDFFF)) {
+			return -1;
+		}
+
+		return decoded;
+	}
+	else if ((c & 0xF8) == 0xF0) {
+		numBytes = 4;
+
+		if ((chr[1] & 0xC0) != 0x80) {
+			return -1;
+		}
+		else if ((chr[2] & 0xC0) != 0x80) {
+			return -1;
+		}
+		else if ((chr[3] & 0xC0) != 0x80) {
+			return -1;
+		}
+
+		int decoded = (chr[0] & 0x07) << 18;
+		decoded |= (chr[1] & 0x3F) << 12;
+		decoded |= (chr[2] & 0x3F) << 6;
+		decoded |= chr[3] & 0x3F;
+
+		if (decoded < 0x10000 || decoded > 0x10FFFF) {
+			return -1;
+		}
+
+		return decoded;
+	}
+
+	return -1;
+}
+
+// Handles UTF-8 text and obtains UCS codepoints
+std::vector<Uint32> StringUtils::GetCodepoints(const char* text) {
+	size_t textLength = strlen(text);
+
+	std::vector<Uint32> codepoints;
+	codepoints.reserve(textLength);
+
+	for (size_t i = 0; i < textLength;) {
+		int numBytes = 1;
+		int decoded = StringUtils::DecodeUTF8Char(&text[i], numBytes);
+
+		codepoints.push_back((Uint32)decoded);
+
+		i += numBytes;
+	}
+
+	return codepoints;
+}
+
+// Converts an UCS codepoint to an UTF-8 string
+// Throws an exception if it encounters an invalid codepoint.
+std::string StringUtils::FromCodepoint(Uint32 codepoint) {
+	std::string result;
+	result.reserve(4);
+
+	if (codepoint <= 0x7F) {
+		result += (char)codepoint;
+	}
+	else if (codepoint <= 0x7FF) {
+		result += (char)(0xC0 | (codepoint >> 6));
+		result += (char)(0x80 | (codepoint & 0x3F));
+	}
+	else if (codepoint <= 0xFFFF) {
+		result += (char)(0xE0 | (codepoint >> 12));
+		result += (char)(0x80 | ((codepoint >> 6) & 0x3F));
+		result += (char)(0x80 | (codepoint & 0x3F));
+	}
+	else if (codepoint <= 0x10FFFF) {
+		result += (char)(0xF0 | (codepoint >> 18));
+		result += (char)(0x80 | ((codepoint >> 12) & 0x3F));
+		result += (char)(0x80 | ((codepoint >> 6) & 0x3F));
+		result += (char)(0x80 | (codepoint & 0x3F));
+	}
+	else {
+		throw std::runtime_error("Invalid UCS codepoint encountered!");
+	}
+
+	return result;
+}
+
+// Returns UTF-8 text from UCS codepoints
+// Throws an exception if it encounters an invalid codepoint.
+std::string StringUtils::FromCodepoints(std::vector<Uint32> codepoints) {
+	size_t numCodepoints = codepoints.size();
+
+	std::string result;
+	result.reserve(numCodepoints * 2);
+
+	for (size_t i = 0; i < numCodepoints; i++) {
+		result += StringUtils::FromCodepoint(codepoints[i]);
+	}
+
+	return result;
 }

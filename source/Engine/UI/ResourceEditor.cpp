@@ -1,23 +1,9 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-class ResourceEditor {
-public:
-    // What a pending confirmation is guarding, so the answer can be acted on.
-    enum PendingAction {
-        PENDING_NONE,
-        PENDING_OPEN_SCENE,
-        PENDING_CLOSE_PROJECT,
-        PENDING_OPEN_PROJECT
-    };
-};
-#endif
-
 #include <Engine/UI/ResourceEditor.h>
 #include <Engine/UI/SceneEditor.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
 #include <Engine/UI/UITheme.h>
+#include <Engine/UI/UIFiles.h>
 
 #include <Engine/Application.h>
 #include <Engine/Diagnostics/Log.h>
@@ -54,7 +40,7 @@ static bool   Confirming = false;
 
 static char   StatusText[256] = "";
 
-PRIVATE STATIC void ResourceEditor::SetStatus(const char* format, ...) {
+void ResourceEditor::SetStatus(const char* format, ...) {
     va_list args;
     va_start(args, format);
     vsnprintf(StatusText, sizeof(StatusText), format, args);
@@ -63,7 +49,7 @@ PRIVATE STATIC void ResourceEditor::SetStatus(const char* format, ...) {
 
 // ------------------------------------------------------------- scanning ----
 
-PRIVATE STATIC const char* ResourceEditor::DescribeFile(const char* name) {
+const char* ResourceEditor::DescribeFile(const char* name) {
     struct {
         const char* Extension;
         const char* Description;
@@ -93,12 +79,12 @@ PRIVATE STATIC const char* ResourceEditor::DescribeFile(const char* name) {
 
 // Walks one folder of the Resources tree, deepest-first so the listing reads
 // like a tree without needing one.
-PRIVATE STATIC void ResourceEditor::ScanFolder(const char* path, const char* relative, int depth) {
+void ResourceEditor::ScanFolder(const char* path, const char* relative, int depth) {
     // Deep trees would make the list unreadable long before they ran out.
     if (depth > 6)
         return;
 
-    vector<char*> folders = Directory::GetDirectories(path, "*", false);
+    vector<char*> folders = UIFiles::GetDirectories(path, "*", false);
     for (size_t i = 0; i < folders.size(); i++) {
         const char* name = strrchr(folders[i], '/');
         name = name ? name + 1 : folders[i];
@@ -115,7 +101,7 @@ PRIVATE STATIC void ResourceEditor::ScanFolder(const char* path, const char* rel
         free(folders[i]);
     }
 
-    vector<char*> files = Directory::GetFiles(path, "*", false);
+    vector<char*> files = UIFiles::GetFiles(path, "*", false);
     for (size_t i = 0; i < files.size(); i++) {
         const char* name = strrchr(files[i], '/');
         name = name ? name + 1 : files[i];
@@ -136,7 +122,7 @@ PRIVATE STATIC void ResourceEditor::ScanFolder(const char* path, const char* rel
     }
 }
 
-PUBLIC STATIC void ResourceEditor::Rescan() {
+void ResourceEditor::Rescan() {
     Entries.clear();
     SelectedEntry = -1;
     Scanned = true;
@@ -148,20 +134,20 @@ PUBLIC STATIC void ResourceEditor::Rescan() {
     ResourceEditor::ScanFolder("Resources", "", 0);
 }
 
-PUBLIC STATIC void ResourceEditor::Invalidate() {
+void ResourceEditor::Invalidate() {
     Scanned = false;
 }
 
 // ----------------------------------------------------------- guarding -----
 
-PUBLIC STATIC bool ResourceEditor::HasUnsavedChanges() {
+bool ResourceEditor::HasUnsavedChanges() {
     return SceneEditor::UnsavedChanges;
 }
 
 // Asks to run an action that would lose unsaved scene edits. Returns true when
 // it can go ahead now; otherwise a confirmation is put on screen and the caller
 // will be told the answer through ResourceEditor::TakeApprovedAction.
-PUBLIC STATIC bool ResourceEditor::RequestAction(int action, const char* argument) {
+bool ResourceEditor::RequestAction(int action, const char* argument) {
     if (!ResourceEditor::HasUnsavedChanges())
         return true;
 
@@ -172,12 +158,12 @@ PUBLIC STATIC bool ResourceEditor::RequestAction(int action, const char* argumen
     return false;
 }
 
-PUBLIC STATIC bool ResourceEditor::IsConfirming() {
+bool ResourceEditor::IsConfirming() {
     return Confirming;
 }
 
 // Hands back an action the user agreed to lose their changes for, once.
-PUBLIC STATIC int ResourceEditor::TakeApprovedAction(char* outArgument, size_t outSize) {
+int ResourceEditor::TakeApprovedAction(char* outArgument, size_t outSize) {
     if (Pending == ResourceEditor::PENDING_NONE || Confirming)
         return ResourceEditor::PENDING_NONE;
 
@@ -191,7 +177,7 @@ PUBLIC STATIC int ResourceEditor::TakeApprovedAction(char* outArgument, size_t o
 }
 
 // The confirmation itself. Drawn like the file dialog: modal, over everything.
-PUBLIC STATIC void ResourceEditor::DrawConfirmation() {
+void ResourceEditor::DrawConfirmation() {
     if (!Confirming)
         return;
 
@@ -237,7 +223,7 @@ PUBLIC STATIC void ResourceEditor::DrawConfirmation() {
 
 // ------------------------------------------------------------- browser ----
 
-PUBLIC STATIC void ResourceEditor::Draw(float x, float y, float width, float height, bool split) {
+void ResourceEditor::Draw(float x, float y, float width, float height, bool split) {
     if (!Scanned)
         ResourceEditor::Rescan();
 

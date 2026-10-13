@@ -1,88 +1,128 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Includes/StandardSDL2.h>
-#include <Engine/IO/Stream.h>
-class SDLStream : public Stream {
-public:
-    SDL_RWops* f;
-    bool       Persistent = false;
-    enum {
-        READ_ACCESS = 0,
-        WRITE_ACCESS = 1,
-        APPEND_ACCESS = 2,
-    };
-};
-#endif
-
+#include <Engine/Diagnostics/Log.h>
 #include <Engine/IO/SDLStream.h>
 
-#ifdef EMSCRIPTEN
-#include <Engine/Includes/WebStorage.h>
-#endif
+SDL_RWops* SDLStream::OpenFile(const char* filename, Uint32 access) {
+	const char* accessString = nullptr;
 
-PUBLIC STATIC SDLStream* SDLStream::New(const char* filename, Uint32 access) {
-    SDLStream* stream = new SDLStream;
-    if (!stream) {
-        return NULL;
-    }
+	switch (access) {
+	case SDLStream::READ_ACCESS:
+		accessString = "rb";
+		break;
+	case SDLStream::WRITE_ACCESS:
+		accessString = "wb";
+		break;
+	case SDLStream::APPEND_ACCESS:
+		accessString = "ab";
+		break;
+	}
 
-    const char* accessString = NULL;
+	SDL_RWops* rw = SDL_RWFromFile(filename, accessString);
+	if (rw == nullptr) {
+		return nullptr;
+	}
 
-    switch (access) {
-        case SDLStream::READ_ACCESS: accessString = "rb"; break;
-        case SDLStream::WRITE_ACCESS: accessString = "wb"; break;
-        case SDLStream::APPEND_ACCESS: accessString = "ab"; break;
-    }
+	if (access == SDLStream::READ_ACCESS) {
+		Sint64 rwSize = SDL_RWsize(rw);
+		if (rwSize < 0) {
+			Log::Print(Log::LOG_ERROR,
+				"Could not get size of file \"%s\": %s",
+				filename,
+				SDL_GetError());
+			SDL_RWclose(rw);
+			return nullptr;
+		}
+	}
 
-    stream->f = SDL_RWFromFile(filename, accessString);
-    if (!stream->f)
-        goto FREE;
-
-    #ifdef EMSCRIPTEN
-    // Settings are written through this one, and in a browser they are written
-    // to the directory that outlives the tab.
-    stream->Persistent = WebStorage_IsPersistent(filename);
-    #endif
-
-    return stream;
-
-    FREE:
-        delete stream;
-        return NULL;
+	return rw;
 }
 
-PUBLIC        void        SDLStream::Close() {
-    SDL_RWclose(f);
-    f = NULL;
+SDLStream* SDLStream::New(const char* filename, Uint32 access) {
+	SDLStream* stream = new SDLStream;
+	if (!stream) {
+		return NULL;
+	}
 
-    #ifdef EMSCRIPTEN
-    if (Persistent)
-        WebStorage_Flush();
-    #endif
+	stream->f = OpenFile(filename, access);
+	if (!stream->f) {
+		goto FREE;
+	}
 
-    Stream::Close();
-}
-PUBLIC        void        SDLStream::Seek(Sint64 offset) {
-    SDL_RWseek(f, offset, RW_SEEK_SET);
-}
-PUBLIC        void        SDLStream::SeekEnd(Sint64 offset) {
-    SDL_RWseek(f, offset, RW_SEEK_END);
-}
-PUBLIC        void        SDLStream::Skip(Sint64 offset) {
-    SDL_RWseek(f, offset, RW_SEEK_CUR);
-}
-PUBLIC        size_t      SDLStream::Position() {
-    return SDL_RWtell(f);
-}
-PUBLIC        size_t      SDLStream::Length() {
-    return SDL_RWsize(f);
+	stream->Filename = std::string(filename);
+	stream->CurrentAccess = access;
+
+	return stream;
+
+FREE:
+	delete stream;
+	return NULL;
 }
 
-PUBLIC        size_t      SDLStream::ReadBytes(void* data, size_t n) {
-    // if (!f) Log::Print(Log::LOG_ERROR, "Attempt to read from closed stream.")
-    return SDL_RWread(f, data, 1, n);
+bool SDLStream::Reopen(Uint32 newAccess) {
+	if (CurrentAccess == newAccess) {
+		return true;
+	}
+
+	SDL_RWops* newFile = OpenFile(Filename.c_str(), newAccess);
+	if (!newFile) {
+		return false;
+	}
+
+	SDL_RWclose(f);
+	f = newFile;
+
+	CurrentAccess = newAccess;
+
+	return true;
 }
 
-PUBLIC        size_t      SDLStream::WriteBytes(void* data, size_t n) {
-    return SDL_RWwrite(f, data, 1, n);
+bool SDLStream::IsReadable() {
+	return CurrentAccess == SDLStream::READ_ACCESS;
+}
+bool SDLStream::IsWritable() {
+	return !IsReadable();
+}
+bool SDLStream::MakeReadable(bool readable) {
+	if (!readable) {
+		return MakeWritable(true);
+	}
+
+	return Reopen(READ_ACCESS);
+}
+bool SDLStream::MakeWritable(bool writable) {
+	if (!writable) {
+		return MakeReadable(true);
+	}
+
+	return Reopen(WRITE_ACCESS);
+}
+
+void SDLStream::Close() {
+	SDL_RWclose(f);
+	f = NULL;
+	Stream::Close();
+}
+void SDLStream::Seek(Sint64 offset) {
+	SDL_RWseek(f, offset, RW_SEEK_SET);
+}
+void SDLStream::SeekEnd(Sint64 offset) {
+	SDL_RWseek(f, offset, RW_SEEK_END);
+}
+void SDLStream::Skip(Sint64 offset) {
+	SDL_RWseek(f, offset, RW_SEEK_CUR);
+}
+size_t SDLStream::Position() {
+	return SDL_RWtell(f);
+}
+size_t SDLStream::Length() {
+	return SDL_RWsize(f);
+}
+
+size_t SDLStream::ReadBytes(void* data, size_t n) {
+	// if (!f) Log::Print(Log::LOG_ERROR, "Attempt to read from
+	// closed stream.")
+	return SDL_RWread(f, data, 1, n);
+}
+
+size_t SDLStream::WriteBytes(void* data, size_t n) {
+	return SDL_RWwrite(f, data, 1, n);
 }

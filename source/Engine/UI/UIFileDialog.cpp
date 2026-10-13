@@ -1,25 +1,8 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-class UIFileDialog {
-public:
-    enum Mode {
-        PICK_FOLDER,
-        PICK_FILE
-    };
-
-    enum Result {
-        RESULT_NONE,
-        RESULT_ACCEPTED,
-        RESULT_CANCELLED
-    };
-};
-#endif
-
 #include <Engine/UI/UIFileDialog.h>
 #include <Engine/UI/UICore.h>
 #include <Engine/UI/UIDraw.h>
 #include <Engine/UI/UITheme.h>
+#include <Engine/UI/UIFiles.h>
 
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Filesystem/File.h>
@@ -49,7 +32,7 @@ static bool NeedsRefresh = true;
 
 // Strips "." and collapses ".." so the path shown stays readable after a few
 // trips up and down the tree.
-PRIVATE STATIC void UIFileDialog::NormalizePath(char* path) {
+void UIFileDialog::NormalizePath(char* path) {
     vector<std::string> parts;
     bool absolute = path[0] == '/' || path[0] == '\\';
 
@@ -82,7 +65,7 @@ PRIVATE STATIC void UIFileDialog::NormalizePath(char* path) {
     StringUtils::Copy(path, joined.c_str(), 2048);
 }
 
-PRIVATE STATIC void UIFileDialog::Refresh() {
+void UIFileDialog::Refresh() {
     Folders.clear();
     Files.clear();
     SelectedRow = -1;
@@ -93,7 +76,7 @@ PRIVATE STATIC void UIFileDialog::Refresh() {
 
     // Directory::GetDirectories and GetFiles hand back "<path>/<name>" strings
     // that the caller owns; only the name is wanted here.
-    vector<char*> directories = Directory::GetDirectories(CurrentPath, "*", false);
+    vector<char*> directories = UIFiles::GetDirectories(CurrentPath, "*", false);
     for (size_t i = 0; i < directories.size(); i++) {
         const char* name = strrchr(directories[i], '/');
         Folders.push_back(std::string(name ? name + 1 : directories[i]));
@@ -101,7 +84,7 @@ PRIVATE STATIC void UIFileDialog::Refresh() {
     }
 
     if (DialogMode == UIFileDialog::PICK_FILE) {
-        vector<char*> files = Directory::GetFiles(CurrentPath, DialogFilter, false);
+        vector<char*> files = UIFiles::GetFiles(CurrentPath, DialogFilter, false);
         for (size_t i = 0; i < files.size(); i++) {
             const char* name = strrchr(files[i], '/');
             Files.push_back(std::string(name ? name + 1 : files[i]));
@@ -113,7 +96,7 @@ PRIVATE STATIC void UIFileDialog::Refresh() {
     std::sort(Files.begin(), Files.end());
 }
 
-PUBLIC STATIC void UIFileDialog::Open(const char* title, int mode, const char* startPath, const char* filter) {
+void UIFileDialog::Open(const char* title, int mode, const char* startPath, const char* filter) {
     StringUtils::Copy(DialogTitle, title, sizeof(DialogTitle));
     StringUtils::Copy(DialogFilter, filter && *filter ? filter : "*", sizeof(DialogFilter));
     StringUtils::Copy(CurrentPath, startPath && *startPath ? startPath : ".", sizeof(CurrentPath));
@@ -127,31 +110,31 @@ PUBLIC STATIC void UIFileDialog::Open(const char* title, int mode, const char* s
     SelectedPath[0] = '\0';
 }
 
-PUBLIC STATIC bool UIFileDialog::IsOpen() {
+bool UIFileDialog::IsOpen() {
     return DialogOpen;
 }
 
-PUBLIC STATIC void UIFileDialog::Close() {
+void UIFileDialog::Close() {
     DialogOpen = false;
     Folders.clear();
     Files.clear();
 }
 
 // The path the user settled on, valid after Draw returns RESULT_ACCEPTED.
-PUBLIC STATIC const char* UIFileDialog::GetSelectedPath() {
+const char* UIFileDialog::GetSelectedPath() {
     return SelectedPath;
 }
 
 // Sticks a name onto a folder path. The join happens in a buffer big enough to
 // hold both sides so the result is only shortened on the way out, never mangled
 // half way through.
-PRIVATE STATIC void UIFileDialog::JoinPath(char* out, size_t outSize, const char* base, const char* name) {
+void UIFileDialog::JoinPath(char* out, size_t outSize, const char* base, const char* name) {
     char joined[4200];
     snprintf(joined, sizeof(joined), "%s/%s", base, name);
     StringUtils::Copy(out, joined, outSize);
 }
 
-PRIVATE STATIC void UIFileDialog::EnterFolder(const char* name) {
+void UIFileDialog::EnterFolder(const char* name) {
     UIFileDialog::JoinPath(CurrentPath, sizeof(CurrentPath), CurrentPath, name);
     UIFileDialog::NormalizePath(CurrentPath);
     StringUtils::Copy(PathField, CurrentPath, sizeof(PathField));
@@ -161,7 +144,7 @@ PRIVATE STATIC void UIFileDialog::EnterFolder(const char* name) {
 
 // Draws the dialog and reports what the user did with it. Call with no panel
 // open, after everything the dialog covers has been drawn.
-PUBLIC STATIC int UIFileDialog::Draw() {
+int UIFileDialog::Draw() {
     if (!DialogOpen)
         return UIFileDialog::RESULT_NONE;
 

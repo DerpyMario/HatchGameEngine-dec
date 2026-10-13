@@ -1,22 +1,10 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/MegaCDTypes.h>
-
-need_t SceneLayer;
-
-class MegaCDExporter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/MegaCDExporter.h>
 
 #include <Engine/Exporters/SegaSceneArt.h>
 #include <Engine/Exporters/SegaVDPConverter.h>
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Scene.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a Mega CD can show.
@@ -48,7 +36,7 @@ public:
 
 // A plane side is 32, 64 or 128 cells, and VDP register 16 names each side by
 // a code rather than by a number.
-PRIVATE STATIC int MegaCDExporter::PlaneSizeCode(int cells) {
+int MegaCDExporter::PlaneSizeCode(int cells) {
     if (cells >= 128)
         return 3;
     if (cells >= 64)
@@ -57,7 +45,7 @@ PRIVATE STATIC int MegaCDExporter::PlaneSizeCode(int cells) {
     return 0;
 }
 
-PRIVATE STATIC bool MegaCDExporter::WriteBinary(const char* path, const void* data, size_t size) {
+bool MegaCDExporter::WriteBinary(const char* path, const void* data, size_t size) {
     FILE* f = fopen(path, "wb");
     if (!f)
         return false;
@@ -68,7 +56,7 @@ PRIVATE STATIC bool MegaCDExporter::WriteBinary(const char* path, const void* da
     return ok;
 }
 
-PRIVATE STATIC bool MegaCDExporter::WriteText(const char* path, const char* text) {
+bool MegaCDExporter::WriteText(const char* path, const char* text) {
     FILE* f = fopen(path, "w");
     if (!f)
         return false;
@@ -79,11 +67,11 @@ PRIVATE STATIC bool MegaCDExporter::WriteText(const char* path, const char* text
     return ok;
 }
 
-PUBLIC STATIC MegaCDExportResult MegaCDExporter::ExportScene(const char* outputPath) {
+MegaCDExportResult MegaCDExporter::ExportScene(const char* outputPath) {
     MegaCDExportResult result;
     memset(&result, 0, sizeof(result));
 
-    SceneLayer* layer = SegaSceneArt::PickLayer();
+    TileLayer* layer = SegaSceneArt::PickLayer();
     if (!layer) {
         StringUtils::Copy(result.Message, "The scene has no visible tile layer to export.", sizeof(result.Message));
         return result;
@@ -159,7 +147,7 @@ PUBLIC STATIC MegaCDExportResult MegaCDExporter::ExportScene(const char* outputP
     return result;
 }
 
-PRIVATE STATIC bool MegaCDExporter::WriteProject(const char* outputPath, MegaCDExportResult* result) {
+bool MegaCDExporter::WriteProject(const char* outputPath, MegaCDExportResult* result) {
     char path[1024];
 
     // res and build hold nothing the export writes, but Megadev's makefile
@@ -197,7 +185,7 @@ PRIVATE STATIC bool MegaCDExporter::WriteProject(const char* outputPath, MegaCDE
     return MegaCDExporter::WritePlayer(outputPath, result);
 }
 
-PRIVATE STATIC bool MegaCDExporter::WritePlayer(const char* outputPath, MegaCDExportResult* result) {
+bool MegaCDExporter::WritePlayer(const char* outputPath, MegaCDExportResult* result) {
     char path[1024];
     char text[16384];
 

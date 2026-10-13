@@ -1,59 +1,104 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Bytecode/Types.h>
-
-class ArrayImpl {
-public:
-    static ObjClass *Class;
-};
-#endif
-
-#include <Engine/Bytecode/TypeImpl/ArrayImpl.h>
 #include <Engine/Bytecode/ScriptManager.h>
 #include <Engine/Bytecode/StandardLibrary.h>
+#include <Engine/Bytecode/TypeImpl/ArrayImpl.h>
+#include <Engine/Bytecode/TypeImpl/TypeImpl.h>
+
+/***
+* \class Array
+* \desc A resizable list of values.
+*/
 
 ObjClass* ArrayImpl::Class = nullptr;
 
-PUBLIC STATIC void ArrayImpl::Init() {
-    const char *name = "$$ArrayImpl";
+void ArrayImpl::Init() {
+	Class = NewClass("Array");
+	Class->NewFn = Constructor;
+	Class->Initializer = OBJECT_VAL(NewNative(VM_Initializer));
 
-    Class = NewClass(Murmur::EncryptString(name));
-    Class->Name = CopyString(name);
+	ScriptManager::DefineNative(Class, "iterate", ArrayImpl::VM_Iterate);
+	ScriptManager::DefineNative(Class, "iteratorValue", ArrayImpl::VM_IteratorValue);
 
-    ScriptManager::DefineNative(Class, "iterate", ArrayImpl::VM_Iterate);
-    ScriptManager::DefineNative(Class, "iteratorValue", ArrayImpl::VM_IteratorValue);
+	TypeImpl::RegisterClass(Class);
+	TypeImpl::ExposeClass(Class);
+}
 
-    ScriptManager::ClassImplList.push_back(Class);
+Obj* ArrayImpl::Constructor() {
+	ObjArray* array = (ObjArray*)AllocateObject(sizeof(ObjArray), OBJ_ARRAY);
+	Memory::Track(array, "NewArray");
+	array->Object.Class = Class;
+	array->Values = new vector<VMValue>();
+	return (Obj*)array;
 }
 
 #define GET_ARG(argIndex, argFunction) (StandardLibrary::argFunction(args, argIndex, threadID))
 
-PUBLIC STATIC VMValue ArrayImpl::VM_Iterate(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
+/***
+ * \constructor
+ * \desc Creates an array.
+ * \paramOpt size (integer): Size of the array.
+ * \paramOpt initialValue (value): Initial value to set the array elements to.
+ * \ns Array
+ */
+VMValue ArrayImpl::VM_Initializer(int argCount, VMValue* args, Uint32 threadID) {
+	ObjArray* array = AS_ARRAY(args[0]);
 
-    ObjArray* array = GET_ARG(0, GetArray);
+	StandardLibrary::CheckAtLeastArgCount(argCount, 1);
 
-    if (array->Values->size() && IS_NULL(args[1]))
-        return INTEGER_VAL(0);
-    else if (!IS_NULL(args[1])) {
-        int iteration = GET_ARG(1, GetInteger) + 1;
-        if (iteration >= 0 && iteration < array->Values->size())
-            return INTEGER_VAL(iteration);
-    }
+	int length = 0;
+	VMValue initialValue = NULL_VAL;
+	if (argCount >= 2) {
+		length = GET_ARG(1, GetInteger);
+	}
+	if (argCount >= 3) {
+		initialValue = args[2];
+	}
 
-    return NULL_VAL;
+	for (int i = 0; i < length; i++) {
+		array->Values->push_back(initialValue);
+	}
+
+	return OBJECT_VAL(array);
 }
 
-PUBLIC STATIC VMValue ArrayImpl::VM_IteratorValue(int argCount, VMValue* args, Uint32 threadID) {
-    StandardLibrary::CheckArgCount(argCount, 2);
+void ArrayImpl::Dispose(Obj* object) {
+	ObjArray* array = (ObjArray*)object;
 
-    ObjArray* array = GET_ARG(0, GetArray);
-    int index = GET_ARG(1, GetInteger);
-    if (index < 0 || (Uint32)index >= array->Values->size()) {
-        ScriptManager::Threads[threadID].ThrowRuntimeError(false,
-            "Index %d is out of bounds of array of size %d.", index, (int)array->Values->size());
-        return NULL_VAL;
-    }
+	// An array does not own its values, so it's not allowed to free them.
+	array->Values->clear();
 
-    return (*array->Values)[index];
+	delete array->Values;
+}
+
+VMValue ArrayImpl::VM_Iterate(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 2);
+
+	ObjArray* array = GET_ARG(0, GetArray);
+
+	if (array->Values->size() && IS_NULL(args[1])) {
+		return INTEGER_VAL(0);
+	}
+	else if (!IS_NULL(args[1])) {
+		int iteration = GET_ARG(1, GetInteger) + 1;
+		if (iteration >= 0 && iteration < array->Values->size()) {
+			return INTEGER_VAL(iteration);
+		}
+	}
+
+	return NULL_VAL;
+}
+
+VMValue ArrayImpl::VM_IteratorValue(int argCount, VMValue* args, Uint32 threadID) {
+	StandardLibrary::CheckArgCount(argCount, 2);
+
+	ObjArray* array = GET_ARG(0, GetArray);
+	int index = GET_ARG(1, GetInteger);
+	if (index < 0 || (Uint32)index >= array->Values->size()) {
+		ScriptManager::Threads[threadID].ThrowRuntimeError(false,
+			"Index %d is out of bounds of array of size %d.",
+			index,
+			(int)array->Values->size());
+		return NULL_VAL;
+	}
+
+	return (*array->Values)[index];
 }

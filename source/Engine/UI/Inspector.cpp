@@ -1,19 +1,8 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-need_t Entity;
-need_t SceneLayer;
-
-class Inspector {
-public:
-
-};
-#endif
-
 #include <Engine/UI/Inspector.h>
 
 #include <Engine/Scene.h>
 #include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
 #include <Engine/Types/Entity.h>
 #include <Engine/Types/ObjectList.h>
 #include <Engine/UI/Selection.h>
@@ -34,7 +23,7 @@ public:
 // fields here are named. It is the honest version of the same idea: the
 // alternative is a reflection system nobody asked for.
 
-PRIVATE STATIC void Inspector::DrawEntity(Entity* entity) {
+void Inspector::DrawEntity(Entity* entity) {
     const char* name = (entity->List && entity->List->ObjectName)
         ? entity->List->ObjectName : "Entity";
 
@@ -58,10 +47,10 @@ PRIVATE STATIC void Inspector::DrawEntity(Entity* entity) {
     UICore::Separator();
     UICore::Heading("Motion");
 
-    UICore::FloatField("X speed", &entity->XSpeed);
-    UICore::FloatField("Y speed", &entity->YSpeed);
+    UICore::FloatField("X speed", &entity->SpeedX);
+    UICore::FloatField("Y speed", &entity->SpeedY);
     UICore::FloatField("Ground speed", &entity->GroundSpeed);
-    UICore::FloatField("Gravity", &entity->Gravity);
+    UICore::FloatField("Gravity", &entity->GravitySpeed);
 
     UICore::Separator();
     UICore::Heading("Appearance");
@@ -90,8 +79,8 @@ PRIVATE STATIC void Inspector::DrawEntity(Entity* entity) {
     UICore::FieldFormatted("Start", "%d, %d", (int)entity->InitialX, (int)entity->InitialY);
 }
 
-PRIVATE STATIC void Inspector::DrawLayer(SceneLayer* layer, int index) {
-    UICore::Field("Layer", layer->Name[0] ? layer->Name : "Unnamed");
+void Inspector::DrawLayer(SceneLayer* layer, int index) {
+    UICore::Field("Layer", layer->Name && layer->Name[0] ? layer->Name : "Unnamed");
     UICore::FieldFormatted("Index", "%d", index);
 
     UICore::Separator();
@@ -104,7 +93,10 @@ PRIVATE STATIC void Inspector::DrawLayer(SceneLayer* layer, int index) {
     // Worth showing rather than hiding: a layer's rows are stored this far
     // apart, not Width apart, and anything walking the tile array by hand has
     // to know it.
-    UICore::FieldFormatted("Row stride", "%d", (int)layer->WidthData);
+    if (layer->Type == SceneLayer::TYPE_TILE)
+        UICore::FieldFormatted("Row stride", "%d", (int)((TileLayer*)layer)->WidthData);
+    else
+        UICore::Field("Kind", "Image layer");
 
     UICore::Separator();
     UICore::Heading("Drawing");
@@ -112,18 +104,20 @@ PRIVATE STATIC void Inspector::DrawLayer(SceneLayer* layer, int index) {
     UICore::Checkbox("Visible", &layer->Visible);
     UICore::IntField("Draw group", &layer->DrawGroup);
     UICore::FloatField("Opacity", &layer->Opacity);
-    UICore::Checkbox("Blending", &layer->Blending);
+    UICore::Checkbox("Blending", &layer->UseBlending);
 
     UICore::Separator();
     UICore::Heading("Scroll");
 
-    UICore::IntField("Offset X", &layer->OffsetX);
-    UICore::IntField("Offset Y", &layer->OffsetY);
-    UICore::IntField("Relative Y", &layer->RelativeY);
-    UICore::IntField("Constant Y", &layer->ConstantY);
+    UICore::FloatField("Offset X", &layer->OffsetX);
+    UICore::FloatField("Offset Y", &layer->OffsetY);
+    UICore::FloatField("Relative X", &layer->RelativeX);
+    UICore::FloatField("Relative Y", &layer->RelativeY);
+    UICore::FloatField("Constant X", &layer->ConstantX);
+    UICore::FloatField("Constant Y", &layer->ConstantY);
 }
 
-PUBLIC STATIC void Inspector::Draw() {
+void Inspector::Draw() {
     switch (Selection::GetKind()) {
         case Selection::KIND_ENTITY: {
             Entity* entity = Selection::GetEntity();

@@ -1,19 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-need_t Entity;
-need_t SceneLayer;
-
-class Selection {
-public:
-    enum {
-        KIND_NONE = 0,
-        KIND_ENTITY,
-        KIND_LAYER
-    };
-};
-#endif
-
 #include <Engine/UI/Selection.h>
 
 #include <Engine/Scene.h>
@@ -52,7 +36,7 @@ static Uint32   Version_ = 0;
 // instead of dangling -- load a scene with fewer layers and the index still
 // looks like a selection while pointing at nothing. Dropping it here means the
 // inspector says nothing is selected rather than drawing an empty panel.
-PUBLIC STATIC void Selection::Validate() {
+void Selection::Validate() {
     if (Kind == Selection::KIND_LAYER) {
         if (LayerIndex < 0 || LayerIndex >= (int)Scene::Layers.size())
             Selection::Clear();
@@ -71,7 +55,7 @@ PUBLIC STATIC void Selection::Validate() {
     Selection::Clear();
 }
 
-PUBLIC STATIC void Selection::Clear() {
+void Selection::Clear() {
     if (Kind == Selection::KIND_NONE)
         return;
 
@@ -81,7 +65,7 @@ PUBLIC STATIC void Selection::Clear() {
     Version_++;
 }
 
-PUBLIC STATIC void Selection::SetEntity(Entity* entity) {
+void Selection::SetEntity(Entity* entity) {
     if (Kind == Selection::KIND_ENTITY && Entity_ == entity)
         return;
 
@@ -96,7 +80,7 @@ PUBLIC STATIC void Selection::SetEntity(Entity* entity) {
     Version_++;
 }
 
-PUBLIC STATIC void Selection::SetLayer(int index) {
+void Selection::SetLayer(int index) {
     if (Kind == Selection::KIND_LAYER && LayerIndex == index)
         return;
 
@@ -111,36 +95,36 @@ PUBLIC STATIC void Selection::SetLayer(int index) {
     Version_++;
 }
 
-PUBLIC STATIC int Selection::GetKind() {
+int Selection::GetKind() {
     return Kind;
 }
 
-PUBLIC STATIC Entity* Selection::GetEntity() {
+Entity* Selection::GetEntity() {
     return Kind == Selection::KIND_ENTITY ? Entity_ : NULL;
 }
 
-PUBLIC STATIC int Selection::GetLayerIndex() {
+int Selection::GetLayerIndex() {
     return Kind == Selection::KIND_LAYER ? LayerIndex : -1;
 }
 
-PUBLIC STATIC SceneLayer* Selection::GetLayer() {
+SceneLayer* Selection::GetLayer() {
     if (Kind != Selection::KIND_LAYER)
         return NULL;
 
     if (LayerIndex < 0 || LayerIndex >= (int)Scene::Layers.size())
         return NULL;
 
-    return &Scene::Layers[LayerIndex];
+    return Scene::Layers[LayerIndex];
 }
 
-PUBLIC STATIC Uint32 Selection::GetVersion() {
+Uint32 Selection::GetVersion() {
     return Version_;
 }
 
 // The name to show for whatever is selected. An entity is named by the object
 // list it belongs to, which is the closest thing this engine has to a class
 // name; one that belongs to no list is still worth being able to point at.
-PUBLIC STATIC void Selection::GetName(char* out, size_t outSize) {
+void Selection::GetName(char* out, size_t outSize) {
     if (Kind == Selection::KIND_ENTITY && Entity_) {
         if (Entity_->List && Entity_->List->ObjectName)
             snprintf(out, outSize, "%s", Entity_->List->ObjectName);

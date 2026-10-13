@@ -30,10 +30,19 @@
     <ClCompile Include="..\source\engine\bytecode\TypeImpl\ArrayImpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\FontImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\engine\bytecode\TypeImpl\FunctionImpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\bytecode\TypeImpl\MapImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\MaterialImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\ShaderImpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\bytecode\TypeImpl\StringImpl.cpp">
@@ -63,10 +72,19 @@
     <ClCompile Include="..\source\engine\bytecode\Types.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\engine\bytecode\Values.cpp">
+    <ClCompile Include="..\source\engine\bytecode\Value.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\ValuePrinter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\bytecode\VMThread.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\VMThreadDebugger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\data\DefaultFonts.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\diagnostics\Clock.cpp">
@@ -81,7 +99,13 @@
     <ClCompile Include="..\source\engine\diagnostics\PerformanceMeasure.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\engine\diagnostics\PerformanceViewer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\engine\diagnostics\RemoteDebug.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\Error.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\extensions\Discord.cpp">
@@ -93,7 +117,31 @@
     <ClCompile Include="..\source\engine\filesystem\File.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\engine\FontFace.cpp">
+    <ClCompile Include="..\source\engine\filesystem\Path.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\ArchiveVFS.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\FileSystemVFS.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\HatchVFS.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\MemoryCache.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\MemoryVFS.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\VFSEntry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\VFSProvider.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\filesystem\vfs\VirtualFileSystem.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\Graphics.cpp">
@@ -115,6 +163,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\InputManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\input\Controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\input\InputAction.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\input\InputPlayer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\io\compression\Huffman.cpp">
@@ -150,7 +207,16 @@
     <ClCompile Include="..\source\engine\io\Serializer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\engine\io\StandardIOStream.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\engine\io\Stream.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\io\TextStream.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\io\VirtualFileStream.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\Main.cpp">
@@ -213,9 +279,6 @@
     <ClCompile Include="..\source\engine\rendering\FaceInfo.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\engine\rendering\GameTexture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\source\engine\rendering\gl\GLRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -255,10 +318,13 @@
     <ClCompile Include="..\source\engine\rendering\Texture.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\engine\rendering\TextureReference.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\engine\rendering\VertexBuffer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\engine\rendering\ViewTexture.cpp">
+    <ClCompile Include="..\source\engine\resourcetypes\Font.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\resourcetypes\Image.cpp">
@@ -327,18 +393,6 @@
     <ClCompile Include="..\source\engine\scene\SceneLayer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\engine\scene\ScrollingIndex.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\engine\scene\ScrollingInfo.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\engine\scene\TileConfig.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\engine\scene\TileSpriteInfo.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\source\engine\scene\View.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -346,6 +400,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\textformats\xml\XMLParser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\types\Camera.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Types\DrawGroupList.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\types\Entity.cpp">
@@ -357,49 +417,19 @@
     <ClCompile Include="..\source\engine\types\ObjectRegistry.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\engine\types\Property.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\engine\types\Tileset.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\Studio.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\ResourceEditor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\SceneEditor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\TileCollisionEditor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\SceneEditor3D.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\Scene3DFormat.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\TiledMapWriter.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\UIFileDialog.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\UIMenu.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\UICore.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\source\Engine\UI\UIDraw.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\engine\utilities\ColorUtils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\engine\utilities\StringUtils.cpp">
+    <ClCompile Include="..\source\engine\utilities\PrintBuffer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\source\Engine\Types\DrawGroupList.cpp">
+    <ClCompile Include="..\source\engine\utilities\StringUtils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\Engine\Diagnostics\MemoryPools.cpp">
@@ -414,108 +444,240 @@
     <ClCompile Include="..\source\Libraries\spng.c">
       <Filter>Source Files\External Libs</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\engine\input\Controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\math\Random.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\poly2tri\common\shapes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\poly2tri\sweep\advancing_front.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\poly2tri\sweep\cdt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\poly2tri\sweep\sweep_context.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\poly2tri\sweep\sweep.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\clipper2\clipper.engine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\clipper2\clipper.offset.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\clipper2\clipper.rectclip.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\linenoise-ng\linenoise.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\EntityImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\InstanceImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\StreamImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\TypeImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\TypeImpl\TextureImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\engine\bytecode\BytecodeDebugger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Utilities\Screenshot.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Libraries\linenoise-ng\wcwidth.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Scene\ImageLayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Scene\TileLayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\DreamcastExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\GameGearExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\MegaCDExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\MegaDriveExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\Sega32XExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\SegaSaturnExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\SegaSceneArt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\SegaVDPConverter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Platforms\Xbox\Exceptions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Platforms\Xbox\Filesystem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\Scene3DFormat.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\TiledMapWriter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\Hierarchy.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\Inspector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\ResourceEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\SceneEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\SceneEditor3D.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\Selection.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\Studio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\TileCollisionEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\UICore.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\UIDraw.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\UIFileDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\UI\UIMenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\include\engine\audio\AudioChannel.h">
+    <ClInclude Include="..\source\engine\audio\AudioChannel.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\bytecode\CompilerEnums.h">
+    <ClInclude Include="..\source\engine\bytecode\CompilerEnums.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\bytecode\Types.h">
+    <ClInclude Include="..\source\engine\bytecode\Types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\diagnostics\PerformanceTypes.h">
+    <ClInclude Include="..\source\engine\diagnostics\PerformanceTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\includes\BijectiveMap.h">
+    <ClInclude Include="..\source\engine\includes\BijectiveMap.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\includes\HashMap.h">
+    <ClInclude Include="..\source\engine\includes\HashMap.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\includes\Standard.h">
+    <ClInclude Include="..\source\engine\includes\Standard.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\includes\StandardSDL2.h">
+    <ClInclude Include="..\source\engine\includes\StandardSDL2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\io\compression\CompressionEnums.h">
+    <ClInclude Include="..\source\engine\io\compression\CompressionEnums.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\media\includes\AVCodec.h">
+    <ClInclude Include="..\source\engine\media\includes\AVCodec.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\media\includes\AVFormat.h">
+    <ClInclude Include="..\source\engine\media\includes\AVFormat.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\media\includes\AVUtils.h">
+    <ClInclude Include="..\source\engine\media\includes\AVUtils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\media\includes\SWResample.h">
+    <ClInclude Include="..\source\engine\media\includes\SWResample.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\media\includes\SWScale.h">
+    <ClInclude Include="..\source\engine\media\includes\SWScale.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\media\utils\Codec.h">
+    <ClInclude Include="..\source\engine\media\utils\Codec.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\network\WebSocketIncludes.h">
+    <ClInclude Include="..\source\engine\network\WebSocketIncludes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\platforms\macos\Filesystem.h">
+    <ClInclude Include="..\source\engine\platforms\macos\Filesystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\3D.h">
+    <ClInclude Include="..\source\engine\rendering\3D.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\Mesh.h">
+    <ClInclude Include="..\source\engine\rendering\Mesh.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\ArrayBuffer.h">
+    <ClInclude Include="..\source\engine\rendering\ArrayBuffer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\Enums.h">
+    <ClInclude Include="..\source\engine\rendering\Enums.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\gl\Includes.h">
+    <ClInclude Include="..\source\engine\rendering\gl\Includes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\metal\Includes.h">
+    <ClInclude Include="..\source\engine\rendering\metal\Includes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\metal\MetalFuncs.h">
+    <ClInclude Include="..\source\engine\rendering\metal\MetalFuncs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\rendering\sdl2\SDL2MetalFunc.h">
+    <ClInclude Include="..\source\engine\rendering\sdl2\SDL2MetalFunc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\resourcetypes\modelformats\Importer.h">
+    <ClInclude Include="..\source\engine\resourcetypes\modelformats\Importer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\resourcetypes\ResourceType.h">
+    <ClInclude Include="..\source\engine\resourcetypes\ResourceType.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\scene\SceneConfig.h">
+    <ClInclude Include="..\source\engine\sprites\Animation.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\sprites\Animation.h">
+    <ClInclude Include="..\source\engine\textformats\ini\INIStructs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\textformats\ini\INIStructs.h">
+    <ClInclude Include="..\source\engine\textformats\json\jsmn.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\textformats\json\jsmn.h">
+    <ClInclude Include="..\source\engine\textformats\xml\XMLNode.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\textformats\xml\XMLNode.h">
+    <ClInclude Include="..\source\engine\types\EntityTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\engine\types\EntityTypes.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\Engine\Types\DrawGroupList.h">
+    <ClInclude Include="..\source\engine\Types\DrawGroupList.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\source\Libraries\miniz.h">
@@ -527,9 +689,120 @@
     <ClInclude Include="..\source\Libraries\stb_vorbis.h">
       <Filter>Source Files\External Libs</Filter>
     </ClInclude>
+    <ClInclude Include="..\source\Libraries\spng.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\DreamcastExporter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\DreamcastTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\GameGearExporter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\GameGearTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\MegaCDExporter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\MegaCDTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\MegaDriveExporter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\MegaDriveTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\Sega32XExporter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\Sega32XTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\SegaSaturnExporter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\SegaSaturnTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\SegaSceneArt.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\SegaVDPConverter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\SegaVDPTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Includes\WebStorage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Includes\XboxCompat.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Rendering\Scene3DTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\ResourceTypes\SceneFormats\Scene3DFormat.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\ResourceTypes\SceneFormats\TiledMapWriter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\Hierarchy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\Inspector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\ResourceEditor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\SceneEditor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\SceneEditor3D.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\Selection.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\Studio.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\TileCollisionEditor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\TileCollisionTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UICore.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UIDraw.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UIFileDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UIFiles.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UIFontData.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UIMenu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\UI\UITheme.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="..\meta\win\icon.rc">
+    <ResourceCompile Include="..\meta\win\HatchGameEngine.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>

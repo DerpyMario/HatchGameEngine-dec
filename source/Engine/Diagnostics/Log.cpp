@@ -1,35 +1,14 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-
-class Log {
-public:
-    enum LogLevels {
-        LOG_VERBOSE = -1,
-        LOG_INFO = 0,
-        LOG_WARN = 1,
-        LOG_ERROR = 2,
-        LOG_IMPORTANT = 3,
-    };
-
-    static int         LogLevel;
-    static const char* LogFilename;
-    static bool        WriteToFile;
-
-    // How many messages the in-memory history keeps for the editor's console.
-    static size_t      MaxHistory;
-};
-#endif
-
-#include <Engine/Includes/Standard.h>
 #include <Engine/Diagnostics/Log.h>
+#include <Engine/Filesystem/Path.h>
+#include <Engine/Includes/Standard.h>
 
 #ifdef WIN32
-    #include <windows.h>
+#include <windows.h>
 #endif
 
 #ifdef MACOSX
 extern "C" {
-    #include <Engine/Platforms/MacOS/Filesystem.h>
+#include <Engine/Platforms/MacOS/Filesystem.h>
 }
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Includes/StandardSDL2.h>
@@ -37,219 +16,324 @@ extern "C" {
 #endif
 
 #ifdef ANDROID
-    #include <android/log.h>
+#include <android/log.h>
 #endif
 
 #include <stdarg.h>
 
-int         Log::LogLevel = -1;
-bool        Log::WriteToFile = false;
-const char* Log::LogFilename = TARGET_NAME ".log";
-size_t      Log::MaxHistory = 1024;
+#define DEFAULT_LOG_FILENAME TARGET_NAME ".log"
 
-bool        Log_Initialized = false;
+int Log::LogLevel = -2;
+#ifdef EMSCRIPTEN
+// A browser's filesystem lasts as long as the page, so a log file there is
+// written and then thrown away when the tab closes. The console the messages
+// already go to is where a browser is read anyway.
+bool Log::WriteToFile = false;
+#else
+bool Log::WriteToFile = true;
+#endif
+FILE* Log::File = nullptr;
+bool Log::Initialized = false;
+char* Log::Buffer = nullptr;
+size_t Log::BufferSize = 0;
+size_t Log::MaxHistory = 1024;
 
 // Every message is also kept here so the editor's console panel can show the
 // log without the user needing a terminal attached.
-static vector<std::string> HistoryText;
-static vector<int>         HistorySeverity;
+static std::vector<std::string> HistoryText;
+static std::vector<int> HistorySeverity;
 
 #if WIN32 || LINUX
 #define USING_COLOR_CODES 1
 #endif
 
-PUBLIC STATIC void Log::Init() {
-    if (Log_Initialized)
-        return;
-
-    // Set environment
-    #ifdef MACOSX
-        char appSupportPath[1024];
-        int isBundle = MacOS_GetApplicationSupportDirectory(appSupportPath, 512);
-        if (isBundle) {
-            strcat(appSupportPath, "/" TARGET_NAME);
-            if (!Directory::Exists(appSupportPath)) {
-                Directory::Create(appSupportPath);
-            }
-            chdir(appSupportPath);
-        }
-    #endif
-
-    // Emscripten is left out on purpose. Its filesystem is a page-lifetime one,
-    // so a log file there is written and then thrown away when the tab closes;
-    // the console the messages already go to is where a browser is read anyway.
-    #if WIN32 || MACOSX || LINUX || SWITCH || XBOX
-    WriteToFile = true;
-    #endif
-
-    FILE* f = NULL;
-
-    if (WriteToFile) {
-        f = fopen(LogFilename, "w");
-        if (!f) {
-            perror("Error ");
-        }
-    }
-
-    if (WriteToFile && f) {
-        fclose(f);
-    }
-
-    Log_Initialized = true;
+void Log::Init() {
+	Initialized = true;
 }
 
-PUBLIC STATIC void Log::SetLogLevel(int sev) {
-    Log::LogLevel = sev;
+void Log::OpenFile(const char* filename) {
+	if (!Initialized || !WriteToFile) {
+		return;
+	}
+
+	std::string pathToLogFile;
+	bool pathIsValid;
+
+	const char* logFilename = filename;
+	if (logFilename == nullptr || logFilename[0] == '\0') {
+		logFilename = DEFAULT_LOG_FILENAME;
+	}
+
+	pathIsValid = Path::FromLocation(logFilename, PathLocation::LOGFILE, pathToLogFile, true, false);
+	if (pathToLogFile.size() > 0) {
+		logFilename = pathToLogFile.c_str();
+	}
+	else {
+		pathIsValid = false;
+	}
+
+	if (pathIsValid) {
+		Log::Print(Log::LOG_VERBOSE, "Log file: %s", logFilename);
+
+		File = fopen(logFilename, "w");
+	}
+
+	if (!File) {
+		Log::Print(Log::LOG_ERROR, "Couldn't open log file '%s' for writing!", logFilename);
+		WriteToFile = false;
+	}
 }
 
-PRIVATE STATIC void Log::Remember(int sev, const char* text) {
-    if (Log::MaxHistory == 0)
-        return;
-
-    HistoryText.push_back(std::string(text));
-    HistorySeverity.push_back(sev);
-
-    // Drop the oldest messages in one go rather than shifting the whole vector
-    // on every single line once the buffer is full.
-    if (HistoryText.size() > Log::MaxHistory * 2) {
-        size_t excess = HistoryText.size() - Log::MaxHistory;
-        HistoryText.erase(HistoryText.begin(), HistoryText.begin() + excess);
-        HistorySeverity.erase(HistorySeverity.begin(), HistorySeverity.begin() + excess);
-    }
+void Log::SetLogLevel(int sev) {
+	Log::LogLevel = sev;
 }
 
-PUBLIC STATIC size_t Log::GetHistoryCount() {
-    return HistoryText.size();
+void Log::Close() {
+	if (File) {
+		fclose(File);
+		File = nullptr;
+	}
+	free(Buffer);
 }
 
-PUBLIC STATIC const char* Log::GetHistoryText(size_t index) {
-    if (index >= HistoryText.size())
-        return "";
+bool Log::ResizeBuffer(int written_chars) {
+	BufferSize = written_chars + 1024;
+	Buffer = (char*)realloc(Buffer, BufferSize * sizeof(char));
 
-    return HistoryText[index].c_str();
+	// If the reallocation failed, try again with a smaller buffer
+	// size
+	if (Buffer == nullptr) {
+		BufferSize = 1024;
+		Buffer = (char*)realloc(Buffer, BufferSize * sizeof(char));
+
+		// If that failed too, just give up.
+		if (!Buffer) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
-PUBLIC STATIC int Log::GetHistorySeverity(size_t index) {
-    if (index >= HistorySeverity.size())
-        return Log::LOG_INFO;
+void Log::Remember(int sev, const char* text) {
+	if (Log::MaxHistory == 0) {
+		return;
+	}
 
-    return HistorySeverity[index];
+	HistoryText.push_back(std::string(text));
+	HistorySeverity.push_back(sev);
+
+	// Drop the oldest messages in one go rather than shifting the whole vector
+	// on every single line once the buffer is full.
+	if (HistoryText.size() > Log::MaxHistory * 2) {
+		size_t excess = HistoryText.size() - Log::MaxHistory;
+		HistoryText.erase(HistoryText.begin(), HistoryText.begin() + excess);
+		HistorySeverity.erase(HistorySeverity.begin(), HistorySeverity.begin() + excess);
+	}
 }
 
-PUBLIC STATIC void Log::ClearHistory() {
-    HistoryText.clear();
-    HistorySeverity.clear();
+size_t Log::GetHistoryCount() {
+	return HistoryText.size();
 }
 
-PUBLIC STATIC void Log::Print(int sev, const char* format, ...) {
-    #ifdef USING_COLOR_CODES
-    int ColorCode = 0;
-    #endif
+const char* Log::GetHistoryText(size_t index) {
+	if (index >= HistoryText.size()) {
+		return "";
+	}
 
-    if (sev < Log::LogLevel)
-        return;
+	return HistoryText[index].c_str();
+}
 
-    static char* stringBuffer = NULL;
-    static size_t stringBufferSize = 0;
-    const char* severityText = NULL;
+int Log::GetHistorySeverity(size_t index) {
+	if (index >= HistorySeverity.size()) {
+		return Log::LOG_INFO;
+	}
 
-    va_list args;
-    va_start(args, format);
-    int written_chars = vsnprintf(stringBuffer, stringBufferSize, format, args);
-    va_end(args);
+	return HistorySeverity[index];
+}
 
-    if (written_chars <= 0)
-        return;
-    else if (written_chars + 1 >= stringBufferSize) {
-        stringBufferSize = written_chars + 1024;
+void Log::ClearHistory() {
+	HistoryText.clear();
+	HistorySeverity.clear();
+}
 
-        char* newStringBuffer = (char*)realloc(stringBuffer, stringBufferSize * sizeof(char));
+void Log::Print(int sev, const char* format, ...) {
+	if (!Initialized) {
+		return;
+	}
 
-        // If the reallocation failed, try again with a smaller buffer size
-        if (!newStringBuffer) {
-            stringBufferSize = 1024;
-            newStringBuffer = (char*)realloc(stringBuffer, stringBufferSize * sizeof(char));
+#ifdef USING_COLOR_CODES
+	int ColorCode = 0;
+#endif
 
-            // If THAT failed too, just give up
-            if (!newStringBuffer)
-                return;
-        }
-        else
-            stringBuffer = newStringBuffer;
+	if (sev < Log::LogLevel) {
+		return;
+	}
 
-        va_start(args, format);
-        vsnprintf(stringBuffer, stringBufferSize, format, args);
-        va_end(args);
-    }
+	const char* severityText = NULL;
 
-    const char *string = stringBuffer;
+	va_list args;
+	va_start(args, format);
+	int written_chars = vsnprintf(Buffer, BufferSize, format, args);
+	va_end(args);
 
-    Log::Remember(sev, string);
+	if (written_chars <= 0) {
+		return;
+	}
+	else if (written_chars + 1 >= BufferSize) {
+		if (!ResizeBuffer(written_chars)) {
+			return;
+		}
 
-    #if defined(ANDROID)
-        switch (sev) {
-            case   LOG_VERBOSE: __android_log_print(ANDROID_LOG_VERBOSE, TARGET_NAME, "%s", string); return;
-            case      LOG_INFO: __android_log_print(ANDROID_LOG_INFO,    TARGET_NAME, "%s", string); return;
-            case      LOG_WARN: __android_log_print(ANDROID_LOG_WARN,    TARGET_NAME, "%s", string); return;
-            case     LOG_ERROR: __android_log_print(ANDROID_LOG_ERROR,   TARGET_NAME, "%s", string); return;
-            case LOG_IMPORTANT: __android_log_print(ANDROID_LOG_FATAL,   TARGET_NAME, "%s", string); return;
-        }
-    #endif
+		va_start(args, format);
+		vsnprintf(Buffer, BufferSize, format, args);
+		va_end(args);
+	}
 
-    FILE* f = NULL;
-    if (WriteToFile) {
-        f = fopen(LogFilename, "a");
-    }
+	Log::Remember(sev, Buffer);
 
-    #if defined(WIN32)
-        switch (sev) {
-            case   LOG_VERBOSE: ColorCode = 0xD; break;
-            case      LOG_INFO: ColorCode = 0x8; break;
-            case      LOG_WARN: ColorCode = 0xE; break;
-            case     LOG_ERROR: ColorCode = 0xC; break;
-            case LOG_IMPORTANT: ColorCode = 0xB; break;
-        }
-        CONSOLE_SCREEN_BUFFER_INFO csbi;
-        HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (GetConsoleScreenBufferInfo(hStdOut, &csbi)) {
-            WORD wColor = (csbi.wAttributes & 0xF0) + ColorCode;
-            SetConsoleTextAttribute(hStdOut, wColor);
-        }
-    #elif USING_COLOR_CODES
-        switch (sev) {
-            case   LOG_VERBOSE: ColorCode = 94; break;
-            case      LOG_INFO: ColorCode = 00; break;
-            case      LOG_WARN: ColorCode = 93; break;
-            case     LOG_ERROR: ColorCode = 91; break;
-            case LOG_IMPORTANT: ColorCode = 96; break;
-        }
-        printf("\x1b[%d;1m", ColorCode);
-    #endif
+#if defined(ANDROID)
+	switch (sev) {
+	case LOG_VERBOSE:
+		__android_log_print(ANDROID_LOG_VERBOSE, TARGET_NAME, "%s", Buffer);
+		return;
+	case LOG_INFO:
+	case LOG_IMPORTANT:
+	case LOG_API:
+		__android_log_print(ANDROID_LOG_INFO, TARGET_NAME, "%s", Buffer);
+		return;
+	case LOG_WARN:
+		__android_log_print(ANDROID_LOG_WARN, TARGET_NAME, "%s", Buffer);
+		return;
+	case LOG_ERROR:
+		__android_log_print(ANDROID_LOG_ERROR, TARGET_NAME, "%s", Buffer);
+		return;
+	case LOG_FATAL:
+		__android_log_print(ANDROID_LOG_FATAL, TARGET_NAME, "%s", Buffer);
+		return;
+	}
+#endif
 
-    switch (sev) {
-        case   LOG_VERBOSE: severityText = "  VERBOSE: "; break;
-        case      LOG_INFO: severityText = "     INFO: "; break;
-        case      LOG_WARN: severityText = "  WARNING: "; break;
-        case     LOG_ERROR: severityText = "    ERROR: "; break;
-        case LOG_IMPORTANT: severityText = "IMPORTANT: "; break;
-    }
+#if defined(WIN32)
+	switch (sev) {
+	case LOG_VERBOSE:
+		ColorCode = 0xD;
+		break;
+	case LOG_INFO:
+		ColorCode = 0x8;
+		break;
+	case LOG_WARN:
+		ColorCode = 0xE;
+		break;
+	case LOG_ERROR:
+	case LOG_FATAL:
+		ColorCode = 0xC;
+		break;
+	case LOG_IMPORTANT:
+		ColorCode = 0xB;
+		break;
+	case LOG_API:
+		ColorCode = 0x2;
+		break;
+	}
+	CONSOLE_SCREEN_BUFFER_INFO csbi;
+	HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	if (GetConsoleScreenBufferInfo(hStdOut, &csbi)) {
+		WORD wColor = (csbi.wAttributes & 0xF0) + ColorCode;
+		SetConsoleTextAttribute(hStdOut, wColor);
+	}
+#elif USING_COLOR_CODES
+	switch (sev) {
+	case LOG_VERBOSE:
+		ColorCode = 94;
+		break;
+	case LOG_INFO:
+		ColorCode = 00;
+		break;
+	case LOG_WARN:
+		ColorCode = 93;
+		break;
+	case LOG_ERROR:
+	case LOG_FATAL:
+		ColorCode = 91;
+		break;
+	case LOG_IMPORTANT:
+		ColorCode = 96;
+		break;
+	case LOG_API:
+		ColorCode = 92;
+		break;
+	}
+	printf("\x1b[%d;1m", ColorCode);
+#endif
 
-    printf("%s", severityText);
-    if (WriteToFile && f)
-        fprintf(f, "%s", severityText);
+	switch (sev) {
+	case LOG_VERBOSE:
+		severityText = "  VERBOSE: ";
+		break;
+	case LOG_INFO:
+		severityText = "     INFO: ";
+		break;
+	case LOG_WARN:
+		severityText = "  WARNING: ";
+		break;
+	case LOG_ERROR:
+		severityText = "    ERROR: ";
+		break;
+	case LOG_IMPORTANT:
+		severityText = "IMPORTANT: ";
+		break;
+	case LOG_FATAL:
+		severityText = "    FATAL: ";
+		break;
+	case LOG_API:
+		severityText = "      API: ";
+		break;
+	}
 
-    #if WIN32
-		WORD wColor = (csbi.wAttributes & 0xF0) | 0x07;
-        SetConsoleTextAttribute(hStdOut, wColor);
-    #elif USING_COLOR_CODES
-        printf("\x1b[0m");
-    #endif
+	printf("%s", severityText);
+	if (File) {
+		fprintf(File, "%s", severityText);
+	}
 
-    printf("%s\n", string);
-    fflush(stdout);
+#if WIN32
+	WORD wColor = (csbi.wAttributes & 0xF0) | 0x07;
+	SetConsoleTextAttribute(hStdOut, wColor);
+#elif USING_COLOR_CODES
+	printf("\x1b[0m");
+#endif
 
-    if (WriteToFile && f) {
-        fprintf(f, "%s\n", string);
-        fclose(f);
-    }
+	printf("%s\n", Buffer);
+	fflush(stdout);
+
+	if (File) {
+		fprintf(File, "%s\n", Buffer);
+	}
+}
+
+void Log::PrintSimple(const char* format, ...) {
+	va_list args;
+	va_start(args, format);
+	int written_chars = vsnprintf(Buffer, BufferSize, format, args);
+	va_end(args);
+
+	if (written_chars <= 0) {
+		return;
+	}
+	else if (written_chars + 1 >= BufferSize) {
+		if (!ResizeBuffer(written_chars)) {
+			return;
+		}
+
+		va_start(args, format);
+		vsnprintf(Buffer, BufferSize, format, args);
+		va_end(args);
+	}
+
+	printf("%s", Buffer);
+	fflush(stdout);
+
+	if (File) {
+		fprintf(File, "%s", Buffer);
+	}
 }

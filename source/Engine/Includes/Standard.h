@@ -1,99 +1,111 @@
 #ifndef STANDARDLIBS_H
 #define STANDARDLIBS_H
 
-#include <stdio.h>
+#include <assert.h>
+#include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include <limits.h>
-#include <assert.h>
 #include <string.h>
-#include <math.h>
 
-#include <unordered_map>
 #include <algorithm>
-#include <string>
-#include <vector>
-#include <map>
-#include <deque>
-#include <stack>
 #include <csetjmp>
+#include <cmath>
+#include <deque>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <stack>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <Engine/Includes/Endian.h>
 
 #if WIN32
-    #define snprintf _snprintf
-    #undef __useHeader
-    #undef __on_failure
+#define snprintf _snprintf
+#undef __useHeader
+#undef __on_failure
 #endif
 
-#ifndef R_PI
-    #define R_PI 3.1415927
-#endif
-
-template <typename T>
+template<typename T>
 using vector = std::vector<T>;
 
-template <typename T1, typename T2>
+template<typename T1, typename T2>
 using map = std::map<T1, T2>;
 
-template <typename T>
+template<typename T>
 using stack = std::stack<T>;
 
-template <typename T>
+template<typename T>
 using deque = std::deque<T>;
 
 using string = std::string;
 
 enum class Platforms {
-    Windows,
-    MacOS,
-    Linux,
-    Switch,
-    PlayStation,
-    Xbox,
-    Android,
-    iOS,
-    Unknown,
-    // Added after Unknown rather than beside the other platforms: scripts get
-    // these as constants and compile their values into their bytecode, so
-    // inserting one in the middle would change what already-built bytecode
-    // means.
-    Web
+	Windows,
+	MacOS,
+	Linux,
+	Switch,
+	PlayStation,
+	Xbox,
+	Android,
+	iOS,
+	Unknown,
+	// Added after Unknown rather than beside the other platforms: scripts get
+	// these as constants and compile their values into their bytecode, so
+	// inserting one in the middle would change what already-built bytecode
+	// means.
+	Web
 };
 
 enum class KeyBind {
-    Fullscreen,
-    DevRestartApp,
-    DevRestartScene,
-    DevRecompile,
-    DevPerfSnapshot,
-    DevLayerInfo,
-    DevFastForward,
-    DevFrameStepper,
-    DevStepFrame,
-    DevTileCol,
-    DevObjectRegions,
-    DevQuit,
-    Studio,
+	Fullscreen,
+	Screenshot,
+	ToggleFPSCounter,
 
-    Max
+	DevRestartApp,
+	DevRestartScene,
+	DevRecompile,
+	DevPerfSnapshot,
+	DevLayerInfo,
+	DevFastForward,
+	DevFrameStepper,
+	DevStepFrame,
+	DevTileCol,
+	DevObjectRegions,
+	DevViewHitboxes,
+	DevPreviousScene,
+	DevNextScene,
+	DevMenuToggle,
+	DevScriptDebugger,
+	DevQuit,
+	Studio,
+
+	Max
 };
 
-#ifndef __OBJC__
+#define DEFAULT_TARGET_FRAMERATE 60
 
-#endif
+#define MAX_TARGET_FRAMERATE 240
 
-#define PLAYER_COUNT 8
-#define INPUTDEVICE_COUNT 16
-
-#define INPUT_DEADZONE 0.3f
+#define MATRIX_STACK_SIZE 256
+#define FILTER_TABLE_SIZE 0x8000
+#define PALETTE_ROW_SIZE 0x100
 
 #define MAX_SCENE_VIEWS 8
 #define MAX_PALETTE_COUNT 256
+#define MAX_PALETTE_COLOR_COUNT 256
 #define MAX_DEFORM_LINES 0x400
 #define MAX_FRAMEBUFFER_HEIGHT 4096
 
 #define SCOPE_SCENE 0
 #define SCOPE_GAME 1
+#define SCOPE_GROUP 2 // SCOPE_GROUP is intentionally 2 for Hatch backwards compatibility, but behaves as a midpoint of SCOPE_SCENE and SCOPE_GAME.
+
+#define PALETTE_INDEX_TABLE_ID -1
 
 typedef uint8_t Uint8;
 typedef uint16_t Uint16;
@@ -104,14 +116,32 @@ typedef int16_t Sint16;
 typedef int32_t Sint32;
 typedef int64_t Sint64;
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846264338327
+#endif
+
+#ifndef M_PI_HALF
+#define M_PI_HALF (M_PI / 2)
+#endif
+
+#define RSDK_PI 3.1415927
+
+#define HITBOX_LEFT 0
+#define HITBOX_TOP 1
+#define HITBOX_RIGHT 2
+#define HITBOX_BOTTOM 3
+#define NUM_HITBOX_SIDES 4
+
+#define PARENT_DIRECTORY ".."
+
 #ifdef IOS
 #define NEW_STRUCT_MACRO(n) (n)
 #else
 #define NEW_STRUCT_MACRO(n) n
 #endif
 
-constexpr uint32_t MakeFourCC(const char *val) {
-    return (val[0] << 24) | (val[1] << 16) | (val[2] << 8) | val[3];
-}
+#if defined(__unix__) && !defined(UNIX)
+#define UNIX __unix__
+#endif
 
 #endif // STANDARDLIBS_H

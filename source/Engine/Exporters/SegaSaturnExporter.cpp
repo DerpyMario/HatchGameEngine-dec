@@ -1,20 +1,3 @@
-#if INTERFACE
-#include <Engine/Includes/Standard.h>
-#include <Engine/Exporters/SegaSaturnTypes.h>
-#include <Engine/Rendering/Scene3DTypes.h>
-
-need_t SceneLayer;
-need_t Scene3DObject;
-need_t Scene3DSettings;
-need_t Mesh;
-need_t IModel;
-
-class SegaSaturnExporter {
-public:
-
-};
-#endif
-
 #include <Engine/Exporters/SegaSaturnExporter.h>
 #include <Engine/Exporters/SegaSceneArt.h>
 
@@ -22,6 +5,7 @@ public:
 #include <Engine/Diagnostics/Log.h>
 #include <Engine/Filesystem/Directory.h>
 #include <Engine/Math/Matrix4x4.h>
+#include <Engine/Rendering/Enums.h>
 #include <Engine/Rendering/Material.h>
 #include <Engine/Rendering/Mesh.h>
 #include <Engine/Rendering/Scene3DTypes.h>
@@ -30,7 +14,8 @@ public:
 #include <Engine/ResourceTypes/SceneFormats/Scene3DFormat.h>
 #include <Engine/IO/ResourceStream.h>
 #include <Engine/Scene.h>
-#include <Engine/Scene/SceneLayer.h>
+#include <Engine/Scene/TileLayer.h>
+#include <Engine/Utilities/ColorUtils.h>
 #include <Engine/Utilities/StringUtils.h>
 
 // Turning a Hatch scene into something a SEGA Saturn can show.
@@ -58,7 +43,7 @@ static int                  DroppedFaces;
 // it to put the camera somewhere the scene is actually visible: a fixed
 // distance either buries a large scene in the near plane or leaves a small one
 // as a dot.
-PRIVATE STATIC int SegaSaturnExporter::CameraDistance() {
+int SegaSaturnExporter::CameraDistance() {
     double worst = 0.0;
 
     for (size_t i = 0; i < Vertices.size(); i++) {
@@ -85,7 +70,7 @@ PRIVATE STATIC int SegaSaturnExporter::CameraDistance() {
 
 // Rounded into the five bits a channel the Saturn keeps, then spread back over
 // the full range so comparisons happen in the space it will land in.
-PRIVATE STATIC Uint32 SegaSaturnExporter::QuantizeColor(Uint32 argb) {
+Uint32 SegaSaturnExporter::QuantizeColor(Uint32 argb) {
     Uint32 r = (Uint32)((((argb >> 16) & 0xFF) >> 3) * 255 / 31);
     Uint32 g = (Uint32)((((argb >> 8) & 0xFF) >> 3) * 255 / 31);
     Uint32 b = (Uint32)(((argb & 0xFF) >> 3) * 255 / 31);
@@ -93,7 +78,7 @@ PRIVATE STATIC Uint32 SegaSaturnExporter::QuantizeColor(Uint32 argb) {
     return (r << 16) | (g << 8) | b;
 }
 
-PRIVATE STATIC long SegaSaturnExporter::ColorDistance(Uint32 a, Uint32 b) {
+long SegaSaturnExporter::ColorDistance(Uint32 a, Uint32 b) {
     long dr = (long)((a >> 16) & 0xFF) - (long)((b >> 16) & 0xFF);
     long dg = (long)((a >> 8) & 0xFF) - (long)((b >> 8) & 0xFF);
     long db = (long)(a & 0xFF) - (long)(b & 0xFF);
@@ -101,7 +86,7 @@ PRIVATE STATIC long SegaSaturnExporter::ColorDistance(Uint32 a, Uint32 b) {
     return dr * dr + dg * dg + db * db;
 }
 
-PRIVATE STATIC int SegaSaturnExporter::NearestInPalette(Uint32 color) {
+int SegaSaturnExporter::NearestInPalette(Uint32 color) {
     int best = 0;
     long bestDistance = -1;
 
@@ -119,7 +104,7 @@ PRIVATE STATIC int SegaSaturnExporter::NearestInPalette(Uint32 color) {
 // Counts every colour the picture uses, most-used first. Ordering by use is
 // what makes the reduction below defensible: when something has to go, it is
 // the colour covering the fewest pixels.
-PRIVATE STATIC void SegaSaturnExporter::GatherColors(SceneLayer* layer, int width, int height, vector<SaturnColorUse>* out) {
+void SegaSaturnExporter::GatherColors(TileLayer* layer, int width, int height, vector<SaturnColorUse>* out) {
     std::map<Uint32, size_t> counts;
 
     for (int y = 0; y < height; y++) {
@@ -155,7 +140,7 @@ PRIVATE STATIC void SegaSaturnExporter::GatherColors(SceneLayer* layer, int widt
 // Draws the layer into one byte a pixel. Index 0 stays transparent, so art is
 // laid over 1..255 and anything that did not fit is matched to the nearest that
 // did.
-PRIVATE STATIC void SegaSaturnExporter::BuildImage(SceneLayer* layer, int width, int height) {
+void SegaSaturnExporter::BuildImage(TileLayer* layer, int width, int height) {
     Indices.assign((size_t)width * height, 0);
 
     std::map<Uint32, int> resolved;
@@ -199,7 +184,7 @@ PRIVATE STATIC void SegaSaturnExporter::BuildImage(SceneLayer* layer, int width,
     }
 }
 
-PRIVATE STATIC bool SegaSaturnExporter::WriteBinary(const char* path, const void* data, size_t size) {
+bool SegaSaturnExporter::WriteBinary(const char* path, const void* data, size_t size) {
     FILE* f = fopen(path, "wb");
     if (!f)
         return false;
@@ -210,7 +195,7 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteBinary(const char* path, const void
     return ok;
 }
 
-PRIVATE STATIC bool SegaSaturnExporter::WriteText(const char* path, const char* text) {
+bool SegaSaturnExporter::WriteText(const char* path, const char* text) {
     FILE* f = fopen(path, "w");
     if (!f)
         return false;
@@ -221,7 +206,7 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteText(const char* path, const char* 
     return ok;
 }
 
-PRIVATE STATIC bool SegaSaturnExporter::CopyFile(const char* from, const char* to) {
+bool SegaSaturnExporter::CopyFile(const char* from, const char* to) {
     FILE* in = fopen(from, "rb");
     if (!in)
         return false;
@@ -258,7 +243,7 @@ PRIVATE STATIC bool SegaSaturnExporter::CopyFile(const char* from, const char* t
 // build tree does not necessarily have either -- the binary can be anywhere and
 // the working directory is usually the project being exported -- so
 // --saturn-runtime says outright where it is.
-PRIVATE STATIC bool SegaSaturnExporter::FindRuntime(char* out, size_t outSize) {
+bool SegaSaturnExporter::FindRuntime(char* out, size_t outSize) {
     if (Application::SegaSaturnRuntimePath.size()) {
         StringUtils::Copy(out, Application::SegaSaturnRuntimePath.c_str(), outSize);
         return Directory::Exists(out);
@@ -286,7 +271,7 @@ PRIVATE STATIC bool SegaSaturnExporter::FindRuntime(char* out, size_t outSize) {
 // A title as the Saturn's disc header wants it: fixed width, uppercase ASCII,
 // space padded, no terminator. Anything else is written as a space rather than
 // left to run off the end of a field the console reads by offset.
-PRIVATE STATIC void SegaSaturnExporter::HeaderField(char* out, size_t width, const char* text) {
+void SegaSaturnExporter::HeaderField(char* out, size_t width, const char* text) {
     size_t i = 0;
 
     if (text) {
@@ -311,7 +296,7 @@ PRIVATE STATIC void SegaSaturnExporter::HeaderField(char* out, size_t width, con
 
 // ------------------------------------------------------------ 3D scenes ---
 
-PRIVATE STATIC Uint16 SegaSaturnExporter::ColorToSaturn(Uint32 argb) {
+Uint16 SegaSaturnExporter::ColorToSaturn(Uint32 argb) {
     return SATURN_COLOR_WORD((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF);
 }
 
@@ -321,15 +306,18 @@ PRIVATE STATIC Uint16 SegaSaturnExporter::ColorToSaturn(Uint32 argb) {
 // corners are averaged into the one colour it can use. Failing that the model's
 // material has a diffuse colour, and failing that everything would be black,
 // which reads as a bug rather than as a model -- so it falls back to grey.
-PRIVATE STATIC Uint16 SegaSaturnExporter::FaceColor(Mesh* mesh, IModel* model, Sint32* corners, int cornerCount) {
+Uint16 SegaSaturnExporter::FaceColor(Mesh* mesh, IModel* model, Sint32* corners, int cornerCount) {
     if (mesh->ColorBuffer) {
         Uint32 r = 0, g = 0, b = 0;
 
+        // A model's colours are packed the way ColorUtils::ToRGB packs them,
+        // which is in RGBA byte order rather than as 0xAARRGGBB.
         for (int i = 0; i < cornerCount; i++) {
-            Uint32 c = mesh->ColorBuffer[corners[i]];
-            r += (c >> 16) & 0xFF;
-            g += (c >> 8) & 0xFF;
-            b += c & 0xFF;
+            Uint8 cr, cg, cb, ca;
+            ColorUtils::GetChannels(mesh->ColorBuffer[corners[i]], PixelFormat_RGBA8888, cr, cg, cb, ca);
+            r += cr;
+            g += cg;
+            b += cb;
         }
 
         r /= (Uint32)cornerCount;
@@ -339,8 +327,8 @@ PRIVATE STATIC Uint16 SegaSaturnExporter::FaceColor(Mesh* mesh, IModel* model, S
         return SATURN_COLOR_WORD(r, g, b);
     }
 
-    if (mesh->MaterialIndex >= 0 && model->Materials &&
-        (size_t)mesh->MaterialIndex < model->MaterialCount) {
+    if (mesh->MaterialIndex >= 0 &&
+        (size_t)mesh->MaterialIndex < model->Materials.size()) {
         Material* material = model->Materials[mesh->MaterialIndex];
         if (material) {
             Uint32 r = (Uint32)(material->ColorDiffuse[0] * 255.0f);
@@ -362,7 +350,7 @@ PRIVATE STATIC Uint16 SegaSaturnExporter::FaceColor(Mesh* mesh, IModel* model, S
 // Walks one placed model into the shared vertex and face tables, with its
 // position, rotation and scale already applied. The console gets world space
 // and never has to know a scene graph existed.
-PRIVATE STATIC void SegaSaturnExporter::CollectModel(IModel* model, Scene3DObject* object) {
+void SegaSaturnExporter::CollectModel(IModel* model, Scene3DObject* object) {
     Matrix4x4 rotation, scale, transform;
 
     Matrix4x4::IdentityRotationXYZ(&rotation, object->RotationX, object->RotationY, object->RotationZ);
@@ -370,7 +358,7 @@ PRIVATE STATIC void SegaSaturnExporter::CollectModel(IModel* model, Scene3DObjec
     Matrix4x4::Multiply(&transform, &rotation, &scale);
     Matrix4x4::Translate(&transform, &transform, object->X, object->Y, object->Z);
 
-    for (size_t m = 0; m < model->MeshCount; m++) {
+    for (size_t m = 0; m < model->Meshes.size(); m++) {
         Mesh* mesh = model->Meshes[m];
         if (!mesh || !mesh->PositionBuffer || !mesh->VertexIndexBuffer)
             continue;
@@ -453,7 +441,7 @@ PRIVATE STATIC void SegaSaturnExporter::CollectModel(IModel* model, Scene3DObjec
     }
 }
 
-PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene3D(const char* outputPath, const char* scenePath) {
+SegaSaturnExportResult SegaSaturnExporter::ExportScene3D(const char* outputPath, const char* scenePath) {
     SegaSaturnExportResult result;
     memset(&result, 0, sizeof(result));
     result.Is3D = true;
@@ -478,15 +466,13 @@ PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene3D(const cha
     int loaded = 0;
 
     for (size_t i = 0; i < objects.size(); i++) {
-        ResourceStream* stream = ResourceStream::New(objects[i].Source);
-        if (!stream) {
+        if (!ResourceManager::ResourceExists(objects[i].Source)) {
             Log::Print(Log::LOG_WARN, "Saturn export: could not open model \"%s\".", objects[i].Source);
             continue;
         }
 
-        IModel* model = new IModel();
-        bool ok = model->Load(stream, objects[i].Source);
-        stream->Close();
+        IModel* model = new IModel(objects[i].Source);
+        bool ok = !model->LoadFailed;
 
         if (!ok) {
             Log::Print(Log::LOG_WARN, "Saturn export: could not read model \"%s\".", objects[i].Source);
@@ -533,11 +519,11 @@ PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene3D(const cha
 
 // ------------------------------------------------------------ 2D scenes ---
 
-PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene(const char* outputPath) {
+SegaSaturnExportResult SegaSaturnExporter::ExportScene(const char* outputPath) {
     SegaSaturnExportResult result;
     memset(&result, 0, sizeof(result));
 
-    SceneLayer* layer = SegaSceneArt::PickLayer();
+    TileLayer* layer = SegaSceneArt::PickLayer();
     if (!layer) {
         StringUtils::Copy(result.Message, "The scene has no visible tile layer to export.", sizeof(result.Message));
         return result;
@@ -612,7 +598,7 @@ PUBLIC STATIC SegaSaturnExportResult SegaSaturnExporter::ExportScene(const char*
 
 // -------------------------------------------------------------- writing ---
 
-PRIVATE STATIC bool SegaSaturnExporter::WriteProject(const char* outputPath, SegaSaturnExportResult* result) {
+bool SegaSaturnExporter::WriteProject(const char* outputPath, SegaSaturnExportResult* result) {
     char path[1024];
     char runtime[1024];
 
@@ -734,7 +720,7 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteProject(const char* outputPath, Seg
     return SegaSaturnExporter::WriteSources(outputPath, result);
 }
 
-PRIVATE STATIC bool SegaSaturnExporter::WriteIPHeader(const char* outputPath, SegaSaturnExportResult* result) {
+bool SegaSaturnExporter::WriteIPHeader(const char* outputPath, SegaSaturnExportResult* result) {
     char path[1024];
     char text[4096];
     char title[113];
@@ -783,7 +769,7 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteIPHeader(const char* outputPath, Se
     return true;
 }
 
-PRIVATE STATIC bool SegaSaturnExporter::WriteSources(const char* outputPath, SegaSaturnExportResult* result) {
+bool SegaSaturnExporter::WriteSources(const char* outputPath, SegaSaturnExportResult* result) {
     char path[1024];
     char text[8192];
 
@@ -1033,7 +1019,7 @@ PRIVATE STATIC bool SegaSaturnExporter::WriteSources(const char* outputPath, Seg
     return SegaSaturnExporter::WriteReadme(outputPath, result);
 }
 
-PRIVATE STATIC bool SegaSaturnExporter::WriteReadme(const char* outputPath, SegaSaturnExportResult* result) {
+bool SegaSaturnExporter::WriteReadme(const char* outputPath, SegaSaturnExportResult* result) {
     char path[1024];
     char text[8192];
 
