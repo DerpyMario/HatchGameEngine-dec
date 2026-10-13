@@ -1,0 +1,3 @@
+# Written by the engine when it compiles the scripts, and when it runs.
+Resources/Objects/
+*.log

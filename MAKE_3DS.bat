@@ -5,7 +5,7 @@ IF NOT EXIST %OBJ_FOLDER% MKDIR %OBJ_FOLDER%
 REM Headers are written by hand next to their sources now, so there is
 REM nothing to generate before building.
 
-make -f Makefile.3ds
+make -f MakeFile.3ds
 if NOT %errorlevel% == 0 goto :FINISHED
 
 COPY /Y "builds\3ds\HatchGameEngine.3dsx" "Z:\3ds\Homebrew\HatchGameEngine.3dsx"

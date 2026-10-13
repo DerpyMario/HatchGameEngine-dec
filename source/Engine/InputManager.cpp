@@ -375,7 +375,8 @@ void InputManager::OnFrameBegin() {
 void InputManager::Poll() {
 	if (Application::Platform == Platforms::iOS ||
 		Application::Platform == Platforms::Android ||
-		Application::Platform == Platforms::Switch) {
+		Application::Platform == Platforms::Switch ||
+		Application::Platform == Platforms::Nintendo3DS) {
 		int w, h;
 		TouchState* states = (TouchState*)TouchStates;
 		SDL_GetWindowSize(Application::Window, &w, &h);

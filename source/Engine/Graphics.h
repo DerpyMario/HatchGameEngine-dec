@@ -121,6 +121,10 @@ public:
 	static bool UseTinting;
 	static bool UseDepthTesting;
 	static bool UseSoftwareRenderer;
+	// Set when the backend can show a finished frame but cannot draw one
+	// properly itself, so every view is drawn by the software renderer
+	// whatever the game asked for.
+	static bool SoftwareViewsRequired;
 	static bool UseIntegerRotation;
 	static unsigned CurrentFrame;
 	// Rendering functions

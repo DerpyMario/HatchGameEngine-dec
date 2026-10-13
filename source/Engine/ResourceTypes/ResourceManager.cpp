@@ -18,6 +18,7 @@ VFSProvider* mainResource = nullptr;
 bool ResourceManager::UsingDataFolder = false;
 bool ResourceManager::AllowMissingData = false;
 char ResourceManager::DataFolderPath[MAX_PATH_LENGTH];
+char ResourceManager::DataFilePath[MAX_PATH_LENGTH];
 
 const char* data_files[] = {PATHLOCATION_GAME_URL "Data.hatch",
 	PATHLOCATION_GAME_URL "Game.hatch",
@@ -65,6 +66,7 @@ bool ResourceManager::Init(const char* dataFilePath, bool useResourcesFolder) {
 
 	UsingDataFolder = false;
 	DataFolderPath[0] = '\0';
+	DataFilePath[0] = '\0';
 
 	vfs = new VirtualFileSystem();
 
@@ -145,8 +147,12 @@ bool ResourceManager::Init(const char* dataFilePath, bool useResourcesFolder) {
 
 		Log::Print(Log::LOG_VERBOSE, "Loading \"%s\"...", filenameOnly);
 
-		ResourceManager::Mount(
-			RESOURCES_VFS_NAME, filename, nullptr, VFSType::HATCH, VFS_READABLE);
+		if (ResourceManager::Mount(
+			    RESOURCES_VFS_NAME, filename, nullptr, VFSType::HATCH, VFS_READABLE)) {
+			std::string fullPath = Path::Normalize(Path::ToAbsolute(filename));
+
+			StringUtils::Copy(DataFilePath, fullPath.c_str(), sizeof DataFilePath);
+		}
 	}
 
 	Memory::Free(filename);

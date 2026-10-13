@@ -20037,7 +20037,9 @@ VMValue View_SetUseSoftwareRenderer(int argCount, VMValue* args, Uint32 threadID
 	int view_index = GET_ARG(0, GetInteger);
 	int usedswrend = GET_ARG(1, GetInteger);
 	CHECK_VIEW_INDEX();
-	Scene::Views[view_index].Software = !!usedswrend;
+	// Where the software renderer is the only one that draws everything, a
+	// view cannot be taken off it.
+	Scene::Views[view_index].Software = !!usedswrend || Graphics::SoftwareViewsRequired;
 	return NULL_VAL;
 }
 /***
@@ -21328,6 +21330,16 @@ They require the Game SDK library to be present.
     * \desc Unknown platform.
     */
 	DEF_ENUM_NAMED("Platform", Platforms, Unknown);
+	/***
+    * \enum Platform_Web
+    * \desc Web browser platform.
+    */
+	DEF_ENUM_NAMED("Platform", Platforms, Web);
+	/***
+    * \enum Platform_Nintendo3DS
+    * \desc Nintendo 3DS platform.
+    */
+	DEF_ENUM_NAMED("Platform", Platforms, Nintendo3DS);
 	// #endregion
 
 	// #region Directory

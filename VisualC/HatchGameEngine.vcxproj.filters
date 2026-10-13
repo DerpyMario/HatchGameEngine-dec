@@ -519,6 +519,9 @@
     <ClCompile Include="..\source\Engine\Exporters\MegaDriveExporter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\source\Engine\Exporters\Nintendo3DSExporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\source\Engine\Exporters\Sega32XExporter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -529,6 +532,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\Engine\Exporters\SegaVDPConverter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source\Engine\Platforms\3DS\System.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\source\Engine\Platforms\Xbox\Exceptions.cpp">
@@ -714,6 +720,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\source\Engine\Exporters\MegaDriveTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\source\Engine\Exporters\Nintendo3DSExporter.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\source\Engine\Exporters\Sega32XExporter.h">

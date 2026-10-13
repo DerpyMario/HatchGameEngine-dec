@@ -2,6 +2,7 @@
 
 #include <Engine/Application.h>
 #include <Engine/Diagnostics/Log.h>
+#include <Engine/Error.h>
 #include <Engine/Rendering/Texture.h>
 
 #ifdef IOS
@@ -12,6 +13,13 @@ extern "C" {
 
 SDL_Renderer* Renderer = NULL;
 float SDL2Renderer::RenderScale = 1.0f;
+
+// Whether nothing has been drawn on the screen since it was cleared.
+static bool ScreenUntouched = false;
+
+// A view converted to the screen's pixel format, on its way to being scaled
+// onto it; see DrawTexture.
+static SDL_Texture* ScreenFormatView = NULL;
 
 vector<Texture*> TextureList;
 
@@ -43,7 +51,30 @@ void SDL2Renderer::Init() {
 	}
 	Renderer = SDL_CreateRenderer(Application::Window, -1, flags);
 
+	// Where SDL can only draw in software -- the 3DS, for one -- there is no
+	// accelerated renderer to be had, and asking for one gets nothing at all.
+	// Without this, every draw call after it went to a renderer that did not
+	// exist, and the screen stayed black.
+	if (!Renderer) {
+		Log::Print(Log::LOG_WARN,
+			"No accelerated SDL renderer (%s); drawing in software.",
+			SDL_GetError());
+
+		flags = (flags & ~SDL_RENDERER_ACCELERATED) | SDL_RENDERER_SOFTWARE;
+		Renderer = SDL_CreateRenderer(Application::Window, -1, flags);
+
+		// This renderer copies textures but has no shapes -- no rectangles,
+		// lines or polygons. The engine's own software renderer has all of
+		// them, and with SDL drawing in software anyway it costs nothing on
+		// top: it draws each view, and SDL only puts the result on screen.
+		Graphics::SoftwareViewsRequired = true;
+	}
+	if (!Renderer) {
+		Error::Fatal("Could not create an SDL renderer: %s", SDL_GetError());
+	}
+
 	SDL_RendererInfo rendererInfo;
+	memset(&rendererInfo, 0, sizeof rendererInfo);
 	SDL_GetRendererInfo(Renderer, &rendererInfo);
 
 	Graphics::SupportsShaders = false;
@@ -53,6 +84,15 @@ void SDL2Renderer::Init() {
 
 	Graphics::MaxTextureWidth = rendererInfo.max_texture_width;
 	Graphics::MaxTextureHeight = rendererInfo.max_texture_height;
+
+	// SDL says 0 when there is no limit, which the software renderer has none
+	// of; taken at its word, it would refuse every image and font atlas.
+	if (Graphics::MaxTextureWidth == 0) {
+		Graphics::MaxTextureWidth = 4096;
+	}
+	if (Graphics::MaxTextureHeight == 0) {
+		Graphics::MaxTextureHeight = 4096;
+	}
 
 	int w, h, ww, wh;
 	// SDL_GL_GetDrawableSize(Application::Window, &w, &h);
@@ -140,6 +180,11 @@ void SDL2Renderer::SetGraphicsFunctions() {
 	Graphics::Internal.MakeFrameBufferID = SDL2Renderer::MakeFrameBufferID;
 }
 void SDL2Renderer::Dispose() {
+	if (ScreenFormatView) {
+		SDL_DestroyTexture(ScreenFormatView);
+		ScreenFormatView = NULL;
+	}
+
 	SDL_DestroyRenderer(Renderer);
 }
 
@@ -365,6 +410,10 @@ void SDL2Renderer::MakePerspectiveMatrix(Matrix4x4* out,
 void SDL2Renderer::Clear() {
 	SDL_RenderClear(Renderer);
 
+	if (SDL_GetRenderTarget(Renderer) == NULL) {
+		ScreenUntouched = true;
+	}
+
 	int w, h, ww, wh;
 	SDL_GetRendererOutputSize(Renderer, &w, &h);
 	SDL_GetWindowSize(Application::Window, &ww, &wh);
@@ -479,6 +528,52 @@ void SDL2Renderer::DrawTexture(Texture* texture,
 		(int)h,
 	};
 	SDL_Texture** textureData = (SDL_Texture**)texture->DriverData;
+
+	// The first view put on a screen that has just been cleared to black has
+	// nothing under it to blend with. A software view's pixels are all either
+	// opaque or never drawn, and so still zero, and either way blending them
+	// over black gives back what is already there -- so the view is copied
+	// across as it is. Where SDL draws in software, as on the 3DS, blending
+	// is most of the cost of a frame. Anything drawn after it blends as usual,
+	// which is what keeps a view laid over another one see-through.
+	bool drawingOnScreen = SDL_GetRenderTarget(Renderer) == NULL;
+	bool copyOpaque = drawingOnScreen && ScreenUntouched && Graphics::SoftwareViewsRequired &&
+		texture->Access == TextureAccess_RENDERTARGET && !Graphics::TextureBlend;
+	SDL_SetTextureBlendMode(*textureData, copyOpaque ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
+	if (drawingOnScreen) {
+		ScreenUntouched = false;
+	}
+
+	// SDL scales quickly only between two surfaces of the same pixel format,
+	// and a view is not in the screen's -- certainly not on the 3DS, where SDL
+	// has no fast way between the two at all and a scaled view took longer
+	// than everything else in a frame together. So the view is converted at
+	// its own size first, which is quick, and the copy is what gets scaled.
+	if (copyOpaque && dst.w > 0 && dst.h > 0 && (src.w != dst.w || src.h != dst.h)) {
+		Uint32 screenFormat = SDL_GetWindowPixelFormat(Application::Window);
+		int w = 0, h = 0;
+		Uint32 format = 0;
+		if (ScreenFormatView) {
+			SDL_QueryTexture(ScreenFormatView, &format, NULL, &w, &h);
+		}
+		if (!ScreenFormatView || w != src.w || h != src.h || format != screenFormat) {
+			if (ScreenFormatView) {
+				SDL_DestroyTexture(ScreenFormatView);
+			}
+			ScreenFormatView = SDL_CreateTexture(
+				Renderer, screenFormat, SDL_TEXTUREACCESS_TARGET, src.w, src.h);
+		}
+
+		if (ScreenFormatView && SDL_SetRenderTarget(Renderer, ScreenFormatView) == 0) {
+			SDL_RenderCopy(Renderer, *textureData, &src, NULL);
+			SDL_SetRenderTarget(Renderer, NULL);
+
+			SDL_SetTextureBlendMode(ScreenFormatView, SDL_BLENDMODE_NONE);
+			SDL_RenderCopy(Renderer, ScreenFormatView, NULL, &dst);
+			return;
+		}
+	}
+
 	int flip = 0;
 	if (dst.w < 0) {
 		dst.w = -dst.w;

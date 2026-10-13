@@ -172,6 +172,9 @@ public:
 	static std::string DreamcastExportPath;
 	static std::string DreamcastRuntimePath;
 	static std::string DreamcastScene3DPath;
+	static std::string Nintendo3DSExportPath;
+	static std::string Nintendo3DSRuntimePath;
+	static std::string Nintendo3DSIconPath;
 	static std::string ConvertModelFrom;
 	static std::string ConvertModelTo;
 

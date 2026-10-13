@@ -1,64 +1,85 @@
 #---------------------------------------------------------------------------------
-.SUFFIXES:
+# The Nintendo 3DS, with devkitPro's own Makefile rules. CMakeLists.txt builds
+# the same engine with the same settings (cmake/Platforms/Nintendo3DS.cmake);
+# this is the way devkitPro's examples build, and what MAKE_3DS.bat runs.
+#
+#   make -f MakeFile.3ds
+#
+# Needs devkitARM, libctru, 3dstools, 3ds-libpng and 3ds-zlib from devkitPro,
+# and SDL2 built for the 3DS and installed into $(DEVKITPRO)/portlibs/3ds --
+# devkitPro packages only SDL 1.2 for the 3DS. The README has the commands.
+#
+# Writes builds/3ds/HatchGameEngine.3dsx. Set ROMFS to a folder holding a
+# Data.hatch to build a game into it.
 #---------------------------------------------------------------------------------
+.SUFFIXES:
 
 ifeq ($(strip $(DEVKITPRO)),)
 $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=/opt/devkitpro")
 endif
 
+# This file, for the second pass below. It is spelled MakeFile.3ds, which a
+# Windows filesystem lets MAKE_3DS.bat call Makefile.3ds; anywhere else, the
+# case matters.
+THIS_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
+
 TOPDIR ?= $(CURDIR)
+
+# Before 3ds_rules, which fills in its own for anything not set yet.
+APP_TITLE := Hatch Game Engine
+APP_DESCRIPTION := Runs games made with Hatch
+APP_AUTHOR := HatchGameEngine
+APP_ICON := $(TOPDIR)/meta/3ds/icon.png
+
 include $(DEVKITPRO)/devkitARM/3ds_rules
 
 rwc = $(foreach d, $(wildcard $1*), $(call rwc,$d/,$2) $(filter $(subst *,%,$2),$d))
 
-SRC_C = $(call rwc, source/, *.c)
-SRC_CPP = $(call rwc, source/, *.cpp)
-SRC_DIRS := $(sort \
-    $(addprefix source/, $(dir $(SRC_C:source/%.c=%.o))) \
-    $(addprefix source/, $(dir $(SRC_CPP:source/%.cpp=%.o))) )
+# Everything under source/ but linenoise, which drives a terminal the 3DS does
+# not have.
+SRC_ALL := $(call rwc, source/, *.c) $(call rwc, source/, *.cpp)
+SRC_ALL := $(filter-out source/Libraries/linenoise-ng/%, $(SRC_ALL))
+SRC_DIRS := $(sort $(patsubst %/,%,$(dir $(SRC_ALL))))
 
-TARGETNAME = HatchGameEngine
+TARGETNAME := HatchGameEngine
 TARGET := builds/3ds/$(TARGETNAME)
 BUILD := out/3ds
 SOURCES := $(SRC_DIRS)
-DATA := data
-INCLUDES := source include
-ROMFS := romfs
-
-APP_TITLE := HatchGameEngine
-APP_DESCRIPTION := Game Engine
-APP_AUTHOR := aknetk
-APP_ICON := meta/3ds/icon.png
+DATA :=
+INCLUDES := source
+ROMFS ?=
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
-CFLAGS := -g -Wall -O3 -mword-relocations \
-          -fomit-frame-pointer -ffunction-sections \
-          $(ARCH) $(DEFINES)
+CFLAGS := -g -Wall -O2 -mword-relocations \
+          -ffunction-sections \
+          $(ARCH)
 
+# The same definitions as a CMake Release build.
 CFLAGS += $(INCLUDE) -D__3DS__ \
-          -DTARGET_3DS -DOGG_MUSIC -DDEBUG \
+          -DN3DS -DCONSOLE_FILESYSTEM -DSDL_MAIN_HANDLED \
+          -DUSING_LIBPNG -DUSING_VM_FUNCPTRS \
+          -DALLOW_COMMAND_LINE_RESOURCE_LOAD -DUSE_DEFAULT_FONTS \
+          -DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_TIME \
           -DTARGET_NAME=\"$(TARGETNAME)\"
 
-CXXFLAGS := $(CFLAGS) -fno-rtti -fexceptions -std=gnu++14
+CXXFLAGS := $(CFLAGS) -std=gnu++17
 
 ASFLAGS := -g $(ARCH)
 LDFLAGS = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-# Libraries
-LIBS := -lSDL_image -lSDL
-LIBS += -lpng -ljpeg -lz
-LIBS += -lvorbisidec -logg
-LIBS += -lcitro3d -lctru
-LIBS += -lm
+LIBS := -lSDL2 -lpng -lz -lctru -lm
 
 LIBDIRS := $(PORTLIBS) $(CTRULIB)
 
 #---------------------------------------------------------------------------------
-ifneq ($(BUILD),$(notdir $(CURDIR)))
+# The first pass runs from the top and goes into $(BUILD) to run the second.
+# BUILD is two folders deep, so only its last part is what the second pass
+# finds itself in.
+ifneq ($(notdir $(BUILD)),$(notdir $(CURDIR)))
 #---------------------------------------------------------------------------------
 
 export OUTPUT := $(CURDIR)/$(TARGET)
@@ -69,50 +90,48 @@ export DEPSDIR := $(CURDIR)/$(BUILD)
 
 CFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+CPPFILES := $(filter-out linenoise.cpp wcwidth.cpp,$(CPPFILES))
 SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
-BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-ifeq ($(strip $(CPPFILES)),)
-    export LD := $(CC)
-else
-    export LD := $(CXX)
-endif
+export LD := $(CXX)
 
-export OFILES_BIN := $(addsuffix .o,$(BINFILES))
 export OFILES_SRC := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export OFILES := $(OFILES_BIN) $(OFILES_SRC)
-export HFILES_BIN := $(addsuffix .h,$(subst .,_,$(BINFILES)))
+export OFILES := $(OFILES_SRC)
 
+# SDL2's headers are included as <SDL.h>.
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-                 $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                 -I$(CURDIR)/$(BUILD)
+                  $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+                  -I$(PORTLIBS)/include/SDL2 \
+                  -I$(CURDIR)/$(BUILD)
 
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+export _3DSXFLAGS := --smdh=$(OUTPUT).smdh
+ifneq ($(strip $(ROMFS)),)
+export _3DSXFLAGS += --romfs=$(abspath $(ROMFS))
+endif
 
 .PHONY: $(BUILD) clean all
 
 all: $(BUILD)
 
 $(BUILD):
-	@mkdir -p "builds"
-	@mkdir -p "builds/3ds"
-	@mkdir -p "out"
-	@mkdir -p "out/3ds"
+	@mkdir -p builds/3ds
 	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.3ds
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(THIS_MAKEFILE)
 
 clean:
-	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).elf $(TARGET).cia
+	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).smdh $(TARGET).elf
 
 else
 
 DEPENDS := $(OFILES:.o=.d)
 
-all: $(OUTPUT).3dsx $(OUTPUT).cia
+all: $(OUTPUT).3dsx
 
-$(OUTPUT).3dsx: $(OUTPUT).elf
+$(OUTPUT).3dsx: $(OUTPUT).elf $(OUTPUT).smdh
 $(OUTPUT).elf: $(OFILES)
 
-$(OFILES_SRC): $(HFILES_BIN)
+-include $(DEPENDS)
 
 endif

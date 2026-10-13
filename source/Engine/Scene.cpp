@@ -721,7 +721,8 @@ void Scene::Init() {
 	Scene::ViewCurrent = 0;
 	for (int i = 0; i < MAX_SCENE_VIEWS; i++) {
 		Scene::Views[i].Active = false;
-		Scene::Views[i].Software = Graphics::UseSoftwareRenderer;
+		Scene::Views[i].Software =
+			Graphics::UseSoftwareRenderer || Graphics::SoftwareViewsRequired;
 		Scene::Views[i].Priority = 0;
 		Scene::Views[i].Width = Application::WindowWidth;
 		Scene::Views[i].Height = Application::WindowHeight;

@@ -16,6 +16,7 @@
 #include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/MegaCDExporter.h>
 #include <Engine/Exporters/MegaDriveExporter.h>
+#include <Engine/Exporters/Nintendo3DSExporter.h>
 #include <Engine/Exporters/Sega32XExporter.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
 #include <Engine/Extensions/Discord.h>
@@ -52,6 +53,10 @@ extern "C" {
 #include <emscripten.h>
 #endif
 
+#ifdef N3DS
+#include <Engine/Platforms/3DS/System.h>
+#endif
+
 #ifdef MSYS
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #define _CRT_SECURE_NO_WARNINGS
@@ -69,6 +74,8 @@ extern "C" {
 Platforms Application::Platform = Platforms::Xbox;
 #elif EMSCRIPTEN
 Platforms Application::Platform = Platforms::Web;
+#elif N3DS
+Platforms Application::Platform = Platforms::Nintendo3DS;
 #elif WIN32
 Platforms Application::Platform = Platforms::Windows;
 #elif MACOSX
@@ -168,6 +175,9 @@ std::string Application::SegaSaturnScene3DPath;
 std::string Application::DreamcastExportPath;
 std::string Application::DreamcastRuntimePath;
 std::string Application::DreamcastScene3DPath;
+std::string Application::Nintendo3DSExportPath;
+std::string Application::Nintendo3DSRuntimePath;
+std::string Application::Nintendo3DSIconPath;
 std::string Application::ConvertModelFrom;
 std::string Application::ConvertModelTo;
 
@@ -459,6 +469,10 @@ void Application::PrintCommandLineUsage() {
 	printf("                          beside the engine or the working directory.\n");
 	printf("  --saturn-runtime <p>    The same, for meta/saturn/runtime.\n");
 	printf("  --dreamcast-runtime <p> The same, for meta/dreamcast/runtime.\n");
+	printf("  --export-3ds <file>     Pack the whole game into a .3dsx for the\n");
+	printf("                          Nintendo 3DS and exit. Needs --3ds-runtime.\n");
+	printf("  --3ds-runtime <file>    The engine built for the 3DS, as a .3dsx.\n");
+	printf("  --3ds-icon <file>       A PNG to use as the game's 3DS icon.\n");
 	printf("  --convert-model <from> <to>\n");
 	printf("                          Load a model and save it as a Hatch model.\n");
 	printf("  --help                  Show this text.\n\n");
@@ -557,6 +571,17 @@ size_t Application::ProcessCommandLineOption(std::string arg, size_t i) {
 	else if (arg == "--dreamcast-runtime") {
 		return ReadCmdLinePath(i, DreamcastRuntimePath);
 	}
+	// The 3DS runs the engine itself, so this exports the whole game rather
+	// than a scene.
+	else if (arg == "--export-3ds") {
+		return ReadCmdLinePath(i, Nintendo3DSExportPath);
+	}
+	else if (arg == "--3ds-runtime") {
+		return ReadCmdLinePath(i, Nintendo3DSRuntimePath);
+	}
+	else if (arg == "--3ds-icon") {
+		return ReadCmdLinePath(i, Nintendo3DSIconPath);
+	}
 	// A 3D scene is not the scene that is loaded -- it is a file of its own --
 	// so these are told which one to carry rather than guessing.
 	else if (arg == "--export-saturn-3d") {
@@ -633,13 +658,27 @@ void Application::LogSystemInfo() {
 	case Platforms::Web:
 		platform = "Web";
 		break;
+	case Platforms::Nintendo3DS:
+		platform = "Nintendo 3DS";
+		break;
 	default:
 		platform = "Unknown";
 		break;
 	}
 	Log::Print(Log::LOG_INFO, "Current Platform: %s", platform);
 	Log::Print(Log::LOG_VERBOSE, "CPU Core Count: %d", SDL_GetCPUCount());
+#ifdef N3DS
+	// SDL has no answer for this on the 3DS, and how close a game is to the
+	// limit matters more there than anywhere.
+	size_t total, used;
+	N3DS_GetMemory(&total, &used);
+	Log::Print(Log::LOG_INFO,
+		"Heap: %d MB, %d MB in use",
+		(int)(total / (1024 * 1024)),
+		(int)(used / (1024 * 1024)));
+#else
 	Log::Print(Log::LOG_INFO, "System Memory: %d MB", SDL_GetSystemRAM());
+#endif
 }
 void Application::CreateWindow() {
 	bool allowRetina = false;
@@ -666,6 +705,11 @@ void Application::CreateWindow() {
 		window_flags);
 
 	if (Application::Platform == Platforms::iOS) {
+		SDL_SetWindowFullscreen(Application::Window, SDL_WINDOW_FULLSCREEN);
+	}
+	else if (Application::Platform == Platforms::Nintendo3DS) {
+		// SDL makes every window on the 3DS fill a screen; asking for that
+		// outright keeps the window's size and the screen's in step.
 		SDL_SetWindowFullscreen(Application::Window, SDL_WINDOW_FULLSCREEN);
 	}
 	else if (Application::Platform == Platforms::Switch) {
@@ -2309,7 +2353,17 @@ void Application::RunWebFrame() {
 bool Application::IsExportRequested() {
 	return MegaDriveExportPath.size() || Sega32XExportPath.size() || MegaCDExportPath.size() ||
 		GameGearExportPath.size() || SegaSaturnExportPath.size() ||
-		DreamcastExportPath.size() || ConvertModelFrom.size();
+		DreamcastExportPath.size() || Nintendo3DSExportPath.size() || ConvertModelFrom.size();
+}
+
+// --project-dir moves into the project, so a path given relative to where the
+// engine was started has to be taken from there.
+static std::string FromLaunchDirectory(const std::string& path) {
+	if (path.size() == 0 || Path::IsAbsolute(path.c_str())) {
+		return path;
+	}
+
+	return Path::Concat(LaunchDirectory, path);
 }
 
 bool Application::RunRequestedExport() {
@@ -2342,6 +2396,15 @@ bool Application::RunRequestedExport() {
 			? DreamcastExporter::ExportScene3D(
 				  DreamcastExportPath.c_str(), DreamcastScene3DPath.c_str())
 			: DreamcastExporter::ExportScene(DreamcastExportPath.c_str());
+		REPORT_EXPORT(exported);
+	}
+	if (Nintendo3DSExportPath.size()) {
+		std::string output = FromLaunchDirectory(Nintendo3DSExportPath);
+		std::string runtime = FromLaunchDirectory(Nintendo3DSRuntimePath);
+		std::string icon = FromLaunchDirectory(Nintendo3DSIconPath);
+
+		Nintendo3DSExportResult exported =
+			Nintendo3DSExporter::Export(output.c_str(), runtime.c_str(), icon.c_str());
 		REPORT_EXPORT(exported);
 	}
 	if (SegaSaturnExportPath.size()) {

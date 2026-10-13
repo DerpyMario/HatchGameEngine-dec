@@ -332,10 +332,12 @@ copy "$(TargetPath)" "$(SolutionDir)..\builds\win\$(TargetName)-Release.exe"</Co
     <ClCompile Include="..\source\Engine\Exporters\GameGearExporter.cpp" />
     <ClCompile Include="..\source\Engine\Exporters\MegaCDExporter.cpp" />
     <ClCompile Include="..\source\Engine\Exporters\MegaDriveExporter.cpp" />
+    <ClCompile Include="..\source\Engine\Exporters\Nintendo3DSExporter.cpp" />
     <ClCompile Include="..\source\Engine\Exporters\Sega32XExporter.cpp" />
     <ClCompile Include="..\source\Engine\Exporters\SegaSaturnExporter.cpp" />
     <ClCompile Include="..\source\Engine\Exporters\SegaSceneArt.cpp" />
     <ClCompile Include="..\source\Engine\Exporters\SegaVDPConverter.cpp" />
+    <ClCompile Include="..\source\Engine\Platforms\3DS\System.cpp" />
     <ClCompile Include="..\source\Engine\Platforms\Xbox\Exceptions.cpp" />
     <ClCompile Include="..\source\Engine\Platforms\Xbox\Filesystem.cpp" />
     <ClCompile Include="..\source\Engine\ResourceTypes\SceneFormats\Scene3DFormat.cpp" />
@@ -399,6 +401,7 @@ copy "$(TargetPath)" "$(SolutionDir)..\builds\win\$(TargetName)-Release.exe"</Co
     <ClInclude Include="..\source\Engine\Exporters\MegaCDTypes.h" />
     <ClInclude Include="..\source\Engine\Exporters\MegaDriveExporter.h" />
     <ClInclude Include="..\source\Engine\Exporters\MegaDriveTypes.h" />
+    <ClInclude Include="..\source\Engine\Exporters\Nintendo3DSExporter.h" />
     <ClInclude Include="..\source\Engine\Exporters\Sega32XExporter.h" />
     <ClInclude Include="..\source\Engine\Exporters\Sega32XTypes.h" />
     <ClInclude Include="..\source\Engine\Exporters\SegaSaturnExporter.h" />
