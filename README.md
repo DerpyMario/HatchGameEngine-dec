@@ -990,7 +990,7 @@ Required:
 - Visual C++ (for Windows building)
 - Android Studio (for Android building)
 - Xcode 12 (for iOS building)
-- [devkitPro](https://devkitpro.org/) (for Nintendo Switch and Nintendo 3DS homebrew building)
+- [devkitPro](https://devkitpro.org/) (for Nintendo Switch and Nintendo 3DS homebrew building) (still in it's early support infancy but experimental)
 - [makerom](https://github.com/3DSGuy/Project_CTR) and [bannertool](https://github.com/diasurgical/bannertool) (to make a 3DS export into a `.cia`)
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 - [Emscripten](https://emscripten.org/) (for WebAssembly building)
