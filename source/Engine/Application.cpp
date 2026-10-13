@@ -1270,7 +1270,9 @@ void Application::Restart(bool keepScene) {
 	FirstFrame = true;
 }
 
-bool Application::ChangeGame(const char* path) {
+// useResourcesFolder opens a folder the way the engine opens the Resources it
+// starts with -- as a folder the editor can write to -- rather than read-only.
+bool Application::ChangeGame(const char* path, bool useResourcesFolder) {
 	char startingScene[MAX_PATH_LENGTH];
 	char lastSettingsPath[MAX_PATH_LENGTH];
 	char currentSettingsPath[MAX_PATH_LENGTH];
@@ -1287,7 +1289,7 @@ bool Application::ChangeGame(const char* path) {
 
 	Application::UnloadGame();
 
-	if (!ResourceManager::Init(path)) {
+	if (!ResourceManager::Init(path, useResourcesFolder)) {
 		if (NextGameCmdLineArgs) {
 			delete NextGameCmdLineArgs;
 			NextGameCmdLineArgs = nullptr;
@@ -2476,7 +2478,7 @@ static bool SwitchProject(std::string directory, std::string data, std::string s
 
 	StringUtils::Copy(SourceFileMap::Path, scripts.c_str(), sizeof(SourceFileMap::Path));
 
-	return Application::ChangeGame(data.size() ? data.c_str() : nullptr);
+	return Application::ChangeGame(data.size() ? data.c_str() : nullptr, true);
 }
 
 // Points the engine at a different game: either a folder holding a Resources

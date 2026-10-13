@@ -210,7 +210,7 @@ public:
 	static bool SetNextGame(const char* path,
 		const char* startingScene,
 		std::vector<std::string>* cmdLineArgs);
-	static bool ChangeGame(const char* path);
+	static bool ChangeGame(const char* path, bool useResourcesFolder = false);
 	static void SetMasterVolume(int volume);
 	static void SetMusicVolume(int volume);
 	static void SetSoundVolume(int volume);
