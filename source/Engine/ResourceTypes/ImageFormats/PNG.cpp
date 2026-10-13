@@ -47,7 +47,9 @@ PNG* PNG::Load(Stream* stream) {
 	// PNG variables
 	png_structp png_ptr = NULL;
 	png_infop info_ptr = NULL;
-	Uint32 width, height;
+	// png_uint_32 rather than Uint32: the two are different types on targets
+	// where uint32_t is unsigned long, the 3DS among them.
+	png_uint_32 width, height;
 	int bit_depth, color_type, palette_size;
 	bool usePalette = false;
 	bool hasTransparency = false;

@@ -313,6 +313,10 @@ HatchGameEngine [options] [scene file]
                           beside the engine or the working directory.
   --saturn-runtime <p>    The same, for meta/saturn/runtime.
   --dreamcast-runtime <p> The same, for meta/dreamcast/runtime.
+  --export-3ds <file>     Pack the whole game into a .3dsx for the
+                          Nintendo 3DS and exit. Needs --3ds-runtime.
+  --3ds-runtime <file>    The engine built for the 3DS, as a .3dsx.
+  --3ds-icon <file>       A PNG to use as the game's 3DS icon.
   --convert-model <from> <to>
                           Load a model and save it as a Hatch model.
   --help                  Show this text.
@@ -341,6 +345,7 @@ one self-contained application for every target:
 | `HatchGameEngine-linux-x86_64` | A single executable |
 | `HatchGameEngine-linux-aarch64` | A single executable |
 | `HatchGameEngine-switch` | A `.nro` for the Nintendo Switch homebrew launcher |
+| `HatchGameEngine-3ds` | The engine for the Nintendo 3DS: a `.3dsx` for the Homebrew Launcher, and the `.elf` a `.cia` is made from |
 | `HatchGameEngine-xbox` | A `default.xbe` for the original Xbox |
 | `HatchGameEngine-web` | A page -- `index.html`, `index.js`, `index.wasm` -- to drop on any static host |
 | `HatchGameEngine-megadrive-sample-rom` | A Mega Drive ROM built from the sample scene, proving the exporter still works |
@@ -349,6 +354,7 @@ one self-contained application for every target:
 | `HatchGameEngine-gamegear-sample-rom` | A Game Gear cartridge built from the same scene |
 | `HatchGameEngine-saturn-sample-discs` | Two Saturn discs: the same scene as a VDP2 bitmap, and a 3D scene as VDP1 polygons |
 | `HatchGameEngine-dreamcast-sample-binaries` | Two Dreamcast binaries: the same scene as PowerVR textures, and a 3D scene as PowerVR polygons |
+| `HatchGameEngine-3ds-sample` | The 3DS sample game exported whole: a `.3dsx` and a `.cia` |
 
 Each desktop job links SDL2, GLEW and the C++ runtime into the executable, so
 what comes out asks nothing of the machine it lands on beyond what the operating
@@ -358,10 +364,12 @@ the static C runtime, so no Visual C++ redistributable is needed either.
 The Unix artifacts arrive as tarballs because a zip -- which is what GitHub
 wraps artifacts in -- does not carry the executable bit.
 
-The Switch, Xbox and WebAssembly jobs are the exceptions. None of them builds
-SDL2 and GLEW: the Switch gets them from devkitPro, the Xbox from nxdk, and the
-browser from Emscripten's ports. What they produce is a title, a homebrew
-application and a web page rather than a desktop application. See below.
+The Switch, 3DS, Xbox and WebAssembly jobs are the exceptions. None of them
+builds GLEW, and only the 3DS builds SDL2: the Switch gets it from devkitPro,
+the Xbox from nxdk, and the browser from Emscripten's ports, while devkitPro has
+no SDL2 for the 3DS, so that job builds SDL2's own 3DS port first. What they
+produce is a title, homebrew applications and a web page rather than a desktop
+application. See below.
 
 The six SEGA jobs are not builds of the engine at all -- it does not run on any
 of that hardware. They check the export the other way round: that a scene still
@@ -373,6 +381,12 @@ rebuilds every exported vertex from the scene file and the model it came from,
 which is what catches a transform read with its rows and columns the wrong way
 round. The Dreamcast job does both of those over again in that machine's own
 formats -- sixteen-bit textures and little-endian floats.
+
+The 3DS export job is the other kind of export: the 3DS runs the engine, so it
+takes the whole sample game, scripts and all, and packs it into the engine the
+Nintendo 3DS job built. It then reads the `.3dsx` back without the engine's
+code, unpacks the game from it and compares it with the project file by file,
+and makes the same game into a `.cia`.
 
 ## Building
 ### Microsoft Windows
@@ -399,6 +413,111 @@ cmake --build build --parallel
 
 Each platform's own build settings live in `cmake/Platforms`, one file named
 after the system CMake is building for.
+
+### Nintendo 3DS
+
+The 3DS runs the engine itself, built with [devkitPro](https://devkitpro.org/)'s
+devkitARM and libctru, and SDL2's own 3DS port. devkitPro packages SDL 1.2 for
+the 3DS but not SDL2, so SDL2 is built first, with the same toolchain, and
+installed beside devkitPro's own libraries. The `devkitpro/devkitarm` Docker
+image has everything else.
+
+```sh
+# SDL2, once.
+curl -LO https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz
+tar xzf SDL2-2.32.10.tar.gz
+cmake -S SDL2-2.32.10 -B sdl2-build \
+  -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/3DS.cmake" \
+  -DCMAKE_BUILD_TYPE=Release -DSDL_TESTS=OFF
+cmake --build sdl2-build --parallel
+cmake --install sdl2-build
+
+# The engine.
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/3DS.cmake" \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+`build/HatchGameEngine.3dsx` is the engine on its own, for the Homebrew
+Launcher. Copied to the SD card with a `Data.hatch` or a `Resources` folder in
+the same folder, it runs that game. `MakeFile.3ds` builds the same thing with
+devkitPro's Makefile rules instead -- `make -f MakeFile.3ds`, which is what
+`MAKE_3DS.bat` runs -- into `builds/3ds/`.
+
+#### Exporting a game
+
+To make a game into a `.3dsx` of its own, export it from the engine running on
+a computer, pointing it at the 3DS build:
+
+```sh
+HatchGameEngine --project-dir MyGame \
+                --export-3ds MyGame.3dsx \
+                --3ds-runtime HatchGameEngine.3dsx \
+                --3ds-icon icon.png
+```
+
+The editor does the same from the **Scenes** tab, under **Export For Nintendo
+3DS**. Unlike the SEGA exports, nothing is converted: the 3DS gets the whole
+game, scripts and all.
+
+- The scripts are compiled, as they are whenever the engine opens a project,
+  and the `Resources` folder -- bytecode included -- is packed into a
+  compressed `Data.hatch`, the same archive a game is shipped in anywhere else.
+  A game already packed into a `.hatch` (`--resource-file`) goes in as it is.
+- That goes in the `.3dsx`'s RomFS, which is where the engine looks first when
+  it starts on a 3DS.
+- The game's name, description and developer from `GameConfig.xml` go in the
+  SMDH, which is what the Homebrew Launcher and the HOME Menu show. The icon is
+  the engine's unless `--3ds-icon` gives a PNG, which is scaled to 48x48 and
+  24x24.
+
+`tools/verify-3ds-export.py` reads an exported `.3dsx` back without any of the
+engine's code and checks it against the project.
+
+`meta/3ds/sample` is a small game to try it with: a scene, a script that moves
+the camera with the D-pad and plays a sound on A, and text drawn with the
+built-in font.
+
+#### A .cia for the HOME Menu
+
+A `.3dsx` runs from the Homebrew Launcher. A `.cia` is installed -- with FBI,
+say -- and then sits on the HOME Menu like any other title.
+`tools/make-3ds-cia.py` makes one out of an exported `.3dsx`:
+
+```sh
+python3 tools/make-3ds-cia.py MyGame.3dsx HatchGameEngine.elf MyGame.cia \
+  --makerom path/to/makerom --bannertool path/to/bannertool
+```
+
+It needs the `.elf` the runtime `.3dsx` was built from -- `build/HatchGameEngine-Release.elf`,
+or `HatchGameEngine.elf` in the CI artifact -- and two tools that are not
+part of devkitPro: [makerom](https://github.com/3DSGuy/Project_CTR) and
+[bannertool](https://github.com/diasurgical/bannertool). The title's
+permissions are in `meta/3ds/cia.rsf`, and the banner the HOME Menu shows on the
+top screen is `meta/3ds/banner.png` with `meta/3ds/banner.wav`; `--banner` and
+`--sound` replace them. The title's unique ID is worked out from its name, in
+the range homebrew uses, unless `--unique-id` gives one.
+
+#### What is different on a 3DS
+
+| | |
+| --- | --- |
+| Rendering | SDL2 can only draw in software on the 3DS, and its renderer has no shapes, so the engine's own software renderer draws every view and SDL only puts the result on the screen. There is no OpenGL, and so no shaders. |
+| Screens | The game is on the top screen, 400x240. A game made for a different size is scaled to fit it, keeping its shape; give it `<width>400</width>` and `<height>240</height>` in `GameConfig.xml` to fill it exactly. The bottom screen is not drawn on, but touching it is passed to the game as touch input. |
+| Controls | The 3DS is a game controller as far as the engine is concerned: the default input actions work on the D-pad, the Circle Pad, A, B, X, Y, L, R, Start and Select. |
+| Sound | Needs the DSP firmware at `sdmc:/3ds/dspfirm.cdc`, as all 3DS homebrew does; DSP1 makes it from the console's own. Without it the game runs silently. |
+| Speed | The New 3DS's faster clock and L2 cache are turned on; an original 3DS ignores that. |
+| Memory | The engine reserves 22 MB for its memory pools at start, and logs how big the heap is, which is the number to watch on an original 3DS. |
+| Game data | A `Data.hatch` in the `.3dsx`'s RomFS, if it has one; otherwise a `Data.hatch` or a `Resources` folder beside the `.3dsx`. |
+| Saves, settings and the log | `sdmc:/3ds/<game identifier>/`. Each line of the log is also sent to the debugger -- Luma3DS's, or an emulator's log -- and written out as it happens, so a game that stops leaves its last words behind. |
+| Fatal errors | Shown on the system's own error screen. |
+| 3D models | No Open Asset Import Library. The engine's own model formats are unaffected. |
+| Networking | `WebSocketClient` is there but never connects: the 3DS's socket service has to be given a megabyte of memory before it will start, and the engine does not give it one. |
+| Threads | The 3DS runs a game's threads one at a time on one core: a thread runs until it waits or sleeps. |
+
+The engine's 3DS code is reached with `#if N3DS`, its build settings are in
+`cmake/Platforms/Nintendo3DS.cmake`, and the little of libctru it calls
+directly is in `source/Engine/Platforms/3DS/System.cpp`.
 
 ### Xbox
 
@@ -871,7 +990,8 @@ Required:
 - Visual C++ (for Windows building)
 - Android Studio (for Android building)
 - Xcode 12 (for iOS building)
-- devKitPro (for Nintendo Switch homebrew building, and 3DS (wip))
+- [devkitPro](https://devkitpro.org/) (for Nintendo Switch and Nintendo 3DS homebrew building)
+- [makerom](https://github.com/3DSGuy/Project_CTR) and [bannertool](https://github.com/diasurgical/bannertool) (to make a 3DS export into a `.cia`)
 - [nxdk](https://github.com/XboxDev/nxdk) (for original Xbox building)
 - [Emscripten](https://emscripten.org/) (for WebAssembly building)
 - [SGDK](https://github.com/Stephane-D/SGDK) (to build the Mega Drive export into a ROM)

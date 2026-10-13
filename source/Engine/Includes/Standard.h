@@ -58,7 +58,8 @@ enum class Platforms {
 	// these as constants and compile their values into their bytecode, so
 	// inserting one in the middle would change what already-built bytecode
 	// means.
-	Web
+	Web,
+	Nintendo3DS
 };
 
 enum class KeyBind {

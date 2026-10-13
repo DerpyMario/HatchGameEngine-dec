@@ -19,6 +19,10 @@ extern "C" {
 #include <android/log.h>
 #endif
 
+#ifdef N3DS
+#include <Engine/Platforms/3DS/System.h>
+#endif
+
 #include <stdarg.h>
 
 #define DEFAULT_LOG_FILENAME TARGET_NAME ".log"
@@ -309,6 +313,19 @@ void Log::Print(int sev, const char* format, ...) {
 	if (File) {
 		fprintf(File, "%s\n", Buffer);
 	}
+
+#ifdef N3DS
+	// A 3DS's standard output goes nowhere unless 3dslink is listening, so
+	// the debugger gets each line too; and a game that crashes or hangs there
+	// leaves nothing else behind, so the file is written out as it goes rather
+	// than when the engine gets round to closing it.
+	std::string line = std::string(severityText) + Buffer;
+	N3DS_DebugOutput(line.c_str());
+
+	if (File) {
+		fflush(File);
+	}
+#endif
 }
 
 void Log::PrintSimple(const char* format, ...) {

@@ -179,10 +179,12 @@ CPPFILES := \
 	source/Engine/Exporters/GameGearExporter.cpp \
 	source/Engine/Exporters/MegaCDExporter.cpp \
 	source/Engine/Exporters/MegaDriveExporter.cpp \
+	source/Engine/Exporters/Nintendo3DSExporter.cpp \
 	source/Engine/Exporters/Sega32XExporter.cpp \
 	source/Engine/Exporters/SegaSaturnExporter.cpp \
 	source/Engine/Exporters/SegaSceneArt.cpp \
 	source/Engine/Exporters/SegaVDPConverter.cpp \
+	source/Engine/Platforms/3DS/System.cpp \
 	source/Engine/Platforms/Xbox/Exceptions.cpp \
 	source/Engine/Platforms/Xbox/Filesystem.cpp \
 	source/Engine/ResourceTypes/SceneFormats/Scene3DFormat.cpp \
@@ -250,6 +252,7 @@ PRVHFILES := \
 	source/Engine/Error.h \
 	source/Engine/Platforms/MacOS/Filesystem.h \
 	source/Engine/Platforms/Capability.h \
+	source/Engine/Platforms/3DS/System.h \
 	source/Engine/Platforms/iOS/MediaPlayer.h \
 	source/Engine/InputManager.h \
 	source/Engine/Types/ObjectList.h \
@@ -275,6 +278,7 @@ PRVHFILES := \
 	source/Engine/Exporters/MegaCDTypes.h \
 	source/Engine/Exporters/MegaDriveExporter.h \
 	source/Engine/Exporters/MegaDriveTypes.h \
+	source/Engine/Exporters/Nintendo3DSExporter.h \
 	source/Engine/Exporters/Sega32XExporter.h \
 	source/Engine/Exporters/Sega32XTypes.h \
 	source/Engine/Exporters/SegaSaturnExporter.h \

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gameconfig>
+    <name>Hatch 3DS Sample</name>
+    <shortTitle>Hatch 3DS Sample</shortTitle>
+    <description>A scene, a script and some text, on a 3DS</description>
+    <developer>HatchGameEngine</developer>
+    <gameIdentifier>hatch-3ds-sample</gameIdentifier>
+    <!-- The top screen of a 3DS. -->
+    <display>
+        <width>400</width>
+        <height>240</height>
+    </display>
+    <startscene>Scenes/sample.tmx</startscene>
+</gameconfig>

@@ -61,8 +61,8 @@ else()
   option(DEVELOPER_MODE "Developer mode" OFF)
 endif()
 
-# linenoise drives a terminal, which the Xbox and the browser do not have.
-if(NOT NINTENDO_SWITCH AND NOT NXDK AND NOT EMSCRIPTEN)
+# linenoise drives a terminal, which the consoles and the browser do not have.
+if(NOT NINTENDO_SWITCH AND NOT NINTENDO_3DS AND NOT NXDK AND NOT EMSCRIPTEN)
   option(ENABLE_USING_LINENOISE "Use linenoise-ng for the script debugger command line interface" ON)
   if (ENABLE_USING_LINENOISE)
     list(APPEND LIBRARY_SOURCES

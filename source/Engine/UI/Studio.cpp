@@ -20,6 +20,7 @@
 #include <Engine/Exporters/GameGearExporter.h>
 #include <Engine/Exporters/SegaSaturnExporter.h>
 #include <Engine/Exporters/DreamcastExporter.h>
+#include <Engine/Exporters/Nintendo3DSExporter.h>
 #include <Engine/UI/Hierarchy.h>
 #include <Engine/UI/Inspector.h>
 #include <Engine/UI/Selection.h>
@@ -101,6 +102,12 @@ static int  CurrentTab = STUDIO_TAB_PROJECT;
 // Where a SEGA export writes to. Relative paths land beside the project, which
 // is where someone would look for it.
 static char SegaExportPath[512] = "SegaExport";
+
+// The same for a 3DS export, which is one file, and is made from the engine
+// built for the 3DS rather than from anything this one has.
+static char N3DSExportPath[512] = "Game.3dsx";
+static char N3DSRuntimePath[512] = "HatchGameEngine.3dsx";
+static char N3DSIconPath[512] = "";
 static bool Initialized = false;
 
 // Project browser.
@@ -1144,6 +1151,30 @@ void Studio::DrawScenesTab(float x, float y, float w, float h, bool split) {
             UICore::Text("colour, as textures. Game logic does not come across", UI_COL_TEXT_FAINT);
             UICore::Text("to any of them. The 3D tab exports a 3D scene to the", UI_COL_TEXT_FAINT);
             UICore::Text("Saturn and the Dreamcast.", UI_COL_TEXT_FAINT);
+        }
+
+        UICore::Separator();
+        UICore::Heading("Export For Nintendo 3DS");
+
+        if (!ResourceManager::DataFolderPath[0] && !ResourceManager::DataFilePath[0])
+            UICore::Text("Open a project to export it.", UI_COL_TEXT_FAINT);
+        else {
+            UICore::TextField("File", N3DSExportPath, sizeof(N3DSExportPath));
+            UICore::TextField("3DS engine", N3DSRuntimePath, sizeof(N3DSRuntimePath));
+            UICore::TextField("Icon (PNG)", N3DSIconPath, sizeof(N3DSIconPath));
+
+            if (UICore::Button("Nintendo 3DS (.3dsx)")) {
+                Nintendo3DSExportResult exported =
+                    Nintendo3DSExporter::Export(N3DSExportPath, N3DSRuntimePath, N3DSIconPath);
+
+                Studio::SetStatus("%s", exported.Message);
+                Log::Print(exported.Success ? Log::LOG_INFO : Log::LOG_ERROR, "%s", exported.Message);
+            }
+
+            UICore::Text("The 3DS runs the engine itself, so the whole game", UI_COL_TEXT_FAINT);
+            UICore::Text("goes across, scripts and all, packed into the", UI_COL_TEXT_FAINT);
+            UICore::Text(".3dsx of an engine built for the 3DS. The icon is", UI_COL_TEXT_FAINT);
+            UICore::Text("optional; without one the engine's is kept.", UI_COL_TEXT_FAINT);
         }
 
         UICore::Separator();

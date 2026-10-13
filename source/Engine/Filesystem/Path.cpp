@@ -23,6 +23,10 @@
 #include <Engine/Includes/WebStorage.h>
 #endif
 
+#ifdef N3DS
+#include <Engine/Platforms/3DS/System.h>
+#endif
+
 #define PICTURES_DIR_NAME "pictures"
 #define SCREENSHOTS_DIR_NAME "screenshots"
 
@@ -243,6 +247,14 @@ std::string Path::GetConsoleBasePath() {
 	return std::string(basePath);
 #elif defined(SWITCH_ROMFS)
 	return std::string("romfs:/");
+#elif defined(N3DS)
+	// An exported game carries its data in the .3dsx's RomFS. Without one,
+	// the data sits beside the .3dsx, which is where libctru starts the
+	// working directory.
+	if (N3DS_HasRomFS()) {
+		return std::string("romfs:/");
+	}
+	return GetPortableModePath();
 #else
 	// Fallback path is cwd, add a custom path if needed (ending with '/')
 	return GetPortableModePath();
@@ -250,10 +262,24 @@ std::string Path::GetConsoleBasePath() {
 }
 
 std::string Path::GetConsolePrefPath() {
+#if defined(SWITCH) || defined(N3DS)
+	// Asked for while GameConfig.xml is still being read, there is no game
+	// identifier yet, and no saves folder; that is what an empty path says, as
+	// it does on a computer. Built from the null pointer instead, it threw,
+	// and a game read from a Resources folder never got as far as starting.
+	const char* gameName = Application::GetGameIdentifier();
+	if (gameName == nullptr) {
+		return "";
+	}
+#endif
+
 #if defined(SWITCH)
 	// "/GAME_NAME/" (root of the SD card)
-	std::string gameName = Application::GetGameIdentifier();
-	return std::string("/" + gameName + "/");
+	return std::string("/") + gameName + "/";
+#elif defined(N3DS)
+	// Where homebrew keeps its files on the SD card, and where SDL's own
+	// SDL_GetPrefPath puts them on the 3DS.
+	return std::string("sdmc:/3ds/") + gameName + "/";
 #elif defined(XBOX)
 	// The Xbox mounts the folder the title was launched from as D:, so what the
 	// game writes sits beside it, the way it does on the Switch. A real title

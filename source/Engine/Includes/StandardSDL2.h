@@ -25,11 +25,19 @@
 #elif EMSCRIPTEN
 // SDL2 includes
 #include <SDL.h>
+#elif N3DS
+// SDL2 includes. libctru's own <3ds.h> is left to the files that need it: it
+// names types like Thread and Handle that would collide with the engine's.
+#include <SDL.h>
 #elif LINUX
 // SDL2 includes
 #include <SDL.h>
 #endif
 
+// devkitARM's C library already has a uint, and it is unsigned int, where
+// uint32_t there is unsigned long, so the two cannot both be declared.
+#if !N3DS
 typedef uint32_t uint;
+#endif
 
 #endif // STANDARDSDL2_H

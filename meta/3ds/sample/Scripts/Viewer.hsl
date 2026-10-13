@@ -1,0 +1,94 @@
+// Moves the camera around the map and says where it is running, which is
+// enough to show the scene, the script VM, controller input, sound and text
+// all working on whatever runs it. The D-pad steers and A chimes; left alone,
+// the camera wanders on its own, so two screenshots a moment apart are never
+// the same.
+class Viewer {
+    event Create() {
+        // It moves the camera, so it has to keep running wherever the camera
+        // has gone.
+        this.Activity = ACTIVE_ALWAYS;
+
+        // A draw group draws its entities before its tiles, and the map is in
+        // group 0, so the text goes in the one after to be drawn over it.
+        this.Priority = 1;
+
+        this.Font = new Font();
+        this.Chime = Resources.LoadSound("Sounds/chime.wav", SCOPE_GAME);
+        this.Frames = 0;
+        this.Chimes = 0;
+
+        this.CameraX = 0.0;
+        this.CameraY = 0.0;
+        this.DriftX = 1.0;
+        this.DriftY = 0.5;
+
+        // The map is 32 by 24 tiles of 16 pixels; the screen is 400 by 240.
+        this.MaxX = 32.0 * 16.0 - 400.0;
+        this.MaxY = 24.0 * 16.0 - 240.0;
+
+        if (Device.GetPlatform() == Platform_Nintendo3DS) {
+            this.Where = "Nintendo 3DS";
+        }
+        else {
+            this.Where = "a PC";
+        }
+    }
+
+    event Update() {
+        this.Frames += 1;
+
+        var steered = false;
+        if (Input.IsActionHeld(0, "Left")) {
+            this.CameraX -= 2.0;
+            steered = true;
+        }
+        if (Input.IsActionHeld(0, "Right")) {
+            this.CameraX += 2.0;
+            steered = true;
+        }
+        if (Input.IsActionHeld(0, "Up")) {
+            this.CameraY -= 2.0;
+            steered = true;
+        }
+        if (Input.IsActionHeld(0, "Down")) {
+            this.CameraY += 2.0;
+            steered = true;
+        }
+
+        if (Input.IsActionPressed(0, "A")) {
+            Sound.Play(this.Chime, AUDIO_LOOP_NONE);
+            this.Chimes += 1;
+            print "Chime " + this.Chimes + " at frame " + this.Frames;
+        }
+
+        if (!steered) {
+            this.CameraX += this.DriftX;
+            this.CameraY += this.DriftY;
+
+            if (this.CameraX <= 0.0 || this.CameraX >= this.MaxX) {
+                this.DriftX = -this.DriftX;
+            }
+            if (this.CameraY <= 0.0 || this.CameraY >= this.MaxY) {
+                this.DriftY = -this.DriftY;
+            }
+        }
+
+        this.CameraX = Math.Clamp(this.CameraX, 0.0, this.MaxX);
+        this.CameraY = Math.Clamp(this.CameraY, 0.0, this.MaxY);
+
+        View.SetPosition(0, this.CameraX, this.CameraY);
+    }
+
+    event Render() {
+        var x = View.GetX(0) + 8.0;
+        var y = View.GetY(0) + 8.0;
+
+        Draw.SetBlendColor(0x000000, 0.6);
+        Draw.Rectangle(x, y, 236.0, 44.0);
+
+        Draw.SetBlendColor(0xFFFFFF, 1.0);
+        Draw.Text(this.Font, "Hatch on " + this.Where, x + 6.0, y + 4.0, 16.0);
+        Draw.Text(this.Font, "Frame " + this.Frames + "   Chimes " + this.Chimes, x + 6.0, y + 24.0, 16.0);
+    }
+}

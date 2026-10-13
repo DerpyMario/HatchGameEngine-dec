@@ -304,6 +304,63 @@ jobs:
           path: build/*.nro
           if-no-files-found: error
 
+  n3ds:
+    # devkitPro packages SDL 1.2 for the 3DS but not SDL2, whose own 3DS port
+    # the engine runs on, so that is built first, with the same toolchain, into
+    # devkitPro's portlibs where CMake will look for it.
+    name: Nintendo 3DS
+    runs-on: ubuntu-24.04
+    container: devkitpro/devkitarm:latest
+
+    env:
+      SDL2_VERSION: 2.32.10
+      SDL2_SHA256: 5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build SDL2 for the 3DS
+        run: |
+          cd /tmp
+          curl -sSL -o sdl2.tar.gz "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
+          echo "${SDL2_SHA256}  sdl2.tar.gz" | sha256sum -c -
+          tar xzf sdl2.tar.gz
+          cmake -S "SDL2-${SDL2_VERSION}" -B sdl2-build \
+            -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/3DS.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DSDL_TESTS=OFF -DSDL_TEST=OFF
+          cmake --build sdl2-build --parallel "$(nproc)"
+          cmake --install sdl2-build
+
+      # github.workspace does not work in a container job, so GITHUB_WORKSPACE
+      # is used instead.
+      - name: Configure
+        run: >
+          cmake -B "${GITHUB_WORKSPACE}/build"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/3DS.cmake
+          -S "${GITHUB_WORKSPACE}"
+
+      - name: Build
+        run: cmake --build "${GITHUB_WORKSPACE}/build" --config Release --parallel "$(nproc)"
+
+      # The .elf is what makerom builds a .cia from; the debug information in
+      # it is most of its size and none of what makerom reads.
+      - name: Package
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/package"
+          cp "${GITHUB_WORKSPACE}/build/HatchGameEngine.3dsx" "${GITHUB_WORKSPACE}/package/"
+          "$DEVKITPRO/devkitARM/bin/arm-none-eabi-strip" --strip-debug \
+            -o "${GITHUB_WORKSPACE}/package/HatchGameEngine.elf" \
+            "${GITHUB_WORKSPACE}/build/HatchGameEngine-Release.elf"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-3ds
+          path: |
+            package/HatchGameEngine.3dsx
+            package/HatchGameEngine.elf
+          if-no-files-found: error
+
   xbox:
     # 24.04 rather than the 22.04 the other Linux jobs use: nxdk tests itself
     # against the clang of the current Ubuntu, and 22.04's clang 14 is behind
@@ -1202,4 +1259,89 @@ jobs:
           path: |
             dcexport/hatch.elf
             dc3d/hatch.elf
+          if-no-files-found: error
+
+  n3ds-export:
+    # The 3DS runs the engine, so its export is the whole game rather than a
+    # scene: the Linux engine packs the sample project into the .3dsx the job
+    # above built, the result is read back and compared with the project file
+    # by file, and makerom turns the same game into a .cia.
+    name: Nintendo 3DS (export)
+    runs-on: ubuntu-24.04
+    needs: n3ds
+
+    env:
+      MAKEROM_URL: https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip
+      MAKEROM_SHA256: dd596854718c195c6e3229286be485b122921715555af8ae5cf8e9a465d9f970
+      BANNERTOOL_URL: https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip
+      BANNERTOOL_SHA256: 69768596f836acb3e3aeaa66e47c6ba560dde813c6dfcd33c8afc25fe29b7524
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake unzip xvfb \
+            libglew-dev libgl1-mesa-dev libsdl2-dev libpng-dev
+
+      - name: Build the engine
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OPEN_ASSET_IMPORT_LIBRARY=OFF
+          cmake --build build --parallel "$(nproc)"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: HatchGameEngine-3ds
+          path: runtime
+
+      - name: Export the sample game
+        run: |
+          mkdir -p out
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 SDL_AUDIODRIVER=dummy \
+            ./build/HatchGameEngine-Release \
+              --project-dir meta/3ds/sample \
+              --export-3ds "${GITHUB_WORKSPACE}/out/HatchSample.3dsx" \
+              --3ds-runtime "${GITHUB_WORKSPACE}/runtime/HatchGameEngine.3dsx"
+
+      # Reads the header, the SMDH and the RomFS without any of the engine's
+      # code, unpacks Data.hatch, and compares every entry with the project's
+      # Resources folder -- which by now holds the scripts the export compiled
+      # too. The program has to be the runtime's, untouched.
+      - name: Check the export against the project it was made from
+        run: |
+          python3 tools/verify-3ds-export.py out/HatchSample.3dsx \
+            meta/3ds/sample/Resources runtime/HatchGameEngine.3dsx
+
+      - name: Fetch makerom and bannertool
+        run: |
+          mkdir -p /tmp/ctrtools
+          cd /tmp/ctrtools
+          curl -sSL -o makerom.zip "${MAKEROM_URL}"
+          curl -sSL -o bannertool.zip "${BANNERTOOL_URL}"
+          echo "${MAKEROM_SHA256}  makerom.zip" | sha256sum -c -
+          echo "${BANNERTOOL_SHA256}  bannertool.zip" | sha256sum -c -
+          unzip -q makerom.zip -d makerom
+          unzip -q bannertool.zip -d bannertool
+          chmod +x makerom/makerom bannertool/linux-x86_64/bannertool
+
+      - name: Make the .cia
+        run: |
+          python3 tools/make-3ds-cia.py out/HatchSample.3dsx \
+            runtime/HatchGameEngine.elf out/HatchSample.cia \
+            --makerom /tmp/ctrtools/makerom/makerom \
+            --bannertool /tmp/ctrtools/bannertool/linux-x86_64/bannertool
+
+          if [ ! -s out/HatchSample.cia ]; then
+            echo "no .cia was produced"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HatchGameEngine-3ds-sample
+          path: |
+            out/HatchSample.3dsx
+            out/HatchSample.cia
           if-no-files-found: error

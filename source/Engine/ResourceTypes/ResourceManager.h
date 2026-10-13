@@ -11,6 +11,9 @@ public:
 	static bool UsingDataFolder;
 	static bool AllowMissingData;
 	static char DataFolderPath[MAX_PATH_LENGTH];
+	// The packed data file that was opened, when the game is one; otherwise
+	// empty.
+	static char DataFilePath[MAX_PATH_LENGTH];
 
 	static bool Init(const char* dataFilePath = nullptr, bool useResourcesFolder = false);
 	static bool Mount(const char* name,
